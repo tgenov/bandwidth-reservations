@@ -408,6 +408,104 @@ per link, with fencing), or use the change-point map as the SQL structure.
   - a busy partner can only be polled, so D16's server-side wait becomes a polling loop for
     that link.
 
+## D24. Rounding the split: D'Hondt, not largest remainder (found while building)
+
+- **Found by:** the implementation of D20. The build brief (from Claude) specified
+  largest-remainder rounding.
+- **Problem:** largest remainder has the *Alabama paradox*: a larger total can give one
+  party a smaller share. Each minute's split is recomputed whenever late usage arrives, so
+  ordinary late usage could take money back from a supplier. That contradicts D20's claim
+  that late usage never causes clawback.
+- **Decision:** D'Hondt rounding, which never lowers a share as the total grows.
+- **Evidence:** a test built on a known instance of the paradox fails with largest
+  remainder.
+
+## D25. Split the minute's total, never the correction amount
+
+- **Found by:** the implementation. Splitting each correction amount on its own made
+  supplier balances depend on the order records arrived in.
+- **Decision:** a correction is computed as the split of the minute's new total minus the
+  split already posted. The final balances are then the same in whatever order records
+  arrive.
+
+## D26. Billing a minute takes a lock
+
+- **Found by:** the implementation. Without a lock, a record inserted while its minute is
+  being billed is never charged; the test showed 1 GB going unbilled.
+- **Decision:**
+  - Ingestion takes the minute's lock before checking whether that minute is already
+    billed.
+  - Like D12, this is correct only under `READ COMMITTED`.
+
+## D27. Corrections to D19's exposure bound
+
+- **Metering lag was understated.** It must include the one-minute billing period and the
+  wait before a minute is billed, not just how late records arrive in transit. Otherwise
+  the bound is too low.
+- **Price changes aren't covered.** The bound uses today's price, so it doesn't cover a
+  price increase during the exposure window.
+- **Open, a business decision (D15):** what happens when a top-up arrives after a customer
+  has been suspended. The prototype emits a resume event; whether to resume automatically
+  is policy.
+
+## D28. Usage belongs to the minute in which the flow ended
+
+- **Gap in D18:** D18 didn't say which minute a flow record's bytes belong to.
+- **Decision for the prototype:** assign them to the minute the flow ended.
+- **Open:** spreading a long flow across the minutes it was active.
+
+## D29. Results of the Problems 3/4 prototype (NestJS, Kafka via Redpanda)
+
+- **Order doesn't matter:** duplicated, shuffled and late records produce the same final
+  ledger as delivery in order (3 random seeds).
+- **The books balance:** every journal entry, and the whole ledger, sums to zero. Database
+  triggers enforce this, and also that the ledger and facts are append-only.
+- **Pricing:** late records are priced at the rate in force at their usage time (D20).
+- **Clawback:** a correcting credit takes money back from an already-paid supplier, and the
+  next payout nets it off.
+- **Payments:** webhooks arriving twice or out of order credit the wallet exactly once.
+- **End to end through Kafka:** 3,000 records with about 20% duplicates produce one charge
+  per minute and a balanced ledger.
+- **Throughput:** about 800 records a second, with one transaction per record. Batching is
+  the obvious next step.
+- **The tests catch deliberate mistakes:** pricing by arrival time, splitting each
+  correction separately, removing the minute lock, and largest-remainder rounding.
+
+## D30. Review fixes: a restart after the commit point, and the horizon
+
+- **Found by:** Claude's review of the Problem 2 code. Both bugs were reproduced with
+  tests that failed before the fix.
+- **Bug 1, a restart after the commit point could book links that were never held.**
+  - **Cause:** a saga's status stayed `committing` after a restart caused by the partner
+    hold expiring (`unknown-hold`). A crash while re-holding then made recovery roll the
+    saga forward and write facts for every link in the request, including links never held
+    again: a possible oversell.
+  - **Fix:**
+    - `restart()` sets the status back to `holding` *before* releasing anything.
+    - Writing facts requires every link to have a hold.
+    - Recovery fails any `committing` saga with missing holds, logs it loudly and releases
+      the orphaned holds. It never writes partial facts.
+  - **Crash points:** each one in the saga was examined. The status reset and the
+    inconsistent-status case are now tested. Three are covered by reasoning only:
+    - after pinning but before `committing` is written;
+    - during the transaction that writes the facts;
+    - after `unknown-hold` but before the status reset.
+- **Bug 2, bookings beyond the horizon were accepted unchecked.**
+  - **Cause:** with `s ≥ n`, the peak came out as −∞, so the request was admitted, and its
+    impulses were dropped.
+  - **Fix:** the window must satisfy `0 ≤ s < n`, and either `s < e ≤ n` or `e = null`.
+    Anything else raises a `RangeError`: it's a caller error, not a capacity rejection.
+- **Side effect found:** a priority-ticket test was flaky when two tickets fell in the same
+  millisecond. The saga ID, which breaks the tie, comes from two inserts that race, so
+  either saga could correctly be the older. The test now asks the saga log which one is
+  older and checks that it wins.
+- **Still open from the review:**
+  - The Problem 1 SQL path and the Problem 2 coordinator write facts under different locks.
+    One owner per link with a fencing check (D10's per-link `seq`) is needed before they
+    can coexist.
+  - Wounding is broader than it needs to be (D23).
+- **Tests:** 32 pass.
+
 ## Open questions
 
 1. The hot-link mutex: the p99 of 115 ms is mostly lock queueing. Next, measure the
