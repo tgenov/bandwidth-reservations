@@ -19,6 +19,18 @@ export type Decision =
   | { ok: true }
   | { ok: false; peak: number; conflicts: Array<[number, number]> };
 
+// The tree covers a fixed horizon [0, n). A window must start inside it and end
+// at or before n; e = null means "for the rest of the horizon". Anything else is
+// a caller error, not a capacity answer: the tree cannot record impulses beyond n,
+// so admitting such a request would accept a booking that is never checked or
+// stored. Validate at the API edge and refuse it there.
+export function checkWindow(s: number, e: number | null, n: number): void {
+  if (!Number.isInteger(s) || s < 0 || s >= n) throw new RangeError(`start ${s} outside horizon [0, ${n})`);
+  if (e !== null && (!Number.isInteger(e) || e <= s || e > n)) {
+    throw new RangeError(`end ${e} must be after start ${s} and at most ${n}`);
+  }
+}
+
 export class UsageTree {
   readonly n: number;
   private size: number;
@@ -93,6 +105,7 @@ export class UsageTree {
 
   // e = null means open-ended: the request must fit for the rest of the horizon.
   admit(s: number, e: number | null, b: number, capacity: number): Decision {
+    checkWindow(s, e, this.n);
     const end = e ?? this.n;
     const peak = this.peak(s, end);
     if (peak + b > capacity) {

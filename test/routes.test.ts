@@ -2,7 +2,7 @@ import { test, before, after } from 'node:test';
 import assert from 'node:assert/strict';
 import pg from 'pg';
 import { LinkBook } from '../src/links.ts';
-import { PartnerLink } from '../src/partner.ts';
+import { PartnerLink, type PartnerConfirm } from '../src/partner.ts';
 import { Coordinator, recover, resetRoutesSchema, type RouteRequest, type RouteResult } from '../src/routes.ts';
 import { maxUsage } from '../src/sql.ts';
 import { rng, percentile } from './helpers.ts';
@@ -236,4 +236,81 @@ test('crossed sagas without tickets: deadlocked until the holds expire', async (
   assert.ok(elapsed >= 1000, `took ${elapsed} ms: expected to wait out the 1000 ms hold TTL`);
   assert.equal(coord.stats.wounds, 0);
   console.log(`crossed sagas without tickets: ${elapsed} ms, results ${a.status}/${b.status}, restarts ${coord.stats.restarts}`);
+});
+
+// A partner whose first confirm finds the hold gone, as if it had expired just
+// before we confirmed. Later confirms behave normally.
+class ExpiringPartner extends PartnerLink {
+  expiredOnce = false;
+  async confirm(key: string): Promise<PartnerConfirm> {
+    if (!this.expiredOnce) {
+      this.expiredOnce = true;
+      this.book.release(key);
+      return 'unknown-hold';
+    }
+    return super.confirm(key);
+  }
+}
+
+const NO_FAULTS = { failRate: 0, timeoutRate: 0, maxLatencyMs: 1 };
+
+// Links [PARTNER, 2, 3]: attempt 1 calls beforeHold for indexes 0, 1, 2, then the
+// partner reports 'unknown-hold' after the commit decision and the saga restarts.
+// Attempt 2 calls index 0 (the partner is held again), then index 1: crash there,
+// before any of our links is held again.
+async function crashWhileReholding() {
+  await resetRoutesSchema(db);
+  for (const id of LINKS) await db.query('INSERT INTO links (id, capacity_mbps) VALUES ($1, $2)', [id, CAPACITY]);
+  const partner = new ExpiringPartner(PARTNER, CAPACITY, N, rng(41), NO_FAULTS);
+  const books = OWN.map((id) => new LinkBook(id, CAPACITY, N));
+  let calls = 0;
+  let coord!: Coordinator;
+  const beforeHold = async () => {
+    if (++calls === 5) coord.crash();
+  };
+  coord = new Coordinator(db, books, partner, { ...OPTS, random: rng(42), beforeHold });
+  const r = await coord.reserve({ idemKey: 'pc1', links: [PARTNER, 2, 3], s: 0, e: 600, mbps: 6 });
+  assert.equal(r.status, 'crashed');
+  assert.equal(calls, 5, 'crashed during the second attempt');
+  assert.equal(coord.stats.restarts, 1, 'restarted once, after the commit decision');
+  return partner;
+}
+
+const factLinks = async () =>
+  (await db.query('SELECT link_id FROM reservations ORDER BY link_id')).rows.map((f) => Number(f.link_id));
+
+test('crash while re-holding after a post-commit restart: the saga fails and nothing is booked', async () => {
+  const partner = await crashWhileReholding();
+  const coord = await recover(db, partner, N, { ...OPTS, random: rng(43) });
+  assert.deepEqual(await factLinks(), [], 'no leg is booked without a hold');
+  const saga = await db.query("SELECT status FROM sagas WHERE idem_key = 'pc1'");
+  assert.equal(saga.rows[0].status, 'failed');
+  for (const id of [2, 3]) assert.equal(coord.books.get(id)!.total.peak(0, N), 0, `link ${id} is free`);
+});
+
+test('recovery refuses to roll forward a committing saga whose holds are incomplete', async () => {
+  const partner = await crashWhileReholding();
+  // Defence in depth: force the inconsistent state the old bug produced.
+  await db.query("UPDATE sagas SET status = 'committing' WHERE idem_key = 'pc1'");
+  const errors: unknown[] = [];
+  const original = console.error;
+  console.error = (...args: unknown[]) => errors.push(args);
+  try {
+    await recover(db, partner, N, { ...OPTS, random: rng(44) });
+  } finally {
+    console.error = original;
+  }
+  assert.deepEqual(await factLinks(), [], 'no partial facts');
+  const saga = await db.query("SELECT status, result FROM sagas WHERE idem_key = 'pc1'");
+  assert.equal(saga.rows[0].status, 'failed');
+  assert.match(saga.rows[0].result.reason, /missing holds/);
+  assert.equal(errors.length, 1, 'the inconsistency is reported loudly');
+  assert.equal(partner.book.total.peak(0, N), 0, 'the orphaned partner hold is released');
+});
+
+test('routes outside the horizon are refused before any saga starts', async () => {
+  const w = await world(51);
+  await assert.rejects(w.coord.reserve({ idemKey: 'far', links: [2], s: N, e: N + 60, mbps: 1 }), RangeError);
+  await assert.rejects(w.coord.reserve({ idemKey: 'far2', links: [2], s: N - 10, e: N + 10, mbps: 1 }), RangeError);
+  assert.equal((await db.query('SELECT count(*)::int AS n FROM sagas')).rows[0].n, 0);
 });

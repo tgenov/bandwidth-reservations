@@ -14,6 +14,7 @@
 import pg from 'pg';
 import { readFileSync } from 'node:fs';
 import { LinkBook, type Ticket } from './links.ts';
+import { checkWindow } from './tree.ts';
 import { PartnerLink, PartnerError } from './partner.ts';
 
 export const BASE = Date.UTC(2026, 0, 1);
@@ -69,6 +70,8 @@ const sleep = (ms: number) =>
 const sameRequest = (a: RouteRequest, b: RouteRequest) =>
   a.links.join() === b.links.join() && a.s === b.s && a.e === b.e && a.mbps === b.mbps;
 
+const missingLegs = (saga: Saga) => saga.req.links.filter((l) => !saga.keys.has(l));
+
 const keyReused = (req: RouteRequest) =>
   new Error(`idempotency key ${req.idemKey} reused for a different request`);
 
@@ -117,6 +120,15 @@ export class Coordinator {
 
   // Idempotent: the same key returns the same saga's result, never a second booking.
   reserve(req: RouteRequest): Promise<RouteResult> {
+    try {
+      for (const l of req.links) {
+        const book = l === this.partner.id ? this.partner.book : this.books.get(l);
+        if (!book) throw new RangeError(`unknown link ${l}`);
+        checkWindow(req.s, req.e, book.total.n);
+      }
+    } catch (err) {
+      return Promise.reject(err); // refused before a saga row exists
+    }
     const running = this.inflight.get(req.idemKey);
     if (running) {
       if (!sameRequest(running.req, req)) return Promise.reject(keyReused(req));
@@ -207,11 +219,19 @@ export class Coordinator {
     }
   }
 
+  // Restarting undoes any commit decision. The status goes back to 'holding'
+  // BEFORE anything is released, so a crash from here on is recovered as
+  // "no decision": the saga fails and its holds expire. Left at 'committing',
+  // recovery would roll forward a saga whose new attempt holds none or only
+  // some of its legs.
   private async restart(saga: Saga): Promise<void> {
-    await this.releaseAll(saga);
     saga.restarts++;
     this.stats.restarts++;
-    await this.db.query('UPDATE sagas SET restarts = $2 WHERE id = $1', [saga.id, saga.restarts]);
+    await this.db.query(
+      "UPDATE sagas SET status = 'holding', restarts = $2 WHERE id = $1",
+      [saga.id, saga.restarts],
+    );
+    await this.releaseAll(saga);
   }
 
   private ordered(saga: Saga): number[] {
@@ -320,6 +340,8 @@ export class Coordinator {
 
   // Every leg becomes a fact in one transaction, together with the saga's result.
   private async writeFacts(saga: Saga): Promise<void> {
+    const missing = missingLegs(saga);
+    if (missing.length) throw new Error(`saga ${saga.id}: no hold for links ${missing.join(', ')}`);
     const { s, e, mbps } = saga.req;
     const result = { status: 'confirmed', sagaId: saga.id, restarts: saga.restarts };
     const c = await this.db.connect();
@@ -354,6 +376,17 @@ export class Coordinator {
       attempt: 0, restarts: row.restarts, wounded: false, wake: () => {},
       keys: new Map(holdRows.map((h) => [Number(h.link_id), h.key as string])),
     };
+    // Defence in depth: a committing saga must hold every leg. If it does not,
+    // the saga log is inconsistent; never confirm or write partial facts.
+    const missing = missingLegs(saga);
+    if (missing.length) {
+      console.error(`recovery: committing saga ${id} is missing holds for links ${missing.join(', ')}; failing it`);
+      await this.releaseAll(saga);
+      await this.finish(saga, 'failed', {
+        status: 'failed', sagaId: id, reason: `committing saga is missing holds for links ${missing.join(', ')}`,
+      });
+      return;
+    }
     const partnerKey = saga.keys.get(this.partner.id);
     if (partnerKey) {
       const answer = await this.retry(() => this.partner.confirm(partnerKey));
