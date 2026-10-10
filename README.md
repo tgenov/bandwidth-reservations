@@ -94,6 +94,81 @@ Checking the tests catch real mistakes: switching "wait" to "reject with retry"
 fails the D16 check, and turning off tickets makes the crossed-saga test wait
 out the hold expiry.
 
+## Problems 3 and 4: metering, billing and the wallet ledger (D18-D20)
+
+A NestJS service in `billing/`, with its own package. It turns raw flow records
+into per-minute charges and posts them to a double-entry ledger that splits each
+charge between the route's suppliers and Share.
+
+- **Facts (D18):** `flow_records` holds raw records, unique by
+  `(exporter_id, sequence)` and append-only. Kafka delivers at least once;
+  `INSERT … ON CONFLICT DO NOTHING` removes duplicates.
+- **Rating (D19):** a minute is charged once the watermark passes it. A record
+  that arrives for an already-charged minute triggers a *correction*: a new
+  journal for the difference, never an edit. Each minute's target is computed
+  from its **total** bytes and split once, so every account ends at the same
+  value whatever order the records arrived in.
+- **Price by event time (D20):** rates are effective-dated, and a higher
+  `version` at the same time corrects a wrong price. Late records use the rate
+  of the minute they belong to.
+- **Ledger (D20):** every charge, correction, top-up and payout is one journal
+  whose signed entries sum to zero. A deferred constraint trigger checks this at
+  `COMMIT`, and other triggers make the ledger and the facts append-only. Money
+  is integer micros held as `bigint`.
+- **Split rounding:** D'Hondt, not largest remainder. Largest remainder suffers
+  the Alabama paradox: a larger total can *lower* one party's share, so ordinary
+  late usage would claw money back from a supplier. D'Hondt never lowers a
+  share when the total rises.
+- **Clawback:** a price correction re-rates past minutes. A supplier already paid
+  can go negative; the payout run skips negative balances and nets them against
+  later earnings.
+- **Exposure (D19):** `price × reserved rate × (metering lag + enforcement lag)`.
+  Under the `reserve` policy, available = balance − exposure. Under
+  `credit_limit`, available = balance + limit. At or below zero, a
+  `customer.suspend` event is emitted once; a top-up that restores headroom
+  emits `customer.resume`.
+- **Payments:** webhooks are idempotent by `(provider transaction id, type)`. A
+  reversal that overtakes its completion posts first; the result is the same.
+
+### Transports
+
+| Entry point | Pattern | Why |
+|---|---|---|
+| `flow-records` topic, `@EventPattern` | Fire-and-forget, at-least-once | The router needs no answer; ingestion is idempotent |
+| `wallet.balance`, `billing.admission-check` topics, `@MessagePattern` | Request-reply (Nest replies on `<topic>.reply`) | The caller can't continue without the answer |
+| `customer.suspend` / `customer.resume`, `ClientKafka.emit` | Fire-and-forget | Enforcement acts on it; billing doesn't wait |
+| `POST /webhooks/payments`, `GET /wallets/:id` | HTTP | The payment provider calls us |
+
+### Results (local Docker: Postgres 17, Redpanda 24.2)
+
+- **23 tests pass.** They cover:
+  - shuffled, duplicated and late delivery give the same ledger as in-order
+    delivery (3 seeds × 200 records);
+  - every journal balances and the ledger sums to zero;
+  - a late record is priced at its own minute's rate after a price change;
+  - clawback netted at the next payout;
+  - webhooks applied exactly once;
+  - both exposure policies;
+  - Kafka end to end: 3,000 records plus about 20% duplicates in, one charge per
+    minute out, a request-reply round trip and a suspend event out.
+- **Ingest throughput:** about 700–860 records/s directly and about 800/s through
+  Kafka. This is sequential, one transaction per record; batching is the
+  obvious next step.
+- **The tests catch deliberate mistakes:**
+
+  | Deliberate mistake | Caught by |
+  |---|---|
+  | Pricing by arrival time instead of event time | The event-time test |
+  | Splitting each correction separately instead of the minute's total | The order-independence test |
+  | Removing the minute lock in ingestion | The forced-interleaving test: one GB went uncharged |
+  | Largest remainder instead of D'Hondt | The Alabama-paradox test |
+
+### Run
+
+    docker compose up -d --wait      # postgres on 55432, redpanda on 59092
+    docker compose exec postgres psql -U postgres -c 'CREATE DATABASE billing'
+    cd billing && npm install && npm test
+
 ## Known limitations
 
 - **One mutex per link.** All bookings on a hot link wait in one queue, so

@@ -13,3 +13,21 @@ services:
       interval: 1s
       timeout: 3s
       retries: 30
+  # Kafka-compatible broker for the billing service (Problem 3/4).
+  # Single node, dev mode: topics are auto-created.
+  redpanda:
+    image: docker.redpanda.com/redpandadata/redpanda:v24.2.7
+    command:
+      - redpanda
+      - start
+      - --mode=dev-container
+      - --smp=1
+      - --kafka-addr=internal://0.0.0.0:9092,external://0.0.0.0:19092
+      - --advertise-kafka-addr=internal://redpanda:9092,external://localhost:59092
+    ports:
+      - "59092:19092"
+    healthcheck:
+      test: ["CMD-SHELL", "rpk cluster health | grep -q 'Healthy:.*true'"]
+      interval: 2s
+      timeout: 3s
+      retries: 30
