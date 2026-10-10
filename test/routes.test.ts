@@ -224,8 +224,12 @@ async function crossedSagas(woundWait: boolean) {
 
 test('crossed sagas: priority tickets resolve the deadlock at once (D17)', async () => {
   const { a, b, elapsed, coord } = await crossedSagas(true);
-  assert.equal(a.status, 'confirmed', 'the older saga wins');
-  assert.equal(b.status, 'rejected', 'the younger restarts and finds the capacity truly gone');
+  // Both tickets usually fall in the same millisecond, so the saga id (insert
+  // order, which races) breaks the tie. Ask the saga log which one is older.
+  const { rows } = await db.query("SELECT idem_key FROM sagas ORDER BY ticket_ms, id");
+  const [older, younger] = rows.map((r) => (r.idem_key === 'A' ? a : b));
+  assert.equal(older.status, 'confirmed', 'the older saga wins');
+  assert.equal(younger.status, 'rejected', 'the younger restarts and finds the capacity truly gone');
   assert.ok(coord.stats.wounds >= 1);
   assert.ok(elapsed < 500, `took ${elapsed} ms`);
   console.log(`crossed sagas with tickets: ${elapsed} ms, wounds ${coord.stats.wounds}`);
