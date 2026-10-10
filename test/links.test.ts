@@ -88,3 +88,10 @@ test('wound-wait: an older request wounds younger unpinned holds; a younger one 
   assert.equal(b.tryHold(req('oldest', 1, 0, 60, 8), 1000).kind, 'wait');
   assert.deepEqual(wounded, [5]);
 });
+
+test('holds outside the horizon are refused, not silently granted', () => {
+  const b = book();
+  assert.throws(() => b.tryHold(req('x', 1, DAY, DAY + 10, 8), 1000), RangeError);
+  assert.throws(() => b.tryHold(req('y', 1, DAY - 5, DAY + 5, 8), 1000), RangeError);
+  assert.equal(b.holds.size, 0);
+});

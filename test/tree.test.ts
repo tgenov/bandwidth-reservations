@@ -57,3 +57,17 @@ test('a year-long booking is two point updates', () => {
   assert.ok(!t.admit(10, YEAR - 10, 1, 10).ok);
   assert.equal(t.peak(0, YEAR), 10);
 });
+
+test('requests outside the horizon are refused, not silently admitted', () => {
+  const t = new UsageTree(DAY);
+  // Before the fix these returned { ok: true } every time, over capacity, and
+  // the impulses were dropped, so the bookings never existed.
+  assert.throws(() => t.admit(DAY, DAY + 10, 8, 10), RangeError);
+  assert.throws(() => t.admit(DAY + 5, null, 8, 10), RangeError);
+  assert.throws(() => t.admit(-1, 10, 8, 10), RangeError);
+  assert.throws(() => t.admit(DAY - 10, DAY + 10, 8, 10), RangeError, 'end beyond the horizon');
+  assert.throws(() => t.admit(10, 10, 8, 10), RangeError, 'empty window');
+  assert.throws(() => t.admit(20, 10, 8, 10), RangeError, 'backwards window');
+  assert.ok(t.admit(DAY - 10, DAY, 8, 10).ok, 'ending exactly at the horizon is fine');
+  assert.ok(t.admit(DAY - 1, null, 2, 10).ok, 'open-ended from the last minute is fine');
+});

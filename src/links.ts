@@ -15,7 +15,7 @@
 // Pinned holds belong to a saga that has made its commit decision. They are
 // never wounded and never expire: the saga must roll forward, not back.
 
-import { UsageTree } from './tree.ts';
+import { UsageTree, checkWindow } from './tree.ts';
 
 export type Ticket = readonly [startedAtMs: number, sagaId: number];
 
@@ -72,6 +72,7 @@ export class LinkBook {
 
   // Idempotent by key: asking again for a hold you already have is a no-op.
   tryHold(r: HoldRequest, ttlMs: number): HoldOutcome {
+    checkWindow(r.s, r.e, this.total.n);
     this.expire();
     if (this.holds.has(r.key)) return { kind: 'held' };
     const end = this.end(r.e);
