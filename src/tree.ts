@@ -64,8 +64,14 @@ export class UsageTree {
     return this.range(0, s).sum + this.range(s, Math.min(e, this.n)).maxpref;
   }
 
+  // Add (b > 0) or remove (b < 0) a pulse [s, e); e = null is open-ended.
+  add(s: number, e: number | null, b: number): void {
+    this.addImpulse(s, b);
+    if (e !== null) this.addImpulse(e, -b);
+  }
+
   // Minutes in [s, e) where usage(t) > limit, merged into half-open ranges.
-  private over(s: number, e: number, limit: number): Array<[number, number]> {
+  conflicts(s: number, e: number, limit: number): Array<[number, number]> {
     const hits: number[] = [];
     const walk = (i: number, nlo: number, nhi: number, offset: number): void => {
       // offset = usage just before nlo
@@ -90,10 +96,9 @@ export class UsageTree {
     const end = e ?? this.n;
     const peak = this.peak(s, end);
     if (peak + b > capacity) {
-      return { ok: false, peak, conflicts: this.over(s, end, capacity - b) };
+      return { ok: false, peak, conflicts: this.conflicts(s, end, capacity - b) };
     }
-    this.addImpulse(s, b);
-    if (e !== null) this.addImpulse(e, -b);
+    this.add(s, e, b);
     return { ok: true };
   }
 }
