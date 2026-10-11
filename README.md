@@ -1,7 +1,12 @@
 # bandwidth-reservations
 
 Admission control for partial-capacity bandwidth reservations on a link, built
-algorithm-first and then ported to Postgres. Interview-prep sized.
+algorithm-first and then ported to Postgres, extended to multi-provider routes
+and usage billing. Interview-prep sized.
+
+The design documents live in [`docs/`](docs/README.md): problem statements,
+Gherkin specs, NABC RFCs, and the delivery plan with the contracts between
+components.
 
 ## Design
 
@@ -25,8 +30,8 @@ holding `{sum, maxpref}`:
 
 `peak(s, e) = prefix(0..s−1) + maxpref(delta[s..e−1])`. Check and booking are
 both O(log N), independent of duration: a year-long booking is two point
-updates, with no lazy propagation. Rejections name the conflicting sub-ranges in
-O(k log N).
+updates, with no lazy propagation. In memory, rejections name the conflicting
+sub-ranges in O(k log N); the SQL path reports only the peak.
 
 **In Postgres** (`src/sql.ts`): one READ COMMITTED transaction:
 
@@ -94,7 +99,7 @@ Checking the tests catch real mistakes: switching "wait" to "reject with retry"
 fails the D16 check, and turning off tickets makes the crossed-saga test wait
 out the hold expiry.
 
-## Problems 3 and 4: metering, billing and the wallet ledger (D18-D20)
+## Problems 3 and 4: metering, billing and the wallet ledger (D18–D29)
 
 A NestJS service in `billing/`, with its own package. It turns raw flow records
 into per-minute charges and posts them to a double-entry ledger that splits each
@@ -178,9 +183,10 @@ charge between the route's suppliers and Share.
   the fact log, fenced by a per-link sequence or lease epoch.
 - **The peak query scans facts overlapping the window:** O(m) per admit. A
   persisted change-point table would make it O(log m + k).
-- **Multi-link paths.** A path touches several links. In Postgres that is one
-  transaction locking links in id order. With per-link in-memory owners it
-  needs holds then confirmation (saga or two-phase commit).
+- **Two writers for facts.** The SQL path and the route coordinator write
+  reservations under different locks; one owner per link with a fencing token
+  is needed before both run against the same links.
+- **The SQL path has no horizon check.** There, open-ended means forever.
 - Fixed capacity per link. Supply changes would be facts with the same shape
   and the opposite sign.
 

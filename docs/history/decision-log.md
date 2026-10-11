@@ -9,14 +9,14 @@ any real system. "Raised by" records who made each move: **Todor** (candidate) o
 
 ## Assumed requirements
 
-| Requirement | Value |
-|---|---|
-| Unit sold | Partial capacity on a link (e.g. 2 Gbps of 10 Gbps) for a time window |
-| Time resolution | Minute; windows may be open-ended until cancelled |
-| Admission API | Synchronous confirm/reject, p99 ≤ 200 ms |
-| Load | ~500 requests/s globally, heavily skewed to a few hot links |
-| Overselling | Never |
-| Ordering | No strict first-come-first-served; confirmed reservations are never revoked; rejections carry a correct reason; no request starves |
+| Requirement     | Value                                                                                                                              |
+| --------------- | ---------------------------------------------------------------------------------------------------------------------------------- |
+| Unit sold       | Partial capacity on a link (e.g. 2 Gbps of 10 Gbps) for a time window                                                              |
+| Time resolution | Minute; windows may be open-ended until cancelled                                                                                  |
+| Admission API   | Synchronous confirm/reject, p99 ≤ 200 ms                                                                                           |
+| Load            | ~500 requests/s globally, heavily skewed to a few hot links                                                                        |
+| Overselling     | Never                                                                                                                              |
+| Ordering        | No strict first-come-first-served; confirmed reservations are never revoked; rejections carry a correct reason; no request starves |
 
 ---
 
@@ -54,7 +54,7 @@ any real system. "Raised by" records who made each move: **Todor** (candidate) o
 - **Correction (Claude):** the query planner doesn't decide which transaction gets a lock
   first. The real ordering problem happens before the database: load balancers, app
   instances and connection pools all reorder requests.
-- **Consequence:** a per-link sequencer is not *required* for ordering. It stays available
+- **Consequence:** a per-link sequencer is not _required_ for ordering. It stays available
   as a throughput option (D9).
 
 ## D5. Lock the link row as a schedule mutex
@@ -74,11 +74,11 @@ any real system. "Raised by" records who made each move: **Todor** (candidate) o
 
 Three candidate checks were considered.
 
-| Candidate | Raised by | Problem |
-|---|---|---|
-| Find a gap between existing reservations | Todor | Assumes each reservation takes the whole link; partial reservations overlap legitimately |
-| Sum every reservation overlapping the window | Todor | Gives an upper bound, not the peak: safe, but rejects requests that fit, and gives wrong rejection reasons |
-| Peak total usage at any instant in the window | Claude | Correct |
+| Candidate                                     | Raised by | Problem                                                                                                    |
+| --------------------------------------------- | --------- | ---------------------------------------------------------------------------------------------------------- |
+| Find a gap between existing reservations      | Todor     | Assumes each reservation takes the whole link; partial reservations overlap legitimately                   |
+| Sum every reservation overlapping the window  | Todor     | Gives an upper bound, not the peak: safe, but rejects requests that fit, and gives wrong rejection reasons |
+| Peak total usage at any instant in the window | Claude    | Correct                                                                                                    |
 
 - **Counter-example for summing:** C = 10, A = 8 [14:00, 14:30), B = 8 [15:00, 16:00).
   A request for 2 over [14:00, 16:00) sums to 18 and is rejected, but the peak is 8, so it
@@ -116,12 +116,12 @@ Three candidate checks were considered.
 
 N = minutes in the horizon, m = reservations on the link, k = segments touched.
 
-| Structure | Admit | Space | Note |
-|---|---|---|---|
-| Per-minute array | O(L), where L is the request length in minutes | O(N) | Used as the test oracle |
-| Reservation list + sweep | O(m log m) | O(m) | Cheapest to write, slowest to read |
-| Change-point map | O(log m + k) | O(m) | Ports best to SQL: locks only overlapping segments |
-| Segment tree with range-add / range-max | O(log N) | O(N) | Fastest in memory, but every write updates the root |
+| Structure                               | Admit                                          | Space | Note                                                |
+| --------------------------------------- | ---------------------------------------------- | ----- | --------------------------------------------------- |
+| Per-minute array                        | O(L), where L is the request length in minutes | O(N)  | Used as the test oracle                             |
+| Reservation list + sweep                | O(m log m)                                     | O(m)  | Cheapest to write, slowest to read                  |
+| Change-point map                        | O(log m + k)                                   | O(m)  | Ports best to SQL: locks only overlapping segments  |
+| Segment tree with range-add / range-max | O(log N)                                       | O(N)  | Fastest in memory, but every write updates the root |
 
 **Porting insight (Claude):** the best structure in memory is the worst one to port. In
 memory, one thread owns the tree, so updating the root on every write costs nothing. In
@@ -132,7 +132,7 @@ per link, with fencing), or use the change-point map as the SQL structure.
 ## D10. Record facts first
 
 - **Raised by:** Todor proposed recording facts first: `(link_id, start_time,
-  end_time (NULL = open-ended), requested_capacity)`.
+end_time (NULL = open-ended), requested_capacity)`.
 - **Clarification:** "requested" makes this a request, which is a **command** that can be
   rejected. A reservation is an **event**: it has already happened.
 - **Decision:** the facts table stores accepted reservations only. Requests and rejections
@@ -144,12 +144,12 @@ per link, with fencing), or use the change-point map as the SQL structure.
   - add a per-link `seq` that doubles as a fencing token;
   - store supply as facts too.
 - **Implemented:** `reservations(link_id, start_time, end_time NULL, reserved_mbps,
-  recorded_at)`.
+recorded_at)`.
 
 ## D11. Reservations as superposed pulses
 
-- **Raised by:** Todor: "There's some math out there to give amplitudes… if we model
-  start_end, N… additive interference patterns."
+- **Raised by:** Todor: "Mathematically we can model overlapping reservations as amplitudes… if we model
+  start_end, N… and compute the additive interference patterns."
 - **Formalised:**
   - A reservation is a rectangular pulse, `b·[H(t − s) − H(t − e)]`, and usage is the
     superposition of all pulses.
@@ -175,11 +175,11 @@ per link, with fencing), or use the change-point map as the SQL structure.
 - **Boundary checks:** deliberately introduced off-by-one errors were caught in both the
   tree and the SQL.
 
-| Run (50 concurrent clients, one hot link) | Peak / capacity | p50 | p99 |
-|---|---|---|---|
-| SQL with the link lock | 100 / 100 | 24.6 ms | 115.5 ms |
-| SQL without the lock | **373 / 100** (oversold) | — | — |
-| In-memory tree, one-year minute domain | — | 1.2 µs | 3.1 µs |
+| Run (50 concurrent clients, one hot link) | Peak / capacity          | p50     | p99      |
+| ----------------------------------------- | ------------------------ | ------- | -------- |
+| SQL with the link lock                    | 100 / 100                | 24.6 ms | 115.5 ms |
+| SQL without the lock                      | **373 / 100** (oversold) | —       | —        |
+| In-memory tree, one-year minute domain    | —                        | 1.2 µs  | 3.1 µs   |
 
 - **Isolation finding:** the check is correct only under `READ COMMITTED`. Under
   `REPEATABLE READ`, the snapshot is taken when the first statement starts, which is before
@@ -216,15 +216,15 @@ per link, with fencing), or use the change-point map as the SQL structure.
   rejected for nothing. Answering asynchronously lets R2 be served when R1's hold is
   released.
 - **Decision:** holds count against capacity, so no link is sold twice. A request that only
-  conflicts with *held* capacity waits for those holds to resolve; it is not rejected.
+  conflicts with _held_ capacity waits for those holds to resolve; it is not rejected.
 - **Mechanism (Claude):** two trees per link, one counting confirmed reservations and one
   counting confirmed plus held. Each request then has three outcomes:
 
-  | Check | Outcome |
-  |---|---|
-  | Fits with confirmed and held capacity counted | Admit |
-  | Doesn't fit with only confirmed capacity counted | Reject, with an accurate reason |
-  | Fits only if some holds are released | Wait, then re-check when a hold resolves |
+  | Check                                            | Outcome                                  |
+  | ------------------------------------------------ | ---------------------------------------- |
+  | Fits with confirmed and held capacity counted    | Admit                                    |
+  | Doesn't fit with only confirmed capacity counted | Reject, with an accurate reason          |
+  | Fits only if some holds are released             | Wait, then re-check when a hold resolves |
 
 - **Bounds:**
   - A request waits at most until the hold expires (about a minute, D13).
@@ -270,7 +270,7 @@ per link, with fencing), or use the change-point map as the SQL structure.
     - When the hold resolves, the request is re-checked automatically.
     - The client learns the result through a webhook, or by polling with its idempotency
       key.
-- **Still to check:** whether two *route* sagas can each hold a link the other needs, wait
+- **Still to check:** whether two _route_ sagas can each hold a link the other needs, wait
   on each other, and both time out. That would break the guarantee.
 
 ## D17. Deadlocks between route sagas: priority tickets based on start time
@@ -321,15 +321,15 @@ per link, with fencing), or use the change-point map as the SQL structure.
 - **Decision:**
   - Charges are never edited. Each correction is a new entry appended after the original,
     so the wallet is a history of entries.
-  - With duplicates removed by ID (D18), late records can only reveal an *undercharge*.
+  - With duplicates removed by ID (D18), late records can only reveal an _undercharge_.
     Overcharges come from other causes, such as pricing errors, and get correcting credits.
 - **Refinement (Claude):** the reservation caps the customer's usage rate, so the most a
   customer can owe beyond what has been charged is a known quantity:
 
   `max exposure = price × reserved_rate × (metering lag + enforcement lag)`
-
   - **Metering lag:** how late records can arrive.
   - **Enforcement lag:** how long it takes to actually cut the customer's traffic.
+
 - **Policy (D15), owned by the business:**
   - **Terminate at 0 with no risk:** set aside `max exposure` in the wallet when the
     reservation is admitted. This might conflict with Share's advertised "no upfront
@@ -359,7 +359,7 @@ per link, with fencing), or use the change-point map as the SQL structure.
 
 ## D21. Sagas need a commit point (found while building)
 
-- **Found by:** the implementation of D13. Compensation is only valid *before* the saga
+- **Found by:** the implementation of D13. Compensation is only valid _before_ the saga
   decides to commit.
 - **Failure without it:** a crash or a priority wound (D17) between confirming two links
   leaves a route partly booked.
@@ -400,7 +400,7 @@ per link, with fencing), or use the change-point map as the SQL structure.
   expiry without them.
 - **The tests catch policy regressions:** switching "wait" to "reject with retry" fails the
   D16 test on 2 of 3 seeds.
-- **Bug found:** a reused idempotency key with *different* parameters returned the first
+- **Bug found:** a reused idempotency key with _different_ parameters returned the first
   request's result. Fixed: requests are now checked to match.
 - **Still open:**
   - crash recovery fails sagas that are still holding instead of resuming them;
@@ -412,7 +412,7 @@ per link, with fencing), or use the change-point map as the SQL structure.
 
 - **Found by:** the implementation of D20. The build brief (from Claude) specified
   largest-remainder rounding.
-- **Problem:** largest remainder has the *Alabama paradox*: a larger total can give one
+- **Problem:** largest remainder has the _Alabama paradox_: a larger total can give one
   party a smaller share. Each minute's split is recomputed whenever late usage arrives, so
   ordinary late usage could take money back from a supplier. That contradicts D20's claim
   that late usage never causes clawback.
@@ -481,7 +481,7 @@ per link, with fencing), or use the change-point map as the SQL structure.
     saga forward and write facts for every link in the request, including links never held
     again: a possible oversell.
   - **Fix:**
-    - `restart()` sets the status back to `holding` *before* releasing anything.
+    - `restart()` sets the status back to `holding` _before_ releasing anything.
     - Writing facts requires every link to have a hold.
     - Recovery fails any `committing` saga with missing holds, logs it loudly and releases
       the orphaned holds. It never writes partial facts.

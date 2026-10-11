@@ -83,10 +83,10 @@ to Share's business, not just engineering details.
 
 | # | Problem | Evidence | Why it's hard | Status in this repo |
 |---|---|---|---|---|
-| 1 | Capacity admission without overselling | Spec: path, performance, duration; "trading depends on low latency" | Partial capacity that changes over time; hot routes; tight latency | Done (D1–D12) |
-| 2 | Reserving a whole path across several providers' links, all or nothing | Spec: "the path, the performance" | Routing under latency and bandwidth limits; atomic reservation across links owned by different providers | Next |
-| 3 | Usage metering and pay-per-use billing | No commits, wallet; 45 TB/day today, ×50 | sFlow/gNMI telemetry arrives late, duplicated or out of order, but bills must be exact and reproducible | Planned |
-| 4 | Payments, revenue splitting, reconciliation | Earlier listing | Asynchronous M-Pesa webhooks that can repeat; double-entry ledger; several currencies; idempotency | Planned |
+| 1 | Capacity admission without overselling | Spec: path, performance, duration; "trading depends on low latency" | Partial capacity that changes over time; hot routes; tight latency | Built: [P1](P1-link-admission.md) |
+| 2 | Reserving a whole path across several providers' links, all or nothing | Spec: "the path, the performance" | Routing under latency and bandwidth limits; atomic reservation across links owned by different providers | Built: [P2](P2-route-reservation.md) |
+| 3 | Usage metering and pay-per-use billing | No commits, wallet; 45 TB/day today, ×50 | sFlow/gNMI telemetry arrives late, duplicated or out of order, but bills must be exact and reproducible | Built: [P3](P3-usage-metering.md) |
+| 4 | Payments, revenue splitting, reconciliation | Earlier listing | Asynchronous M-Pesa webhooks that can repeat; double-entry ledger; several currencies; idempotency | Partly built: [P4](P4-wallet-and-settlement.md) (no payouts or treasury) |
 | 5 | Provisioning as a long-running workflow | Nautobot, OcNOS, partner APIs | Steps fail partway; compensation; keeping what was sold consistent with what's configured | Later |
 | 6 | SLA enforcement | SLA-backed service; failure to deliver killed the 2000-era exchanges | Measuring delivered performance per service; automatic credits | Later (builds on #3) |
 | 7 | Supplier integration layer | Partner business/operations system sync | Different APIs and reliability per partner; outbox/inbox; retries | Fold into #4 |
