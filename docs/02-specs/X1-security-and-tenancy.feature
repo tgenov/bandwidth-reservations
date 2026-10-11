@@ -41,7 +41,7 @@ Feature: Security, tenancy and audit
     Background:
       Given buyer accounts "b1" and "b2"
 
-    @X1-S02 @need-X1-N2 @POL-18
+    @X1-S02 @need-X1-N2 @POL-18 @POL-25
     Scenario Outline: Another account's data cannot be read, and its existence is not revealed
       When a principal of "b2" asks for <item> of "b1"
       Then the answer is the same as for <item> of an account that does not exist
@@ -212,7 +212,7 @@ Feature: Security, tenancy and audit
   Rule: Only a link's own supplier changes what is sold on it
 
     @X1-S22 @need-X1-N10 @POL-07
-    Scenario Outline: Nobody but the link's supplier books maintenance, announces a permanent reduction or records an outage on it, network operations aside
+    Scenario Outline: Nobody but the link's supplier books maintenance, announces a permanent reduction or records an outage or its restoration on it, network operations aside
       Given a link of supplier "s1"
       When <principal> tries to <change> on that link
       Then the request is refused as if the link did not exist
@@ -225,6 +225,8 @@ Feature: Security, tenancy and audit
         | a principal of "s2"       | record an unplanned outage               |
         | a principal of buyer "b1" | book planned maintenance                 |
         | a principal of buyer "b1" | record an unplanned outage               |
+        | a principal of "s2"       | record the restoration of an unplanned outage |
+        | a principal of buyer "b1" | announce a permanent reduction           |
 
     @X1-S23 @need-X1-N10 @need-X1-N7 @POL-07 @POL-32
     Scenario Outline: Network operations may record an outage and its restoration, but not commercial changes
@@ -274,7 +276,7 @@ Feature: Security, tenancy and audit
         | finance            | resolving an escalated reversal whose payment never arrived (POL-21)                                     |
         | compliance         | disclosing the account's identity to a supplier under a legal order that requires it (POL-33), approved by a second compliance operator |
 
-    @X1-S13 @need-X1-N7 @POL-32
+    @X1-S13 @need-X1-N7 @POL-32 @POL-30
     Scenario Outline: An operator is refused any action that belongs to another role
       Given an operator in the <role> role (POL-32)
       When the operator tries to <action>
@@ -312,7 +314,7 @@ Feature: Security, tenancy and audit
       And the operator who asked cannot approve it
       And once approved it takes effect, recorded with both operators, the reason and the time
 
-    @X1-S27 @need-X1-N7 @POL-32
+    @X1-S27 @need-X1-N7 @POL-32 @POL-08
     Scenario Outline: Support reads, and acts on an account only at its documented request
       Given an operator in the support role (POL-32)
       When the operator <action>
@@ -321,12 +323,12 @@ Feature: Security, tenancy and audit
       Examples:
         | action                                                               | result                                                      |
         | reads the reservations of "b1"                                       | the answer is given, and the read is recorded               |
-        | cancels a reservation of "b1" at "b1"'s documented request           | the cancellation takes effect, recorded with the request    |
+        | cancels a reservation of "b1" at "b1"'s documented request           | the cancellation takes effect as "b1"'s own change (POL-08), with "b1"'s fees and charges, recorded as an operator action with the request |
         | cancels a reservation of "b1" without a documented request from "b1" | it is refused, nothing changes, and the attempt is recorded |
 
   Rule: Every change to money, capacity, links or keys is attributable, and the record is fixed
 
-    @X1-S14 @need-X1-N8 @POL-19
+    @X1-S14 @need-X1-N8 @POL-19 @POL-07 @POL-16 @POL-30
     Scenario: Every change to money or capacity records the principal and the time
       When any principal confirms, changes, cancels, revokes, releases or terminates a reservation, changes a link's capacity, or moves money
       Then the change records that principal and the time

@@ -244,6 +244,15 @@ Feature: Booking, changing and ending route reservations, all or nothing
       Then B has failed with the reason "deadline passed while waiting" and a `retry_after` of A's remaining deadline at that moment (POL-02)
       And neither A nor B is confirmed, and nothing is held for either
 
+    @P2-S95 @need-P2-N4 @POL-02 @POL-05 @POL-26
+    Scenario: A waiter with a partner leg whose deadline, less commit_margin, has passed when the request ahead fails is outside the contention guarantee
+      Given a request A holds 8 Mbps on L for [10:00, 11:00)
+      And a booking B of 8 Mbps over L and partner link P for the same window waits for it, with a deadline of 30 s, so it may not begin committing after 20 s, its deadline less `commit_margin` (POL-26)
+      When A fails 25 s into B's deadline
+      Then B is not confirmed
+      And B has failed as of its deadline with the reason "deadline passed while waiting" and a `retry_after` of 0 s, A having already had its outcome (POL-02)
+      And nothing is held for A or B on any leg
+
     @P2-S62 @need-P2-N4 @POL-02 @POL-05
     Scenario: Losses caused by failures leave nothing held and tell each buyer why
       Given requests A and B compete for 8 Mbps on L for [10:00, 11:00), A holding it and B waiting
@@ -287,6 +296,14 @@ Feature: Booking, changing and ending route reservations, all or nothing
       When A ends without confirmation for a reason of its own, within B's deadline
       Then B is confirmed
       And C is rejected for no fit
+
+    @P2-S97 @need-P2-N4 @POL-02 @POL-05
+    Scenario: A request that yields in a crossing keeps its place among waiters
+      Given requests A and B crossed on L1 and L2 as in P2-S19, B having released its hold on L2 and waiting, and A holding 8 Mbps on L1 and L2
+      And a request D for 8 Mbps on L2 for [10:00, 11:00), received after B, is also waiting
+      When A ends without confirmation for a reason of its own, within B's and D's deadlines
+      Then B is confirmed
+      And D is rejected for no fit
 
     @P2-S20 @need-P2-N4 @POL-05 @POL-26
     Scenario: A contended request waits, pending, and is confirmed if the capacity in flight is released within its deadline
@@ -393,7 +410,7 @@ Feature: Booking, changing and ending route reservations, all or nothing
     Scenario: Retried partner calls never book the partner twice
       Given the partner fails some calls, times out after doing the work on others and is slow at random
       When any number of route bookings over P are made and each has its outcome, and some confirmed ones are later cancelled
-      Then, after reconciliation (POL-28), Share's record of bookings on P matches the partner's record
+      Then after reconciliation (POL-28) Share's record of bookings on P matches the partner's record
 
     @P2-S29 @need-P2-N7 @need-P2-N1
     Scenario: Share never confirms a leg the partner has not confirmed
@@ -475,13 +492,21 @@ Feature: Booking, changing and ending route reservations, all or nothing
       Then Share cancels the booking on Q, bearing its cost (POL-23)
       And the buyer is not charged for the failed request
 
+    @P2-S96 @need-P2-N4 @need-P2-N7 @POL-02 @POL-05 @POL-28
+    Scenario: A partner refusal caused by Share's own booking for an undecided request is contention: the refused request waits and asks again
+      Given a request A of 8 Mbps over Share link L1 and Q for [10:00, 11:00) is pending, and Q has been booked for it (POL-28)
+      And a buyer's booking B of 8 Mbps over Share link L2 and Q for [10:00, 11:00) is pending, with `wait` at its default
+      When the partner says B's leg does not fit, while A's booking on Q overlaps B's window and A is not yet decided
+      Then B is not rejected, and waits, pending, within its own deadline (POL-02)
+      And if A then fails, once Share has cancelled A's booking on Q (POL-28), Share asks the partner for B's leg again, within B's deadline
+
     @P2-S36 @need-P2-N7 @POL-26 @POL-28
     Scenario: A partner whose holds are too short counts as a partner without holds
       Given partner link S holds capacity for less than `route_deadline_max` plus `commit_margin` (POL-26)
       When a buyer books a route over S and Q
       Then the booking is rejected before anything is held, stating that a route may include at most one leg without holds
 
-    @P2-S37 @need-P2-N7 @need-P2-N1
+    @P2-S37 @need-P2-N7 @need-P2-N1 @POL-26 @POL-28
     Scenario: A route over two partners with holds of different lengths is all or nothing
       Given a route over partner links P1 and P2, whose holds last different lengths of time, each lasting at least `route_deadline_max` + `commit_margin` (70 s at the defaults)
       When the booking has its outcome
@@ -540,6 +565,18 @@ Feature: Booking, changing and ending route reservations, all or nothing
       Given an account with no confirmed reservation and nothing in flight
       When it books a route of three legs at 1,000 Mbps
       Then the booking is not rejected for the account's limit on capacity in flight, which counts it as 1,000 Mbps
+
+    @P2-S98 @need-P2-N8 @POL-25
+    Scenario Outline: The account's limit on capacity in flight grows with its largest confirmed reservation
+      Given an account whose largest confirmed reservation is 200 Mbps, so its `account_inflight_limit` is 2,000 Mbps, ten times that, above `account_inflight_floor` (POL-25)
+      And it has <in flight> Mbps in requests not yet decided
+      When it books <rate> Mbps
+      Then the booking <result>
+
+      Examples:
+        | in flight | rate | result                                                                          | why                 |
+        | 1,500     | 500  | is not rejected for the account's limit on capacity in flight                  | 1,500 + 500 = 2,000 |
+        | 2,000     | 1    | is rejected stating that the account's limit on capacity in flight is reached | 2,000 + 1 > 2,000   |
 
     @P2-S41 @need-P2-N8 @POL-25
     Scenario Outline: Booking requests above a rate limit are not accepted, and the key may be used again
@@ -747,7 +784,7 @@ Feature: Booking, changing and ending route reservations, all or nothing
       Then R ends at 10:01
       And the extension fails with the reason "reservation ended" and holds nothing
 
-    @P2-S94 @need-P2-N9 @POL-08
+    @P2-S94 @need-P2-N9 @POL-08 @POL-05
     Scenario Outline: A shortening to the next minute boundary is a cancellation; any other shortening waits its turn
       Given an extension of R to 20:00 is pending, waiting for capacity in flight on L2
       When the account shortens R to end at <end>

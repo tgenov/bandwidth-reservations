@@ -78,7 +78,7 @@ Feature: Wallet, funds holds, ledger and supplier settlement
         | no provider reference                               |
         | no account                                          |
 
-    @P4-S57 @need-P4-N15 @POL-29
+    @P4-S57 @need-P4-N15 @POL-29 @POL-08
     Scenario Outline: Every money-moving input moves money once, however often it is delivered or submitted
       When the same <input> is delivered or submitted more than once, with the same source reference
       Then money moves once for it
@@ -98,6 +98,8 @@ Feature: Wallet, funds holds, ledger and supplier settlement
         | movement for a cost Share bears            |
         | settlement of a cancellation fee           |
         | posting of a supplier debt                 |
+        | resolution of a money escalation           |
+        | movement of Share's own funds              |
 
     @P4-S99 @need-P4-N15 @POL-29
     Scenario: A source reference reused by a different principal is refused and moves no money
@@ -126,6 +128,18 @@ Feature: Wallet, funds holds, ledger and supplier settlement
         | rate      | kes   | exact     | usd      |
         | 0.0077    | 1,000 | 7.7       | 7.700000 |
         | 0.0077123 | 1,234 | 9.5169782 | 9.516979 |
+
+    @P4-S103 @need-P4-N2 @need-P4-N14 @POL-20 @POL-24
+    Scenario Outline: The difference between the micros credited and the partner's USD amount is posted to Share's own account
+      Given buyer "b1" was credited 9.516979 USD for a top-up of 1,234 KES at a shown rate of 0.0077123 USD per KES (P4-S06)
+      When the payment partner reports the funds it received for that top-up as <reported> USD
+      Then an FX difference of <difference> USD is posted to Share's own account (POL-20)
+      And the daily reconciliation finds the funds at the partner equal to the signed balances, to the micro (POL-24)
+
+      Examples:
+        | reported | difference | why                     |
+        | 9.520000 | +0.003021  | 9.520000 - 9.516979     |
+        | 9.510000 | -0.006979  | 9.510000 - 9.516979     |
 
     @P4-S58 @need-P4-N2 @POL-20
     Scenario: A payment arriving after fx_quote_validity is credited at the partner's rate at notification
@@ -424,7 +438,7 @@ Feature: Wallet, funds holds, ledger and supplier settlement
       And the fee of 0.500000 USD is charged, leaving a ledger balance of -0.288000 USD
       And that negative balance is collected from the next top-up or written off (POL-21), at Share's cost (POL-23), Share's loss being at most the lower of the fee and the coverage
 
-    @P4-S101 @need-P4-N5 @need-P4-N3 @POL-16 @POL-15 @POL-27 @POL-18
+    @P4-S101 @need-P4-N5 @need-P4-N3 @POL-16 @POL-15 @POL-27 @POL-18 @POL-21 @POL-23
     Scenario: A price change whose larger hold the headroom cannot cover still takes effect, and the account is suspended as for a failed roll-forward
       Given account "b1" has a ledger balance of 0.388000 USD and 0.288000 USD held for one open-ended reservation of 100 Mbps booked at 2 micro-USD per Mbps-minute, a headroom of 0.100000 USD (POL-18)
       And "b1" was warned when its headroom fell below `low_balance_warning`
@@ -432,6 +446,9 @@ Feature: Wallet, funds holds, ledger and supplier settlement
       When the new price takes effect, needing a hold of 0.432000 USD
       Then the reservation accrues 300 micro-USD a minute from then
       And "b1" is suspended, as when a hold cannot roll forward, because the 0.144000 USD more that the hold needs exceeds its headroom
+      And the hold grows by the 0.100000 USD the headroom allows, to 0.388000 USD (POL-16)
+      And the reservation keeps its capacity for the full `suspension_grace` (POL-16)
+      And if "b1" does not resume, the 0.044000 USD of the grace's 0.432000 USD of charges beyond the hold becomes a negative balance under POL-21 and POL-23
 
   Rule: Network operations always knows an account's standing
 
@@ -648,7 +665,7 @@ Feature: Wallet, funds holds, ledger and supplier settlement
       And no share is posted to Share's commission
       And "b1"'s wallet is not debited for it
 
-    @P4-S77 @need-P4-N11 @POL-23 @POL-07 @POL-08 @POL-28
+    @P4-S77 @need-P4-N11 @POL-23 @POL-07 @POL-08 @POL-28 @POL-12
     Scenario Outline: Every cost Share bears is paid from Share's own account to the supplier concerned
       When Share bears <cost>
       Then a money movement from Share's own account to <payee> is posted, with its reason
@@ -658,7 +675,7 @@ Feature: Wallet, funds holds, ledger and supplier settlement
       Examples:
         | cost                                                                                 | payee                                   |
         | the cancellation of a booking on a partner without holds after a later step failed (POL-28) | that partner                    |
-        | the price difference of an accepted equivalent path dearer than the original price (POL-07) | the parties of the equivalent path, split by their weights |
+        | the price difference of an accepted equivalent path dearer than the original price (POL-07) | each supplier of the equivalent path, its share of the Webster split of the difference among the path's parties (POL-12); the commission share is not posted |
         | a partner fee that was not shown at booking (POL-08)                                 | that partner                            |
         | a cancellation fee on a reservation revoked under POL-07                             | that partner                            |
         | a cancellation fee on a reservation its holder cancelled after its rate was cut under POL-07 (POL-08) | that partner                |
@@ -855,8 +872,8 @@ Feature: Wallet, funds holds, ledger and supplier settlement
       Examples:
         | difference                                                                                                                              |
         | the funds held at the payment partner differ from the signed sum of buyer balances and supplier balances, plus Share's own balance there, less payouts the partner has executed that the ledger has not yet confirmed |
-        | a provider transaction in the partner's report matches no ledger top-up, reversal or payout                                             |
-        | a ledger top-up, reversal or payout matches no provider transaction in the partner's report                                             |
+        | a provider transaction in the partner's report matches no ledger top-up, invoice payment, reversal, payout, supplier-debt payment or movement of Share's own funds |
+        | a ledger top-up, invoice payment, reversal, payout, supplier-debt payment or movement of Share's own funds matches no provider transaction in the partner's report |
         | a provider transaction matches more than one ledger movement                                                                            |
 
     @P4-S90 @need-P4-N14 @POL-24 @POL-21 @POL-15 @POL-22
@@ -882,6 +899,22 @@ Feature: Wallet, funds holds, ledger and supplier settlement
       When the reconciliation of day D runs
       Then it finds 0.000000 = -5.000000 + 4.250000 + 0.750000
       And it raises an operational alert that Share's own balance, 0.750000 USD, does not cover the 5.000000 USD receivable it funds, so the 4.250000 USD owed to suppliers is not covered by funds at the partner
+      And no movement owed to a buyer or supplier is refused or delayed because of it (POL-24)
+
+    @P4-S104 @need-P4-N14 @POL-24 @POL-29
+    Scenario Outline: Every kind of partner transaction is matched to one ledger movement, and raises no alert
+      Given on day D the payment partner reports <transaction>
+      And the ledger records it as one <movement>, with its source reference (POL-29)
+      When the reconciliation of day D runs
+      Then the provider transaction matches that one ledger movement
+      And no alert is raised for it
+
+      Examples:
+        | transaction                                                      | movement                                          |
+        | a deposit of 4.250000 USD of Share's own funds                   | movement of Share's own funds (a deposit)         |
+        | a withdrawal of 1.500000 USD of Share's commission               | movement of Share's own funds (a withdrawal)      |
+        | a credit-limit account's payment of a 10.000000 USD invoice      | invoice payment                                   |
+        | a supplier's payment of a 15.000000 USD supplier debt invoiced to it | supplier-debt payment                         |
 
     @P4-S80 @need-P4-N14 @POL-24
     Scenario Outline: Provider settlement reports and bank statements are reconciled daily by the same rule

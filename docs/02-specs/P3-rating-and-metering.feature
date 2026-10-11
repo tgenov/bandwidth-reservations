@@ -152,18 +152,18 @@ Feature: Rating reservations and metered traffic
       Then each minute of B before the end of the notice accrued 8 micro-USD
       And each minute from the end of the notice accrues 4 micro-USD: 2 Mbps × 2
 
-    @P3-S59 @need-P3-N1 @POL-01 @POL-07 @POL-23
+    @P3-S59 @need-P3-N1 @POL-01 @POL-07 @POL-23 @POL-12
     Scenario Outline: A reservation moved to an equivalent path accrues at the lower of its original price and the new path's price
       Given a confirmed open-ended reservation of 100 Mbps on the route, booked at 2 micro-USD per Mbps-minute
       And its holder accepted an equivalent path whose `reservation_price` is <path price> micro-USD per Mbps-minute (POL-07)
       When the reservation has moved to the equivalent path
       Then each minute from the move accrues <accrual> micro-USD, split among the equivalent path's parties (P4)
-      And Share pays <share pays> micro-USD a minute to the equivalent path's parties, from its own account (POL-23, P4)
+      And Share pays the equivalent path's suppliers their shares of the Webster split of <difference> micro-USD a minute among the path's parties, from its own account, with no commission share posted (POL-23, POL-12, P4)
 
       Examples:
-        | path price | accrual | share pays |
-        | 3          | 200     | 100        |
-        | 1          | 100     | 0          |
+        | path price | accrual | difference | why                           |
+        | 3          | 200     | 100        | 100 × 3 − 200: the path is dearer |
+        | 1          | 100     | 0          | the path is cheaper; nothing to pay |
 
   Rule: A partner cancellation fee is charged only if shown at booking, and to the party the policy names
 

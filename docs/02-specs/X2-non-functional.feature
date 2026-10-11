@@ -60,6 +60,19 @@ Feature: Non-functional targets
         | payouts                  | a payout's status                           | 1 s    |
         | reporting and statements | one day's statement                         | 2 s    |
 
+    @X2-S20 @need-X2-N1 @POL-06 @POL-18
+    Scenario Outline: Probes run end to end as a designated probe account, without business side effects
+      Given the designated Share probe account, with its designated probe links and exporters in the region (POL-06)
+      When a probe <action>
+      Then it is handled on the same path as any buyer's or exporter's
+      And nothing it does is rated, settled, shown in a supplier report or reported as quarantined traffic
+
+      Examples:
+        | action                                                       |
+        | books a single probe link, with its funds hold               |
+        | sends a flow record from a probe exporter and it is accepted |
+        | asks for the probe account's balance and headroom            |
+
     @X2-S02 @need-X2-N1 @need-X2-N4 @POL-06
     Scenario: Ingestion may lag but never loses an accepted record
       Given usage ingestion is behind the arriving records
@@ -129,13 +142,26 @@ Feature: Non-functional targets
     @X2-S13 @need-X2-N3 @POL-06 @POL-14
     Scenario Outline: Charges are posted within their timeliness target, and never later than recovery allows
       When the charges for the minutes of a calendar month are posted
-      Then for at least 99.99% of those minutes, <charge> is posted to the ledger within <target> of the minute's end
-      And every such charge is posted within <bound> of the minute's end: the target plus the 5-minute recovery time of rating and posting (X2-S10)
+      Then for at least 99.99% of those minutes, leaving out minutes affected by a declared region disaster (X2-S19), <charge> is posted to the ledger within <target> of the minute's end
+      And every such charge for a minute not affected by a declared region disaster is posted within <bound> of the minute's end: the target plus the 5-minute recovery time of rating and posting on the loss of a node or zone (X2-S10)
 
       Examples:
         | charge                                                          | target                          | bound                  |
         | a reservation's accrual for the minute                          | 2 min                           | 7 min                  |
         | usage-priced traffic whose records arrive within `max_lateness` | `max_lateness` (POL-14) + 2 min | `max_lateness` + 7 min |
+
+    @X2-S19 @need-X2-N3 @need-X2-N4 @POL-06 @POL-14
+    Scenario Outline: On a declared region disaster, the affected minutes' charges are posted within their target plus the regional recovery time
+      Given a region is lost, the loss is declared a disaster, and rating and posting recovers within its 1 h regional recovery time (X2-S10)
+      When the charges for the minutes affected by the disaster are posted
+      Then those minutes are left out of the 99.99% measurement of charge timeliness
+      And every <charge> for them is posted within <bound> of the minute's end: its target plus 1 h
+      And no charge for them is lost or posted twice
+
+      Examples:
+        | charge                                                          | bound                       |
+        | reservation accrual                                             | 1 h 2 min                   |
+        | usage-priced charge whose records arrive within `max_lateness` (POL-14) | `max_lateness` + 1 h 2 min |
 
   Rule: No acknowledged fact is ever lost
 

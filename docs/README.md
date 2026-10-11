@@ -82,7 +82,10 @@ step uses: it documents the row, and is not part of the behaviour.
 - an `@POL-nn` tag for each policy it depends on: every `POL-nn` named in its steps,
   its Examples or its Rule's Background, and the policy that defines a glossary term its
   steps use (for example "headroom" → POL-18, "suspended" → POL-16, "waits" → POL-05,
-  "insufficient funds" → POL-15, "counter-offer" → POL-10).
+  "insufficient funds" → POL-15, "counter-offer" → POL-10, "cancellation fee" → POL-08,
+  "key headroom" → POL-25, "revoked" / "released" / "terminated" (of a reservation) →
+  POL-07 / POL-16 / POL-30). A Rule's Background contributes only the `POL-nn` it names
+  explicitly; the glossary-term rule applies to a scenario's own steps and Examples.
 
 No other tags. Verification status, test names and defect notes are **never** put in a
 `.feature` file.

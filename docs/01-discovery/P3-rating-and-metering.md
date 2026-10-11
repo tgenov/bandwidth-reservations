@@ -113,7 +113,7 @@ made in the mock interview. "Decided" means set in the [policy register](../02-s
 | Every record carries the bytes of one flow, its start time and its end time. | *Assumed* (POL-13 needs the start time) |
 | Delivery to billing is at least once. | *Assumed* |
 | Billing resolution is one minute. | *Assumed* (follows the minute resolution of reservations) |
-| A record can be attributed to an account, a route and, where there is one, a reservation. | *Assumed* (see open question 3) |
+| A record can be attributed to an account, a route and, where there is one, a reservation. | *Assumed* (see open question 2) |
 | 45 TB of traffic a day today; the rebuild is for about 50× the current scale. | *Confirmed* (Share's claim; job listing); what "50×" measures is *Inferred* |
 | No commits and no upfront payment. | *Confirmed* (Share's public product description), as interpreted by POL-15 |
 | Money is exact: no floating point, reproducible from stored data. | *Assumed* |

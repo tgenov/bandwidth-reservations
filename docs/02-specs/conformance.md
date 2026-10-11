@@ -9,7 +9,8 @@ requirements, and the code will then be changed to conform. Until then every row
 The matrix is regenerated whenever scenarios change; it reflects the specs as aligned
 with the consolidated [policy register](policy-register.md) of 2026-10-11 (see also the
 requirements-gate resolution records [02](../reviews/02-requirements-gate-resolution.md)
-and [03](../reviews/03-requirements-gate-resolution.md)). Rows are in file order, which is Rule order; new IDs are numbered after each
+and [03](../reviews/03-requirements-gate-resolution.md), and the final-gate resolution
+record [04](../reviews/04-requirements-final-resolution.md)). Rows are in file order, which is Rule order; new IDs are numbered after each
 file's previous highest ID.
 
 The `.feature` files never carry verification status, test names or defect notes; they
@@ -106,11 +107,13 @@ plan, not in the scenario.
 | P2-S18 | A request that asks not to wait is rejected at once with retry_after when capacity it needs is in flight | TBD | — | not assessed |
 | P2-S59 | A request that asked not to wait is outside the contention guarantee | TBD | — | not assessed |
 | P2-S61 | A request whose deadline is shorter than the outcome it waits on is outside the contention guarantee | TBD | — | not assessed |
+| P2-S95 | A waiter with a partner leg whose deadline, less commit_margin, has passed when the request ahead fails is outside the contention guarantee | TBD | — | not assessed |
 | P2-S62 | Losses caused by failures leave nothing held and tell each buyer why | TBD | — | not assessed |
 | P2-S19 | In a crossing, the older request keeps its holds and the younger releases its conflicting holds and waits | TBD | `test/routes.test.ts` › "crossed sagas: priority tickets resolve the deadlock at once (D17)" *(prior evidence, to be re-validated)* | not assessed |
 | P2-S60 | The younger request of a crossing is confirmed if the older then ends without confirmation | TBD | — | not assessed |
 | P2-S87 | A cycle of three waiting requests is broken, and the oldest is confirmed before any deadline | TBD | — | not assessed |
 | P2-S88 | In a broken cycle, the next oldest is confirmed if the oldest then ends without confirmation | TBD | — | not assessed |
+| P2-S97 | A request that yields in a crossing keeps its place among waiters | TBD | — | not assessed |
 | P2-S20 | A contended request waits, pending, and is confirmed if the capacity in flight is released within its deadline | TBD | — | not assessed |
 | P2-S52 | A waiting request whose capacity is then confirmed to the request ahead of it is rejected with a counter-offer | TBD | — | not assessed |
 | P2-S21 | Changing the priority rule does not change the outcome of uncontended requests | TBD | — | not assessed |
@@ -134,6 +137,7 @@ plan, not in the scenario.
 | P2-S33 | A partner without holds is booked only after every other leg and the funds are secured | TBD | — | not assessed |
 | P2-S34 | A route with two legs on partners without holds is rejected before anything is held | TBD | — | not assessed |
 | P2-S35 | A failure after the partner without holds was booked cancels it at Share's cost | TBD | — | not assessed |
+| P2-S96 | A partner refusal caused by Share's own booking for an undecided request is contention: the refused request waits and asks again | TBD | — | not assessed |
 | P2-S36 | A partner whose holds are too short counts as a partner without holds | TBD | — | not assessed |
 | P2-S37 | A route over two partners with holds of different lengths is all or nothing | TBD | — | not assessed |
 | P2-S38 | A booking the account cannot fund is rejected, stating the payment needed | TBD | — | not assessed |
@@ -141,6 +145,7 @@ plan, not in the scenario.
 | P2-S40 | A booking beyond a limit on capacity in flight is rejected | TBD | — | not assessed |
 | P2-S54 | A new account can have capacity in flight up to account_inflight_floor | TBD | — | not assessed |
 | P2-S66 | Capacity in flight is counted once per request, at its reserved rate, whatever the number of legs | TBD | — | not assessed |
+| P2-S98 | The account's limit on capacity in flight grows with its largest confirmed reservation | TBD | — | not assessed |
 | P2-S41 | Booking requests above a rate limit are not accepted, and the key may be used again | TBD | — | not assessed |
 | P2-S67 | Status polls above key_poll_limit are not accepted | TBD | — | not assessed |
 | P2-S68 | Status polls do not count toward booking rate limits; retries do | TBD | — | not assessed |
@@ -243,6 +248,7 @@ plan, not in the scenario.
 | P4-S99 | A source reference reused by a different principal is refused and moves no money | TBD | — | not assessed |
 | P4-S100 | A money-moving input redelivered long after the booking retention still moves nothing | TBD | — | not assessed |
 | P4-S06 | A KES top-up is credited at the rate shown before the buyer confirmed, rounded up to the micro | TBD | — | not assessed |
+| P4-S103 | The difference between the micros credited and the partner's USD amount is posted to Share's own account | TBD | — | not assessed |
 | P4-S58 | A payment arriving after fx_quote_validity is credited at the partner's rate at notification | TBD | — | not assessed |
 | P4-S07 | A provider amount in USD converts exactly into micros | TBD | — | not assessed |
 | P4-S08 | Confirming a reservation holds funds for the coverage window, without charging them | TBD | — | not assessed |
@@ -334,6 +340,7 @@ plan, not in the scenario.
 | P4-S54 | The daily reconciliation proves what must agree, and reports every difference | TBD | — | not assessed |
 | P4-S90 | Funds at the partner equal the signed balances, less payouts executed but not yet confirmed, and no alert is raised | TBD | — | not assessed |
 | P4-S91 | Share's own balance below the receivables it funds is an alert, even when the sums agree | TBD | — | not assessed |
+| P4-S104 | Every kind of partner transaction is matched to one ledger movement, and raises no alert | TBD | — | not assessed |
 | P4-S80 | Provider settlement reports and bank statements are reconciled daily by the same rule | TBD | — | not assessed |
 | P4-S81 | A reconciliation not completed by 12:00 UTC on the next day is an operational alert | TBD | — | not assessed |
 | X1-S01 | An unauthenticated request changes nothing and reveals nothing | TBD | — | not assessed |
@@ -354,7 +361,7 @@ plan, not in the scenario.
 | X1-S21 | An account cannot have more than account_max_keys keys | TBD | — | not assessed |
 | X1-S08 | The same idempotency key used by two accounts gives two independent requests | TBD | — | not assessed |
 | X1-S09 | An idempotency key reveals nothing about another account's request | TBD | — | not assessed |
-| X1-S22 | Nobody but the link's supplier books maintenance, announces a permanent reduction or records an outage on it, network operations aside | TBD | — | not assessed |
+| X1-S22 | Nobody but the link's supplier books maintenance, announces a permanent reduction or records an outage or its restoration on it, network operations aside | TBD | — | not assessed |
 | X1-S23 | Network operations may record an outage and its restoration, but not commercial changes | TBD | — | not assessed |
 | X1-S10 | A notification not proven authentic moves no money and is recorded | TBD | — | not assessed |
 | X1-S11 | A webhook can be verified as coming from Share and unaltered | TBD | — | not assessed |
@@ -369,6 +376,7 @@ plan, not in the scenario.
 | X2-S01 | Availability per capability | TBD | — | not assessed |
 | X2-S16 | A minute is available only if at least 90% of its probes succeed | TBD | — | not assessed |
 | X2-S18 | Each capability is probed by its own operation, against its own per-probe limit | TBD | — | not assessed |
+| X2-S20 | Probes run end to end as a designated probe account, without business side effects | TBD | — | not assessed |
 | X2-S02 | Ingestion may lag but never loses an accepted record | TBD | — | not assessed |
 | X2-S03 | Admission sustains the design load, on the hottest link too, within its latency targets | TBD | — | not assessed |
 | X2-S04 | Metering keeps up with the design volume of traffic | TBD | — | not assessed |
@@ -379,6 +387,7 @@ plan, not in the scenario.
 | X2-S17 | A change of standing reaches network operations within standing_notice_time of the decision | TBD | — | not assessed |
 | X2-S08 | Suspension is enforced within 60 s of the decision | TBD | — | not assessed |
 | X2-S13 | Charges are posted within their timeliness target, and never later than recovery allows | TBD | — | not assessed |
+| X2-S19 | On a declared region disaster, the affected minutes' charges are posted within their target plus the regional recovery time | TBD | — | not assessed |
 | X2-S09 | An acknowledged fact survives the loss of a node or a zone | TBD | — | not assessed |
 | X2-S12 | No acknowledged fact is lost on the loss of a region | TBD | — | not assessed |
 | X2-S14 | A fact is acknowledged only once it is durable in two regions | TBD | — | not assessed |

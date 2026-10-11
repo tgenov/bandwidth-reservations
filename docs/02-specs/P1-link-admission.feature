@@ -443,7 +443,7 @@ Feature: Selling capacity on one link without overselling
       Then only the 2 Mbps added to A are affected, and B is not
       And when `revocation_notice` (POL-07) has passed, A is 4 Mbps and B is still 4 Mbps
 
-    @P1-S47 @need-P1-N8 @POL-07
+    @P1-S47 @need-P1-N8 @POL-07 @POL-08
     Scenario: Only just enough Mbps are taken from the newest part, and its holder may then cancel without fee
       Given no equivalent path exists for A or B
       When the link's supplier announces a permanent reduction of its capacity to 6 Mbps
