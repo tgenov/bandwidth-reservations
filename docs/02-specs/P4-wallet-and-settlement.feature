@@ -276,18 +276,18 @@ Feature: Wallet, funds holds, ledger and supplier settlement
 
     @P4-S15 @need-P4-N4 @POL-18
     Scenario: The headline figure is available headroom, net of funds held and usage exposure
-      Given account "b1" has a ledger balance of 1.000000 USD, 0.288000 USD held, a usage exposure of 0.032000 USD and no credit limit
+      Given account "b1" has a ledger balance of 1.000000 USD, 0.288000 USD held, a usage exposure of 0.033250 USD and no credit limit
       When "b1" asks for its balance
-      Then the headline figure is 0.680000 USD of available headroom
+      Then the headline figure is 0.678750 USD of available headroom
 
     @P4-S16 @need-P4-N4 @POL-18 @POL-14
     Scenario: The itemised answer adds up to the headline
-      Given account "b1" has a ledger balance of 1.000000 USD, 0.288000 USD of funds held, unposted usage of 0.002000 USD, a lateness bound of 0.030000 USD and no credit limit
+      Given account "b1" has a ledger balance of 1.000000 USD, 0.288000 USD of funds held, unposted usage of 0.002000 USD, a lateness bound of 0.031250 USD and no credit limit
       And 0.000400 USD of its charges have accrued but are not yet posted
       When "b1" asks for its balance
-      Then the answer shows the ledger balance 1.000000 USD, funds held 0.288000 USD, and usage exposure 0.032000 USD as unposted usage 0.002000 USD and lateness bound 0.030000 USD
+      Then the answer shows the ledger balance 1.000000 USD, funds held 0.288000 USD, and usage exposure 0.033250 USD as unposted usage 0.002000 USD and lateness bound 0.031250 USD
       And it shows the 0.000400 USD accrued but not yet posted, for information, as within the funds held
-      And the headline is 0.680000 USD: the ledger balance less the funds held less the usage exposure
+      And the headline is 0.678750 USD: the ledger balance less the funds held less the usage exposure
 
     @P4-S17 @need-P4-N4
     Scenario: The ledger balance shown equals the ledger

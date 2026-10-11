@@ -522,17 +522,30 @@ Feature: Rating reservations and metered traffic
     Scenario: The business can see each account's usage exposure, in its two parts
       Given account "a1" uses one best-effort product whose highest `usage_price` on any route is 10,000 micro-USD per GB
       And "a1"'s `usage_rate_cap` (POL-14) on it is 100 Mbps
-      And records of 0.2 GB of "a1"'s usage-priced traffic have been received but not yet posted
+      And records of 0.2 GB of "a1"'s usage-priced traffic have been accepted by usage ingestion but not yet posted
       When finance asks for "a1"'s usage exposure
       Then the unposted usage is 2,000 micro-USD, at 10,000 micro-USD per GB in those minutes
-      And the lateness bound is 30,000 micro-USD: 100 Mbps for `max_lateness` (180 s) plus the 60 s enforcement target, 3 GB, at 10,000 micro-USD per GB
-      And the usage exposure is 32,000 micro-USD
+      And the lateness bound is 31,250 micro-USD: 100 Mbps for `max_lateness` (180 s) plus `attribution_lag_max` (10 s) plus the 60 s enforcement target, 250 s, 3.125 GB, at 10,000 micro-USD per GB
+      And the usage exposure is 33,250 micro-USD
 
     @P3-S38 @need-P3-N10 @POL-14
     Scenario: A record later than max_lateness is still charged and reported as a breach
       When a record arrives later than `max_lateness` (POL-14) after the end of its minute
       Then it is charged like any late record
       And it is reported as a breach of the usage exposure bound, with its exporter and lateness
+
+    @P3-S61 @need-P3-N10 @POL-14 @POL-18
+    Scenario: An accepted record counts in unposted usage from within attribution_lag_max of its acceptance until it is posted
+      Given account "a1" uses a best-effort product
+      When usage ingestion accepts a flow record of "a1"'s usage-priced traffic
+      Then within `attribution_lag_max` (POL-14) of its acceptance, its traffic is counted in "a1"'s unposted usage, and so in its headroom (POL-18)
+      And it stays counted in unposted usage until its charge is posted, and no longer
+
+    @P3-S62 @need-P3-N10 @POL-14
+    Scenario: A record counted in unposted usage later than attribution_lag_max after its acceptance is reported as a breach
+      When an accepted record is counted in its account's unposted usage later than `attribution_lag_max` (POL-14) after its acceptance
+      Then it is reported as a breach of the usage exposure bound, with its exporter and attribution lag
+      And it is charged like any other record
 
   Rule: Accepted records are kept as evidence of what was delivered
 

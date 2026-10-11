@@ -20,7 +20,7 @@ provisionally and pending ratification by the business.
 |---|---|---|
 | 1. Discovery | [`01-discovery/`](01-discovery/) | Problem statements, each with a table of needs |
 | 2. Specification | [`02-specs/`](02-specs/) | Gherkin `.feature` files, plus the [policy register](02-specs/policy-register.md), the [glossary](02-specs/glossary.md) and the [conformance matrix](02-specs/conformance.md) |
-| 3. Design | [`03-rfcs/`](03-rfcs/) | RFCs using NABC (Need, Approach, Benefits, Competition) |
+| 3. Design | [`03-rfcs/`](03-rfcs/) | RFCs using NABC (Need, Approach, Benefits, Competition): the [architecture overview, RFC-000](03-rfcs/RFC-000-architecture.md), and the detailed RFC-001 … RFC-006 built on it (being rewritten) |
 | 4. Delivery | [`04-delivery/`](04-delivery/) | Decomposition, interfaces and contracts between systems |
 
 The original, chronological record of how earlier decisions were reached is kept in
@@ -28,18 +28,22 @@ The original, chronological record of how earlier decisions were reached is kept
 
 ## The problems
 
-| ID | Problem | Statement | Spec | RFC (pending revision) |
+| ID | Problem | Statement | Spec | RFC |
 |---|---|---|---|---|
-| P1 | Selling capacity on one link without overselling | [P1](01-discovery/P1-link-admission.md) | [P1](02-specs/P1-link-admission.feature) | [RFC-001](03-rfcs/RFC-001-link-admission.md) |
-| P2 | Booking, changing and ending route reservations, all or nothing | [P2](01-discovery/P2-route-reservation.md) | [P2](02-specs/P2-route-reservation.feature) | [RFC-002](03-rfcs/RFC-002-route-reservation.md) |
-| P3 | Rating reservations and metered traffic | [P3](01-discovery/P3-rating-and-metering.md) | [P3](02-specs/P3-rating-and-metering.feature) | [RFC-003](03-rfcs/RFC-003-usage-metering.md) |
-| P4 | Wallet, funds holds, ledger and supplier settlement | [P4](01-discovery/P4-wallet-and-settlement.md) | [P4](02-specs/P4-wallet-and-settlement.feature) | [RFC-004](03-rfcs/RFC-004-wallet-and-settlement.md) |
-| X1 | Security, tenancy and audit (cross-cutting) | [X1](01-discovery/X1-security-and-tenancy.md) | [X1](02-specs/X1-security-and-tenancy.feature) | none yet |
-| X2 | Non-functional targets (cross-cutting) | [X2](01-discovery/X2-non-functional-targets.md) | [X2](02-specs/X2-non-functional.feature) | none yet |
+| All | Architecture overview: components, interactions, consistency, topology, and the allocation of every need | all of the below | all of the below | [RFC-000](03-rfcs/RFC-000-architecture.md) (draft) |
+| P1 | Selling capacity on one link without overselling | [P1](01-discovery/P1-link-admission.md) | [P1](02-specs/P1-link-admission.feature) | RFC-001 Link schedule and admission (being rewritten; [pre-baseline draft](03-rfcs/RFC-001-link-admission.md)) |
+| P2 | Booking, changing and ending route reservations, all or nothing | [P2](01-discovery/P2-route-reservation.md) | [P2](02-specs/P2-route-reservation.feature) | RFC-002 Booking coordination (being rewritten; [pre-baseline draft](03-rfcs/RFC-002-route-reservation.md)) |
+| P3 | Rating reservations and metered traffic | [P3](01-discovery/P3-rating-and-metering.md) | [P3](02-specs/P3-rating-and-metering.feature) | RFC-003 Rating and metering (being rewritten; [pre-baseline draft](03-rfcs/RFC-003-usage-metering.md)) |
+| P4 | Wallet, funds holds, ledger and supplier settlement | [P4](01-discovery/P4-wallet-and-settlement.md) | [P4](02-specs/P4-wallet-and-settlement.feature) | RFC-004 Wallet, ledger and settlement (being rewritten; [pre-baseline draft](03-rfcs/RFC-004-wallet-and-settlement.md)) |
+| X1 | Security, tenancy and audit (cross-cutting) | [X1](01-discovery/X1-security-and-tenancy.md) | [X1](02-specs/X1-security-and-tenancy.feature) | RFC-005 Security and tenancy (being rewritten) |
+| X2 | Non-functional targets (cross-cutting) | [X2](01-discovery/X2-non-functional-targets.md) | [X2](02-specs/X2-non-functional.feature) | RFC-006 Availability, durability and operations (being rewritten) |
 
-The RFCs and the delivery documents ([plan](04-delivery/plan.md) ·
-[contracts](04-delivery/contracts.md)) predate this requirements baseline and are **pending
-revision** against it. Where they disagree with the requirements, the requirements win.
+RFC-000 is written against this requirements baseline. The drafts of RFC-001 … RFC-004
+predate it and are **superseded**: they are being rewritten on RFC-000 (with RFC-005 and
+RFC-006 new), and are kept only as pre-baseline drafts until then. The delivery documents
+([plan](04-delivery/plan.md) · [contracts](04-delivery/contracts.md)) also predate the
+baseline and are pending revision against it. Where any of them disagrees with the
+requirements, the requirements win.
 
 X1 and X2 are cross-cutting requirement sets that P1–P4 inherit. They are numbered apart
 from P1–P4 because the company profile's ranked list already uses "Problem 5" and
@@ -111,11 +115,14 @@ scenario: Scenario · Design (RFC section) · Tests · Status. It is filled in a
 conformance stage, after design. It also maps the previous baseline's scenario IDs to the
 current ones.
 
-**RFCs** (`03-rfcs/RFC-00n-*.md`). Header table (Status, Satisfies, Decisions), then
+**RFCs** (`03-rfcs/RFC-00n-*.md`). Header table (Status, Satisfies, Policies, Prior
+decisions (history log D-nn, optional)), then
 **Need** · **Approach** (the design, with the detail needed to build it) ·
 **Benefits** (quantified where measured) · **Competition** (alternatives considered and
 why they lost) · Risks and open issues. "Satisfies" lists the spec scenario IDs.
-"Decisions" lists the policies (`POL-nn`) the RFC depends on. Design-level acceptance
+"Policies" lists the policies (`POL-nn`) the RFC depends on. "Prior decisions", if
+present, cites the entries of the [history decision log](history/decision-log.md)
+(`D-nn`) whose reasoning the RFC carries forward; the requirements never depend on it. Design-level acceptance
 tests (for example the mechanics of capacity holds or of a split method) belong to the RFC
 that chose the mechanism, each citing the scenario it serves.
 

@@ -9,8 +9,9 @@ requirements, and the code will then be changed to conform. Until then every row
 The matrix is regenerated whenever scenarios change; it reflects the specs as aligned
 with the consolidated [policy register](policy-register.md) of 2026-10-11 (see also the
 requirements-gate resolution records [02](../reviews/02-requirements-gate-resolution.md)
-and [03](../reviews/03-requirements-gate-resolution.md), and the final-gate resolution
-record [04](../reviews/04-requirements-final-resolution.md)). Rows are in file order, which is Rule order; new IDs are numbered after each
+and [03](../reviews/03-requirements-gate-resolution.md), the final-gate resolution
+record [04](../reviews/04-requirements-final-resolution.md), and the amendments from the
+architecture review [05](../reviews/05-requirements-amendments-from-architecture.md)). Rows are in file order, which is Rule order; new IDs are numbered after each
 file's previous highest ID.
 
 The `.feature` files never carry verification status, test names or defect notes; they
@@ -91,13 +92,16 @@ plan, not in the scenario.
 | P2-S08 | A request whose outcome is not yet known is pending, and the outcome can be polled with its idempotency key | TBD | — | not assessed |
 | P2-S09 | A buyer who registered a webhook is sent the outcome | TBD | — | not assessed |
 | P2-S10 | An outcome never changes once reported | TBD | — | not assessed |
+| P2-S99 | A status read never contradicts the decided outcome, and reflects it within status_staleness | TBD | — | not assessed |
 | P2-S11 | A request without a deadline gets the default deadline | TBD | — | not assessed |
 | P2-S12 | A deadline outside its bounds is invalid | TBD | — | not assessed |
 | P2-S86 | A deadline at the edge of its bounds is valid | TBD | — | not assessed |
 | P2-S13 | A request whose partner never answers has failed by its deadline and holds nothing | TBD | — | not assessed |
 | P2-S55 | A request with a partner leg does not begin committing later than its deadline less commit_margin | TBD | — | not assessed |
 | P2-S14 | Capacity held for a request that is not confirmed is free on Share links at once, and at a partner by the deadline | TBD | — | not assessed |
-| P2-S93 | Share releases every hold of a request at its deadline, a partner hold that would last longer included | TBD | — | not assessed |
+| P2-S93 | Share releases every hold of a request at its deadline, a partner hold included | TBD | — | not assessed |
+| P2-S100 | Share sets a partner hold to expire at the request's deadline | TBD | — | not assessed |
+| P2-S101 | Capacity held at a partner lapses at the deadline even when Share is unavailable then | TBD | — | not assessed |
 | P2-S56 | A buyer may withdraw a pending request | TBD | — | not assessed |
 | P2-S57 | Withdrawing a request after its partner leg without holds was booked cancels that leg at Share's cost | TBD | — | not assessed |
 | P2-S15 | Competing requests that wait do not all lose | TBD | `test/routes.test.ts` › "randomised contention (seed 11/12/13): never oversold, competitors never all lose, all sagas finish" *(prior evidence, to be re-validated)* | not assessed |
@@ -139,6 +143,7 @@ plan, not in the scenario.
 | P2-S35 | A failure after the partner without holds was booked cancels it at Share's cost | TBD | — | not assessed |
 | P2-S96 | A partner refusal caused by Share's own booking for an undecided request is contention: the refused request waits and asks again | TBD | — | not assessed |
 | P2-S36 | A partner whose holds are too short counts as a partner without holds | TBD | — | not assessed |
+| P2-S102 | A partner that does not accept a hold expiry set by Share counts as a partner without holds | TBD | — | not assessed |
 | P2-S37 | A route over two partners with holds of different lengths is all or nothing | TBD | — | not assessed |
 | P2-S38 | A booking the account cannot fund is rejected, stating the payment needed | TBD | — | not assessed |
 | P2-S39 | A booking beyond an agent key's spending limit is rejected; key spending is counted over the period | TBD | — | not assessed |
@@ -150,11 +155,12 @@ plan, not in the scenario.
 | P2-S67 | Status polls above key_poll_limit are not accepted | TBD | — | not assessed |
 | P2-S68 | Status polls do not count toward booking rate limits; retries do | TBD | — | not assessed |
 | P2-S42 | A suspended account cannot book, and is told the amount that would resume it | TBD | — | not assessed |
-| P2-S69 | A request still pending when its account is suspended is not confirmed | TBD | — | not assessed |
+| P2-S69 | A request not yet decided when its account is suspended is not confirmed | TBD | — | not assessed |
 | P2-S70 | Concurrent bookings by one account are funded as if decided one at a time | TBD | — | not assessed |
 | P2-S71 | Concurrent bookings by one agent key never together exceed its limits | TBD | — | not assessed |
 | P2-S92 | A request holds no capacity until its funds hold is taken | TBD | — | not assessed |
 | P2-S72 | Revoking an agent key fails its pending requests and leaves its reservations with the account | TBD | — | not assessed |
+| P2-S103 | An event after a request's decision does not change its outcome, even while its status still reads pending | TBD | — | not assessed |
 | P2-S73 | A route counter-offer fits every leg, not only the blocking one | TBD | — | not assessed |
 | P2-S43 | A cancellation takes effect at the next minute boundary on every leg | TBD | — | not assessed |
 | P2-S44 | Shortening cancels the remaining part | TBD | — | not assessed |
@@ -238,6 +244,8 @@ plan, not in the scenario.
 | P3-S36 | Recomputing any period gives exactly the recorded charges and amendments | TBD | — | not assessed |
 | P3-S37 | The business can see each account's usage exposure, in its two parts | TBD | — | not assessed |
 | P3-S38 | A record later than max_lateness is still charged and reported as a breach | TBD | — | not assessed |
+| P3-S61 | An accepted record counts in unposted usage from within attribution_lag_max of its acceptance until it is posted | TBD | — | not assessed |
+| P3-S62 | A record counted in unposted usage later than attribution_lag_max after its acceptance is reported as a breach | TBD | — | not assessed |
 | P3-S39 | Accepted records can be retrieved by reservation, link and minute | TBD | — | not assessed |
 | P4-S01 | Repeated and reordered notifications change the wallet once per transaction | TBD | `billing/test/wallet.test.ts` › "payment webhooks (D19 wallet) › repeated and out-of-order webhooks credit the wallet exactly once" *(prior evidence, to be re-validated)* | not assessed |
 | P4-S02 | A reversal arriving before its payment is held and matched | TBD | — | not assessed |
@@ -377,6 +385,7 @@ plan, not in the scenario.
 | X2-S16 | A minute is available only if at least 90% of its probes succeed | TBD | — | not assessed |
 | X2-S18 | Each capability is probed by its own operation, against its own per-probe limit | TBD | — | not assessed |
 | X2-S20 | Probes run end to end as a designated probe account, without business side effects | TBD | — | not assessed |
+| X2-S21 | The funds holds and headroom checks bookings need are held to admission's targets, not the wallet's | TBD | — | not assessed |
 | X2-S02 | Ingestion may lag but never loses an accepted record | TBD | — | not assessed |
 | X2-S03 | Admission sustains the design load, on the hottest link too, within its latency targets | TBD | — | not assessed |
 | X2-S04 | Metering keeps up with the design volume of traffic | TBD | — | not assessed |
@@ -384,6 +393,7 @@ plan, not in the scenario.
 | X2-S15 | A single-link booking on a link with no capacity in flight gets its final answer within ack_budget | TBD | — | not assessed |
 | X2-S06 | A route booking is acknowledged within ack_budget and has its outcome by its deadline | TBD | — | not assessed |
 | X2-S07 | A top-up is credited within 10 s of the provider's notification | TBD | — | not assessed |
+| X2-S22 | An accepted record is counted in headroom within attribution_lag_max of its acceptance | TBD | — | not assessed |
 | X2-S17 | A change of standing reaches network operations within standing_notice_time of the decision | TBD | — | not assessed |
 | X2-S08 | Suspension is enforced within 60 s of the decision | TBD | — | not assessed |
 | X2-S13 | Charges are posted within their timeliness target, and never later than recovery allows | TBD | — | not assessed |

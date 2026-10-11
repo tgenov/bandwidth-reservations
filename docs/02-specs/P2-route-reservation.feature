@@ -108,6 +108,13 @@ Feature: Booking, changing and ending route reservations, all or nothing
       When the buyer asks for its status at any later time within `idempotency_retention` (POL-29)
       Then the same outcome is reported
 
+    @P2-S99 @need-P2-N2 @POL-04
+    Scenario: A status read never contradicts the decided outcome, and reflects it within status_staleness
+      Given a booking request's outcome has been decided
+      When the buyer reads its status at any time after the decision
+      Then the status read reports either pending or the decided outcome, never another outcome
+      And every status read from `status_staleness` (POL-04) after the decision reports the decided outcome
+
   Rule: A request has its outcome by its deadline
 
     @P2-S11 @need-P2-N3 @POL-26
@@ -161,12 +168,25 @@ Feature: Booking, changing and ending route reservations, all or nothing
       And its capacity held at P is released no later than the request's deadline
 
     @P2-S93 @need-P2-N3 @need-P2-N7 @POL-26
-    Scenario: Share releases every hold of a request at its deadline, a partner hold that would last longer included
+    Scenario: Share releases every hold of a request at its deadline, a partner hold included
       Given a pending route booking over Share link L1 and partner link P, with a deadline of 30 s, holds capacity on both
-      And P's hold would last 120 s if left to expire
       When the request's deadline arrives and it has not been confirmed
       Then the request has failed as of its deadline
-      And at its deadline Share releases its hold on L1 and its hold at P, without waiting for the hold at P to expire
+      And at its deadline Share releases its hold on L1 and its hold at P, without waiting for either to lapse by itself
+
+    @P2-S100 @need-P2-N3 @need-P2-N7 @POL-26
+    Scenario: Share sets a partner hold to expire at the request's deadline
+      Given a route booking over Share link L1 and partner link P, with a deadline of 30 s, is pending
+      When Share takes a hold at P for it
+      Then the hold at P is set to expire at the request's deadline (POL-26)
+
+    @P2-S101 @need-P2-N3 @need-P2-N7 @POL-26
+    Scenario: Capacity held at a partner lapses at the deadline even when Share is unavailable then
+      Given a pending route booking over Share link L1 and partner link P, with a deadline of 30 s, holds capacity on both
+      And Share's booking process becomes unavailable before the deadline and stays unavailable until after it
+      When the request's deadline arrives
+      Then the request has failed as of its deadline
+      And from its deadline no capacity is held for it on L1 or at P
 
     @P2-S56 @need-P2-N3 @POL-08
     Scenario: A buyer may withdraw a pending request
@@ -506,6 +526,12 @@ Feature: Booking, changing and ending route reservations, all or nothing
       When a buyer books a route over S and Q
       Then the booking is rejected before anything is held, stating that a route may include at most one leg without holds
 
+    @P2-S102 @need-P2-N7 @POL-26 @POL-28
+    Scenario: A partner that does not accept a hold expiry set by Share counts as a partner without holds
+      Given partner link S holds capacity for at least `route_deadline_max` plus `commit_margin` (POL-26), but does not accept a hold expiry set by Share
+      When a buyer books a route over S and Q
+      Then the booking is rejected before anything is held, stating that a route may include at most one leg without holds
+
     @P2-S37 @need-P2-N7 @need-P2-N1 @POL-26 @POL-28
     Scenario: A route over two partners with holds of different lengths is all or nothing
       Given a route over partner links P1 and P2, whose holds last different lengths of time, each lasting at least `route_deadline_max` + `commit_margin` (70 s at the defaults)
@@ -615,8 +641,8 @@ Feature: Booking, changing and ending route reservations, all or nothing
       And stating that a top-up of 1.072000 USD would resume it: 0.072000 USD to restore the full hold and 1.000000 USD to reach `low_balance_warning`
 
     @P2-S69 @need-P2-N8 @POL-16
-    Scenario: A request still pending when its account is suspended is not confirmed
-      Given a booking request of account "b1" is pending
+    Scenario: A request not yet decided when its account is suspended is not confirmed
+      Given a booking request of account "b1" is pending, its outcome not yet decided
       When "b1" is suspended before the request has its outcome
       Then the request is rejected, stating that the account is suspended and the resume amount (POL-16)
       And it holds nothing
@@ -649,6 +675,20 @@ Feature: Booking, changing and ending route reservations, all or nothing
       When an account administrator of "b1" revokes K
       Then the pending request fails with the reason "key revoked" and holds nothing
       And the confirmed reservation is unaffected and stays with "b1"
+
+    @P2-S103 @need-P2-N8 @need-P2-N3 @need-P2-N2 @POL-04 @POL-16 @POL-25 @POL-08
+    Scenario Outline: An event after a request's decision does not change its outcome, even while its status still reads pending
+      Given a booking request of account "b1", sent with agent key K, has been decided confirmed
+      And a status read of it still reports pending, within `status_staleness` (POL-04) of the decision
+      When <event>
+      Then the request stays confirmed
+      And every status read of it from `status_staleness` after the decision reports confirmed
+
+      Examples:
+        | event                                               |
+        | "b1" is suspended (POL-16)                          |
+        | an account administrator of "b1" revokes K (POL-25) |
+        | the buyer withdraws the request (POL-08)            |
 
   Rule: A route rejection says what the buyer can get instead on every leg
 

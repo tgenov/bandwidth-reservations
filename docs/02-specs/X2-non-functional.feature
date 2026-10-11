@@ -23,7 +23,7 @@ Feature: Non-functional targets
 
     @X2-S01 @need-X2-N1 @POL-06
     Scenario Outline: Availability per capability
-      When the availability of <capability> is measured in each region over a calendar month, as the share of available minutes (X2-N1)
+      When the availability of <capability> is measured in each serving region over a calendar month, as the share of available minutes (X2-N1)
       Then it is at least <target>
 
       Examples:
@@ -73,6 +73,16 @@ Feature: Non-functional targets
         | sends a flow record from a probe exporter and it is accepted |
         | asks for the probe account's balance and headroom            |
 
+    @X2-S21 @need-X2-N1 @need-X2-N5 @POL-06 @POL-15 @POL-18
+    Scenario Outline: The funds holds and headroom checks bookings need are held to admission's targets, not the wallet's
+      When the funds holds and headroom checks that bookings and changes need are measured for <measure>, in each serving region
+      Then they meet admission's <target>, whatever the wallet's own <wallet>
+
+      Examples:
+        | measure                                              | target | wallet |
+        | availability per calendar month (X2-S01)             | 99.99% | 99.9%  |
+        | recovery time on the loss of a node or zone (X2-S10) | 1 min  | 5 min  |
+
     @X2-S02 @need-X2-N1 @need-X2-N4 @POL-06
     Scenario: Ingestion may lag but never loses an accepted record
       Given usage ingestion is behind the arriving records
@@ -93,7 +103,7 @@ Feature: Non-functional targets
       Given traffic at about 2.25 PB per day, 50 times 45 TB per day, as flow records of 100 KB on average
       And records arriving at about 260,000 per second on average, with peaks of 600,000 per second
       When the load is sustained for one hour
-      Then the timeliness targets of X2-S13 are met throughout
+      Then the timeliness targets of X2-S13 and X2-S22 are met throughout
 
   Rule: Each operation meets its latency target under the design load
 
@@ -128,6 +138,13 @@ Feature: Non-functional targets
       Given payment notifications at their design peak of 1,000 per second
       When notifications for completed top-ups arrive
       Then the 99th percentile time from notification to credited headroom is at most 10 s
+
+    @X2-S22 @need-X2-N3 @POL-06 @POL-14 @POL-18
+    Scenario: An accepted record is counted in headroom within attribution_lag_max of its acceptance
+      Given the design load
+      When usage-priced flow records are accepted by usage ingestion over a calendar month
+      Then for at least 99.99% of the month's minutes, leaving out minutes affected by a declared region disaster, every record accepted in the minute is counted in its account's unposted usage, and so in its headroom, within `attribution_lag_max` (POL-14: 10 s) of its acceptance
+      And every record counted later is reported as a breach of the usage exposure bound (POL-14)
 
     @X2-S17 @need-X2-N3 @POL-06 @POL-16
     Scenario: A change of standing reaches network operations within standing_notice_time of the decision

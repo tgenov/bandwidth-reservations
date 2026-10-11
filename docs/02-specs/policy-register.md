@@ -10,7 +10,9 @@ team from public information about the market and about Share (see the
 business must ratify them. Each entry answers a Decision question from the
 [requirements review](../reviews/01-requirements-review.md) (`D-nn` there, `R-nn` the
 finding), and later questions from the requirements gates (`GA-nn`, `GB-nn`, gate A
-`D-nn`, gate B `Dn`) and the final gates (final gate A `D-n`, final gate B `Dn`).
+`D-nn`, gate B `Dn`) and the final gates (final gate A `D-n`, final gate B `Dn`), and
+issues the [architecture overview](../03-rfcs/RFC-000-architecture.md) raised against the
+requirements (`RI-n`).
 
 **How to read an entry.** Each entry states the **current** rule, self-contained: the
 decision as rules, its parameters with their current defaults, why, and the alternatives
@@ -42,9 +44,9 @@ the provenance line under each heading lists the questions it answers.
 | POL-01 | Pricing model | Pay per reservation: per Mbps-minute reserved, accrued per minute, no minimum term; usage pricing only for best-effort, burst and traffic outside a reservation |
 | POL-02 | Contention | The oldest request wins; a waiting younger holder yields; contention alone never makes every competitor lose, for waiters whose deadline less their completion margin outlasts the outcome ahead; refusals caused by Share's own holds or undecided partner bookings are contention |
 | POL-03 | Interrupted route requests | Resume within the deadline; otherwise fail, release, notify |
-| POL-04 | Buyer interaction | An answer within `ack_budget`: final if ready, otherwise `pending`, then poll or webhook |
+| POL-04 | Buyer interaction | An answer within `ack_budget`: final if ready, otherwise `pending`, then poll or webhook; each outcome is decided at one point, and a status read lags it by at most `status_staleness`, never contradicting it |
 | POL-05 | Authority over a link | One schedule owner per link; a single-link booking is a one-leg route; contended requests wait unless `wait = false` |
-| POL-06 | Non-functional targets | 99.99% admission and ingestion, 99.9% wallet, payouts, reporting; ×50 design load; RPO 0; RTO per capability (1 min to 30 min on node or zone loss, 1 h on region loss); a declared region disaster is outside the availability and timeliness measurements; probes use a designated account with no business side effects |
+| POL-06 | Non-functional targets | 99.99% admission and ingestion, 99.9% wallet, payouts, reporting, in each serving region; funds holds and headroom checks for bookings held to admission's targets; ×50 design load; RPO 0; RTO per capability (1 min to 30 min on node or zone loss, 1 h on region loss); a declared region disaster is outside the availability and timeliness measurements; probes use a designated account with no business side effects |
 | POL-07 | Loss of supply | Never revoke silently; stop new sales at once; an outage affects only the minutes it overcommits, all holders alike; maintenance on free capacity only; permanent reductions by notice, newest Mbps first, with an equivalent-path offer at the lower price |
 | POL-08 | Changing a reservation | Cancel or shorten any time; extend or increase by a new admission of the difference; decrease last in, first out; partner fees go wholly to the partner |
 | POL-09 | Selling horizon | Rolling 12 months; open-ended bookings guaranteed as the horizon rolls |
@@ -52,11 +54,11 @@ the provenance line under each heading lists the questions it answers.
 | POL-11 | Money unit and rounding | Micros per currency; each charge line rounded down once; fees exact; residues carried, never taken |
 | POL-12 | Splitting revenue | Webster per route; Share loses ties, then leg order; one party per supplier; rule published |
 | POL-13 | Multi-minute flows | Exporters cut flows at 60 s; longer flows are spread evenly |
-| POL-14 | Late usage | Billed whenever it arrives; exposure bounded by `usage_rate_cap`; breaches of the lateness bound are reported |
+| POL-14 | Late usage | Billed whenever it arrives; exposure bounded by `usage_rate_cap` over lateness, attribution lag and enforcement time; breaches of the bound are reported |
 | POL-15 | Funds at admission | Hold a rolling coverage window (or the partner fee, if larger, while it applies); vetted accounts get credit limits, invoices written off 90 days after due |
 | POL-16 | Suspension | Suspend below zero headroom; keep reservations for a funded grace period, then release; resume automatically at `low_balance_warning` headroom and overdue invoices paid |
 | POL-17 | Unmatched traffic | Kept always; over-rate traffic is policed; carried excess paid by Share; unattributable traffic is quarantined |
-| POL-18 | Balance shown | Available headroom, with balance, held funds, accrued charges and the two parts of usage exposure itemised |
+| POL-18 | Balance shown | Available headroom, with balance, held funds, accrued charges and the two parts of usage exposure itemised; unposted usage counts records accepted by ingestion |
 | POL-19 | History | Bitemporal: every reservation change, who and when, kept 7 years |
 | POL-20 | Currency | USD settlement; conversion at top-up (rounded up) and payout (rounded down) at a shown rate; each FX difference against the partner's USD amount posted to Share's own account |
 | POL-21 | Reversals and refunds | Reversals in scope now; write-offs stay owed and keep the account suspended until repaid; withdrawals later; SLA credits are service credit |
@@ -64,9 +66,9 @@ the provenance line under each heading lists the questions it answers.
 | POL-23 | Bad debt | Share bears buyer credit risk and its own errors; supplier earnings are final once charged |
 | POL-24 | Regulation | Hold funds through a licensed payment partner; daily signed reconciliation matching every partner transaction, Share's own deposits and withdrawals included; Share's own balance covers the receivables it funds (a treasury obligation, never a gate on movements) |
 | POL-25 | AI-agent controls | Administrator-set per-key spending and in-flight limits, rate limits; funds held before capacity |
-| POL-26 | Route deadline | Chosen per request, 1 s to 60 s (11 s with a partner leg), default 30 s; failed as of the deadline if not confirmed |
+| POL-26 | Route deadline | Chosen per request, 1 s to 60 s (11 s with a partner leg), default 30 s; failed as of the deadline if not confirmed; every hold, a partner's included, expires at the deadline by itself |
 | POL-27 | Price changes | On minute boundaries only; a booked reservation keeps its price; open-ended ones change with notice |
-| POL-28 | Partners without holds | Booked last; at most one per route; Share bears the cancellation cost; reconciled at once and daily |
+| POL-28 | Partners without holds | Includes partners whose holds are too short or cannot be set to expire at the deadline; booked last; at most one per route; Share bears the cancellation cost; reconciled at once and daily |
 | POL-29 | Idempotency | Per account; a different principal is refused; 24 h for bookings, 7 years for money |
 | POL-30 | Termination by Share | On Share's own decision, only for fraud, legal order or network abuse, recorded; support acting at an account's request is the account's own change |
 | POL-31 | Reserved rate precision | Whole Mbps, at least 1 Mbps |
@@ -195,7 +197,7 @@ stays in flight.
 
 ## POL-04. Buyer interaction: synchronous when ready, otherwise pending
 
-*Answers D-04 (R-06).*
+*Answers D-04 (R-06); architecture review RI-3.*
 
 **Decision.**
 - Every booking request gets an answer, final or `pending`, within `ack_budget`.
@@ -204,15 +206,30 @@ stays in flight.
 - Otherwise it is `pending`, and the buyer learns the outcome by polling with the
   idempotency key (POL-29), by webhook if they registered one, or both. Polls are
   limited by `key_poll_limit` (POL-25).
+- **One decision per request.** Each request's outcome is decided at one point in time.
+  Until then the request is pending; from then on its outcome is fixed. Whether a
+  request was still pending when something else happened (its account's suspension,
+  its agent key's revocation, its withdrawal, its deadline) is judged against that
+  point: an event after the decision does not change the outcome, even while a status
+  read still shows the request pending.
+- **Status reads.** A status read (a poll, a retry with the idempotency key, or any
+  other answer that reports a request's status) may lag the decision by at most
+  `status_staleness`. Within that time it may still report `pending`; it never reports
+  an outcome other than the one decided, and from `status_staleness` after the decision
+  it reports the outcome.
 
 | Parameter | Default |
 |---|---|
 | `ack_budget` | 200 ms at p99 |
 | `webhook_retry` | Exponential backoff for 24 h, at least once, signed |
+| `status_staleness` | 1 s |
 
 **Why.** API clients and agents need a fast, uniform answer; routes across partners
 cannot always finish in 200 ms; polling and webhooks are the conventions of every
-asynchronous payments and provisioning API.
+asynchronous payments and provisioning API. Deciding each outcome at one point gives
+every rule that asks "was it still pending?" one answer. Letting a status read lag the
+decision by a bounded second, never contradicting it, lets the decision and the status
+a buyer reads be kept apart without making any answer wrong.
 
 ## POL-05. Authority over a link: one schedule owner
 
@@ -238,11 +255,11 @@ wins").
 
 ## POL-06. Non-functional targets
 
-*Answers D-06 (R-10); GB-23, GB-39; gate B D6, D7; round 6; final gate B D1, D9.*
+*Answers D-06 (R-10); GB-23, GB-39; gate B D6, D7; round 6; final gate B D1, D9; architecture review RI-2, RI-4, RI-5.*
 
 **Availability.**
 
-| Capability | Availability per calendar month, per region | Per-probe operation and limit |
+| Capability | Availability per calendar month, per serving region | Per-probe operation and limit |
 |---|---|---|
 | Admission API | 99.99% | A single-link booking answer (final or `pending`), 200 ms |
 | Usage ingestion | 99.99%; ingestion may lag but must not lose an accepted record | A record acknowledged as accepted, 1 s |
@@ -258,11 +275,19 @@ wins").
   two locations outside the region (at least 12 probes a minute). A probe succeeds if it
   gets a correct answer within its operation's per-probe limit. A minute is available if
   at least 90% of its probes succeed. Planned maintenance is not excluded.
-- Every target is per region. Node or zone loss is transparent and counts against
-  availability. Region loss is a declared disaster, outside the availability
-  measurement.
+- Every target is per **serving region**: each region whose edge answers buyers,
+  suppliers, exporters or payment providers. A region that only keeps copies of state
+  and answers none of them has no targets of its own. Node or zone loss is transparent
+  and counts against availability. Region loss is a declared disaster, outside the
+  availability measurement.
+- **Funds holds and headroom checks for bookings are part of admission.** The funds
+  hold (or credit hold) and the headroom check that a booking or change needs are part
+  of the admission capability, and meet its targets (99.99%, RTO 1 min on node or zone
+  loss), whatever the wallet's own targets. The wallet's targets apply to its other
+  operations, such as balance answers, top-ups and statements.
 - **Probes have no side effects on the business.** Probes act as a designated Share
-  probe account, on designated probe links and exporters provisioned in every region.
+  probe account, on designated probe links and exporters provisioned in every serving
+  region.
   Their bookings, holds and records run end to end through the real path, but they are
   excluded from rating, settlement, supplier reports and quarantine reports.
 
@@ -293,6 +318,7 @@ wins").
 | Latency, single-link booking | p99 ≤ 200 ms to an answer, final or `pending` (POL-04); a final answer is expected within it when no capacity is in flight |
 | Latency, route booking | p99 ≤ 200 ms to acknowledgement; final outcome within the request deadline (POL-26) |
 | Latency, top-up to credited balance | p99 ≤ 10 s from the payment provider's notification |
+| Latency, accepted record to headroom | A usage-priced record accepted by usage ingestion counts in its account's unposted usage, and so in its headroom (POL-18), within `attribution_lag_max` (10 s, POL-14) of its acceptance. Met when at least 99.99% of a month's minutes have every record accepted in them counted within that time, minutes affected by a declared region disaster left out; a record counted later is reported as a breach of the usage exposure bound (POL-14) |
 | Latency, suspension decision to enforcement | ≤ 60 s: `standing_notice_time` for the marketplace to deliver the standing change, the remaining 50 s for network operations |
 | Charge timeliness | A minute's reservation charge is posted within 2 min of the minute's end; usage-priced charges within `max_lateness` + 2 min. Met when at least 99.99% of a month's minutes have their charges posted within target, and every charge is posted within the node-or-zone RTO plus the target (at worst 7 min for a reservation charge after a zone loss). On a declared region disaster, the affected minutes are outside the 99.99% measurement, and each of their charges is posted within its target plus the 1 h regional RTO (at worst 1 h 2 min for a reservation charge); the RPO stays 0, so no charge is lost or posted twice |
 | Retention | Ledger, payment events, reservation history and raw usage: 7 years |
@@ -305,8 +331,14 @@ wins").
 current load. Probing from outside, without excluding maintenance, is honest to buyers
 and easy to audit, and forces maintenance without downtime. A designated probe account
 measures the real path without selling capacity, moving money or alarming suppliers, at
-the cost of provisioning probe links in every region. The wallet answer is held to
-the booking budget because a booking depends on it. Giving ingestion admission's RTO and
+the cost of provisioning probe links in every serving region. The wallet answer is held to
+the booking budget because a booking depends on it; for the same reason the funds holds
+and headroom checks a booking needs are held to admission's availability and recovery,
+since a booking cannot be answered without them. Scoping targets to serving regions
+measures what buyers, suppliers and exporters reach, not regions that only keep copies.
+Bounding the time from a record's acceptance to its effect on headroom makes the usage
+exposure bound (POL-14) cover the whole interval in which traffic is carried but not yet
+counted. Giving ingestion admission's RTO and
 judging rating by timeliness removes the conflict between recovery and timeliness
 without making rating as costly as admission. Judging timeliness on a region disaster as
 availability is judged accepts charges up to about an hour late after a declared
@@ -578,7 +610,7 @@ POL-01 this affects only usage-priced traffic.
 
 ## POL-14. Late usage
 
-*Answers D-14 (R-20); GB-05.*
+*Answers D-14 (R-20); GB-05; architecture review RI-2.*
 
 **Decision.**
 - A usage record is billed whenever it arrives; late records are never dropped (they
@@ -590,9 +622,16 @@ POL-01 this affects only usage-priced traffic.
 - `usage_rate_cap` is a per-account, per-product rate, policed at the edge, that bounds
   all of an account's usage-priced traffic on a product (burst plus traffic with no
   reserved rate). There is one lateness bound per account and product.
+- `attribution_lag_max` is the time from a record's acceptance by usage ingestion to its
+  effect on headroom, as unposted usage (POL-18). It is a timeliness target of POL-06;
+  a record whose effect comes later is reported as a breach of the bound, like a record
+  later than `max_lateness`.
 - The lateness part of usage exposure (POL-18) = `usage_rate_cap` × (`max_lateness` +
-  the 60 s suspension-to-enforcement target of POL-06) × the product's highest
-  `usage_price` on any route.
+  `attribution_lag_max` + the 60 s suspension-to-enforcement target of POL-06) × the
+  product's highest `usage_price` on any route. It covers usage-priced traffic carried
+  but not yet counted in headroom: traffic whose record has not yet arrived, traffic in
+  records accepted but not yet counted, and traffic carried between the suspension
+  decision and its enforcement.
 - Under a credit limit, the limit includes the unmetered window: suspend early rather
   than lose beyond the limit.
 
@@ -600,10 +639,16 @@ POL-01 this affects only usage-priced traffic.
 |---|---|
 | `max_lateness` | 180 s |
 | `usage_rate_cap` | Set at onboarding per account and product; 100 Mbps by default |
+| `attribution_lag_max` | 10 s |
+
+At the defaults the bound covers 180 s + 10 s + 60 s = 250 s at `usage_rate_cap`: at
+100 Mbps, 3.125 GB.
 
 **Why.** Late traffic is still owed to a supplier. One number bounds Share's risk per
 account; more burst means a higher cap agreed at onboarding. Using the highest price is
-conservative, by at most the price spread between routes.
+conservative, by at most the price spread between routes. A record reaches headroom only
+after it is attributed and priced; adding that propagation time to the bound keeps
+headroom from being overstated while it is under way.
 
 ## POL-15. Funds at admission
 
@@ -741,24 +786,26 @@ circular movements.
 
 ## POL-18. The balance a buyer sees
 
-*Answers D-18 (R-27); GB-05.*
+*Answers D-18 (R-27); GB-05; architecture review RI-2.*
 
 **Decision.**
 - The headline figure is **available headroom**: balance minus held funds minus usage
   exposure (plus any credit limit). The same headroom governs admission (POL-15) and
   suspension (POL-16) for every account, prepaid or credit-limit. An agent key is shown
   its key headroom instead (POL-25).
-- **Usage exposure** has two parts: unposted usage, and the lateness bound for
-  `max_lateness` (POL-14).
-- **Unposted usage** = usage-priced traffic in records received but not yet posted, at
-  each minute's price.
+- **Usage exposure** has two parts: unposted usage, and the lateness bound (POL-14).
+- **Unposted usage** = usage-priced traffic in records accepted by usage ingestion but
+  not yet posted, at each minute's price. A record counts in it within
+  `attribution_lag_max` of its acceptance (POL-14, POL-06), and until its charge is
+  posted.
 - The response itemises the ledger balance, held funds, charges accrued but not yet
   posted, and the two parts of usage exposure. Charges accrued but not yet posted stay
   within funds held until posted; they are itemised for information, not deducted twice.
 
 **Why.** Agents decide on headroom; finance reconciles on the itemised figures.
-Unposted usage computed from records received is exact and reproducible; the unseen part
-is bounded by POL-14.
+Unposted usage computed from records accepted is exact and reproducible; the part not
+yet counted (records not yet arrived, or accepted but not yet counted) is bounded by
+POL-14.
 
 ## POL-19. History
 
@@ -959,8 +1006,8 @@ earnings non-final).
   change its own limits, create keys, raise any limit, or give consent to be shown to a
   supplier (POL-33).
 - **Revocation** takes effect within 60 s for new requests. The key's pending requests
-  fail with the reason "key revoked" and release what they hold; confirmed reservations
-  are unaffected.
+  (those not yet decided, POL-04) fail with the reason "key revoked" and release what
+  they hold; confirmed reservations are unaffected.
 - **Spending limit.** A spending limit per key per period, enforced at admission as part
   of headroom: key headroom = min(account headroom, `key_spend_limit` − key spending in
   the period), shown to that key as its headroom.
@@ -1007,7 +1054,7 @@ capacity.
 
 ## POL-26. Route deadline
 
-*Answers D-26 (R-42); GA-36; gate A D-11; final gate A D-1.*
+*Answers D-26 (R-42); GA-36; gate A D-11; final gate A D-1; architecture review RI-1.*
 
 **Decision.**
 - A route request carries a deadline chosen by the buyer, from `route_deadline_min` to
@@ -1033,14 +1080,22 @@ capacity.
 | `route_deadline_max` | 60 s |
 | `commit_margin` | 10 s |
 
-- A partner counts as offering holds only if its holds last at least
-  `route_deadline_max` + `commit_margin`; otherwise it is a partner without holds
-  (POL-28). Whatever their length, Share releases every hold of a request, partner holds
-  included, at the request's deadline.
+- A partner counts as offering holds only if both are true:
+  - its holds can last at least `route_deadline_max` + `commit_margin`; and
+  - it accepts an absolute expiry time for a hold, set by Share when the hold is taken.
+
+  Otherwise it is a partner without holds (POL-28).
+- Share sets every partner hold to expire at the request's deadline. So capacity held
+  at a partner lapses at the deadline by itself, even if Share is unavailable then.
+  Share also releases every hold of a request, partner holds included, at the request's
+  deadline.
 
 **Why.** Fast single-link agents keep short deadlines; nobody can choose a deadline that
 could never be met. Failing as of the deadline means capacity is never stranded by an
 outage of Share's own booking process; the price is that holds must expire on their own.
+A partner hold expires on its own at the deadline only if Share can set its expiry; a
+partner that cannot is booked as final-only (POL-28), at Share's risk, rather than let
+its hold outlive the deadline whenever Share is down.
 
 **Rejected.** A margin after the deadline (deadline plus `commit_margin`), which left
 outcomes undecided at the deadline.
@@ -1073,11 +1128,12 @@ mid-minute and mid-window pricing questions. A buyer facing a price change had
 
 ## POL-28. Partners without holds
 
-*Answers D-28 (R-46); gate A D-06.*
+*Answers D-28 (R-46); gate A D-06; architecture review RI-1.*
 
 **Decision.**
-- A partner leg that can only be booked immediately and finally (or whose holds are too
-  short, POL-26) is booked last, after every other leg is held and funds are held.
+- A partner leg that can only be booked immediately and finally, or whose holds do not
+  meet POL-26 (too short, or no expiry set by Share), is booked last, after every other
+  leg is held and funds are held.
 - A route may include at most one such leg.
 - If a later step fails, or the request is withdrawn, Share cancels the partner booking
   and bears its cost.
@@ -1290,3 +1346,8 @@ administrator, keeps disclosure a deliberate account decision that an agent cann
 | 2026-10-11 | Final gate: POL-06: probes act as a designated Share probe account on designated probe links and exporters, excluded from rating, settlement, supplier reports and quarantine reports | Final gate B D9 (FB-09): probes had business side effects |
 | 2026-10-11 | Final gate: POL-02: a waiter failed as of its deadline gets a `retry_after` of the remaining deadline of the request ahead at that moment, or zero if that request already has its outcome | Final resolution E-1: needed for the FA-01 scenario, where the request ahead ends before the waiter's deadline |
 | 2026-10-11 | Final gate fixes (no new rule): POL-06 probe operation "a balance and headroom answer" (FB-12); POL-29 idempotency list completed, including resolutions of money escalations (FB-10); POL-26 duplicated hold-length bullet removed (FA-12) | Final gates A and B |
+| 2026-10-11 | Architecture review: RI-1 (POL-26, POL-28): a partner counts as offering holds only if its holds can last at least `route_deadline_max` + `commit_margin` and it accepts an absolute hold expiry set by Share at hold time; Share sets it to the request's deadline; a partner that cannot is a partner without holds | RFC-000 RI-1: a partner hold outlived the deadline while Share was down, so "no capacity held after its deadline on any leg" (P2-N3) could not be met |
+| 2026-10-11 | Architecture review: RI-2 (POL-14, POL-18, POL-06): unposted usage counts records accepted by usage ingestion; the lateness bound adds `attribution_lag_max` (10 s), the time from a record's acceptance to its effect on headroom; a timeliness target for it; later records reported as breaches. At the defaults the bound grows from 240 s to 250 s of `usage_rate_cap` | RFC-000 RI-2: the propagation from acceptance to headroom had no bound |
+| 2026-10-11 | Architecture review: RI-3 (POL-04, POL-25): each request's outcome is decided at one point, against which "still pending" is judged (a key's revocation fails only requests not yet decided); a status read lags the decision by at most `status_staleness` (1 s) and never reports an outcome contrary to it | RFC-000 RI-3: "pending when suspended" had two readings once the decision and its status are kept apart |
+| 2026-10-11 | Architecture review: RI-4 (POL-06): the funds holds and headroom checks a booking needs are part of the admission capability (99.99%, RTO 1 min), whatever the wallet's own targets | RFC-000 RI-4: sizing could have followed the wallet's looser targets |
+| 2026-10-11 | Architecture review: RI-5 (POL-06): "per region" means each serving region, one whose edge answers buyers, suppliers, exporters or payment providers | RFC-000 RI-5: "region" was undefined for state spanning three regions |
