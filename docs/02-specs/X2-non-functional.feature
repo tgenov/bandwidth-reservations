@@ -23,12 +23,12 @@ Feature: Non-functional targets
 
     @X2-S01 @need-X2-N1 @POL-06
     Scenario Outline: Availability per capability
-      When the availability of <capability> is measured over a calendar month
+      When the availability of <capability> is measured in each region over a calendar month
       Then it is at least <target>
 
       Examples:
         | capability                            | target                |
-        | the admission API, in each region     | 99.99%                |
+        | the admission API                     | 99.99%                |
         | usage ingestion                       | 99.99%                |
         | the wallet                            | 99.9%                 |
         | payouts                               | 99.9%                 |
@@ -86,12 +86,22 @@ Feature: Non-functional targets
       When an account is suspended
       Then its usage-priced traffic is blocked at the edge within 60 s of the decision
 
-  Rule: No acknowledged fact is ever lost
+    @X2-S13 @need-X2-N3 @need-P3-N2 @POL-06 @POL-14
+    Scenario Outline: Charges are posted within their timeliness target
+      When a minute ends with <charge>
+      Then that charge is posted within <target> of the minute's end
+
+      Examples:
+        | charge                                  | target                                  |
+        | a reservation's accrual for the minute  | 2 min                                   |
+        | usage-priced traffic                    | `max_lateness` (POL-14) + 2 min         |
+
+  Rule: No acknowledged fact is lost beyond its recovery point
 
     @X2-S09 @need-X2-N4 @POL-06
-    Scenario Outline: An acknowledged fact survives any single failure
+    Scenario Outline: An acknowledged fact survives the loss of a node or a zone
       Given <fact> has been acknowledged
-      When any single component of the system fails and the system recovers
+      When a node or a whole zone of the region fails and the system recovers
       Then <fact> is present and unchanged
 
       Examples:
@@ -101,18 +111,27 @@ Feature: Non-functional targets
         | a received payment event      |
         | an accepted usage record      |
 
+    @X2-S12 @need-X2-N4 @POL-06
+    Scenario: On the loss of a region, at most the last minute of acknowledged facts can be lost
+      Given confirmed reservations, money movements, payment events and accepted usage records acknowledged in a region
+      When the whole region fails and service is recovered elsewhere
+      Then every fact acknowledged more than 1 min before the failure is present and unchanged
+
   Rule: Each capability recovers within its target
 
     @X2-S10 @need-X2-N5 @POL-06
-    Scenario Outline: Recovery time per capability
-      When <capability> fails
+    Scenario Outline: Recovery time per capability and failure scope
+      When <capability> loses <scope>
       Then it answers correctly again within <target>
 
       Examples:
-        | capability            | target |
-        | admission             | 5 min  |
-        | billing               | 15 min |
-        | the wallet            | 15 min |
+        | capability  | scope           | target |
+        | admission   | a node or zone  | 5 min  |
+        | billing     | a node or zone  | 15 min |
+        | the wallet  | a node or zone  | 15 min |
+        | admission   | a region        | 1 h    |
+        | billing     | a region        | 1 h    |
+        | the wallet  | a region        | 1 h    |
 
   Rule: Records are kept for the retention period
 

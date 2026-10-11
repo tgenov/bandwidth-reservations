@@ -6,6 +6,9 @@ satisfies it, which tests show it, and whether it is met. It is filled in at the
 requirements, and the code will then be changed to conform. Until then every row is
 `not assessed` and every Design cell is `TBD`.
 
+The matrix is regenerated whenever scenarios change; it reflects the specs after the
+policy-register amendments of 2026-10-11.
+
 The `.feature` files never carry verification status, test names or defect notes; they
 live only here. Status values, once assessed: `met`, `partly met` (for example met on one
 path only), `not met`. A scenario met only on some paths is never `met`.
@@ -29,8 +32,9 @@ such tests belong in the test plan, not in the scenario.
 | P1-S08 | Capacity held for a request that ends without confirmation is available again | TBD | — | not assessed |
 | P1-S09 | Confirming a pending request does not count its capacity twice | TBD | — | not assessed |
 | P1-S10 | A single-link booking is decided against capacity confirmed for routes | TBD | — | not assessed |
-| P1-S11 | A single-link booking blocked only by capacity in flight is confirmed if that capacity is released in time | TBD | — | not assessed |
-| P1-S12 | A single-link booking still blocked by capacity in flight after ack_budget is rejected with retry_after | TBD | — | not assessed |
+| P1-S11 | A single-link booking blocked only by capacity in flight waits, and is confirmed if that capacity is released within its deadline | TBD | — | not assessed |
+| P1-S12 | A single-link booking that asks not to wait is rejected at once with retry_after | TBD | — | not assessed |
+| P1-S34 | A single-link booking still waiting after ack_budget is answered pending | TBD | — | not assessed |
 | P1-S13 | Concurrent bookings never oversell the link | TBD | `test/concurrency.test.ts` › "safe admission never oversells a hot link under 50 concurrent clients" *(prior evidence, to be re-validated)*<br>`test/routes.test.ts` › "randomised contention (seed 11/12/13): never oversold, competitors never all lose, all sagas finish" *(prior evidence, to be re-validated)* | not assessed |
 | P1-S14 | Concurrent decisions are those of some one-at-a-time order | TBD | — | not assessed |
 | P1-S15 | A rejection states the largest rate that fits the requested window | TBD | — | not assessed |
@@ -49,7 +53,9 @@ such tests belong in the test plan, not in the scenario.
 | P1-S28 | Maintenance that fits on free capacity is booked | TBD | — | not assessed |
 | P1-S29 | Maintenance that needs committed capacity is rejected | TBD | — | not assessed |
 | P1-S30 | Maintenance booked with less than the required notice is rejected | TBD | — | not assessed |
-| P1-S31 | An affected reservation is moved to an equivalent path when one exists | TBD | — | not assessed |
+| P1-S31 | An affected buyer is offered an equivalent path on the terms of POL-07 | TBD | — | not assessed |
+| P1-S35 | An accepted offer moves the reservation to the equivalent path at its original price | TBD | — | not assessed |
+| P1-S36 | A declined offer is treated as no equivalent path | TBD | — | not assessed |
 | P1-S32 | Without an equivalent path, the newest reservations are revoked first, with notice | TBD | — | not assessed |
 | P1-S33 | The schedule as known at a past time includes reservations changed since | TBD | — | not assessed |
 | P2-S01 | A route whose every leg fits is confirmed on every leg | TBD | `test/routes.test.ts` › "a route across our links and the partner is confirmed; every leg becomes a fact" *(prior evidence, to be re-validated)* | not assessed |
@@ -68,10 +74,11 @@ such tests belong in the test plan, not in the scenario.
 | P2-S14 | Capacity held for a request that is not confirmed is available again by its deadline | TBD | — | not assessed |
 | P2-S15 | Competing requests that can each be served alone do not all lose | TBD | `test/routes.test.ts` › "randomised contention (seed 11/12/13): never oversold, competitors never all lose, all sagas finish" *(prior evidence, to be re-validated)* | not assessed |
 | P2-S16 | Under the request_age rule the earlier request wins | TBD | — | not assessed |
-| P2-S17 | A request is rejected for no fit only if it does not fit on committed capacity | TBD | — | not assessed |
-| P2-S18 | A request rejected because capacity it needs is in flight is told when to retry | TBD | — | not assessed |
+| P2-S17 | A request that waits is rejected for no fit only if it does not fit on committed capacity | TBD | — | not assessed |
+| P2-S18 | A request that asks not to wait is rejected at once with retry_after when capacity it needs is in flight | TBD | — | not assessed |
 | P2-S19 | Crossed requests settle without waiting for capacity holds to time out | TBD | `test/routes.test.ts` › "crossed sagas: priority tickets resolve the deadlock at once (D17)" *(prior evidence, to be re-validated)* | not assessed |
-| P2-S20 | A buyer who keeps retrying a request that fits is eventually confirmed | TBD | — | not assessed |
+| P2-S20 | A contended request waits, pending, and is confirmed if the capacity in flight is released within its deadline | TBD | — | not assessed |
+| P2-S52 | A waiting request whose capacity is then confirmed to the request ahead of it is rejected with a counter-offer | TBD | — | not assessed |
 | P2-S21 | Changing the priority rule does not change the outcome of uncontended requests | TBD | — | not assessed |
 | P2-S22 | An interrupted request that can still finish within its deadline is resumed | TBD | — | not assessed |
 | P2-S23 | An interrupted request that cannot finish within its deadline fails, releases everything and says why | TBD | — | not assessed |
@@ -102,7 +109,8 @@ such tests belong in the test plan, not in the scenario.
 | P2-S48 | A rate decrease takes effect at the next minute boundary | TBD | — | not assessed |
 | P2-S49 | A change to part of a route is refused | TBD | — | not assessed |
 | P2-S50 | A partner leg's minimum term and cancellation fee are shown at booking | TBD | — | not assessed |
-| P2-S51 | A request in trouble is visible to operations with its reason | TBD | — | not assessed |
+| P2-S51 | A failed request is visible to operations with its reason | TBD | — | not assessed |
+| P2-S53 | A request still pending after its deadline plus commit_margin raises an operational alert | TBD | — | not assessed |
 | P3-S01 | An active minute accrues whether or not traffic crosses it | TBD | — | not assessed |
 | P3-S02 | A part minute is charged as a whole minute | TBD | — | not assessed |
 | P3-S03 | There is no minimum term | TBD | — | not assessed |
@@ -114,6 +122,7 @@ such tests belong in the test plan, not in the scenario.
 | P3-S09 | A suspended account's reservation accrues during the grace, and not after its release | TBD | — | not assessed |
 | P3-S10 | A reservation affected by an unplanned outage keeps accruing and is marked for credit | TBD | — | not assessed |
 | P3-S11 | A partner cancellation fee is charged only if it was shown at booking | TBD | — | not assessed |
+| P3-S40 | An extension's added part accrues at the price in force when it was made; the existing part keeps its price | TBD | — | not assessed |
 | P3-S12 | A minute is charged once however many charging runs overlap | TBD | — | not assessed |
 | P3-S13 | Charging that starts afresh, or after losing its place, charges every record not yet charged, once | TBD | — | not assessed |
 | P3-S14 | A record delivered twice is counted once | TBD | `billing/test/rating.test.ts` › "rating and ledger (D18–D20) › seed %i: duplicates, shuffling and late records give the same ledger as in-order delivery" *(prior evidence, to be re-validated)*<br>`billing/test/kafka.e2e.test.ts` › "duplicated records on Kafka are ingested once and rated into a balanced ledger" *(prior evidence, to be re-validated)* | not assessed |
@@ -121,13 +130,14 @@ such tests belong in the test plan, not in the scenario.
 | P3-S16 | A repeat of a record already charged causes no amendment | TBD | — | not assessed |
 | P3-S17 | A record arriving while its minute is being charged is neither lost nor counted twice | TBD | `billing/test/rating.test.ts` › "rating and ledger (D18–D20) › concurrent ingestion and rating lose no record (the minute lock)" *(prior evidence, to be re-validated)*<br>`billing/test/rating.test.ts` › "rating and ledger (D18–D20) › a record that races its minute being rated is still charged (forced interleaving)" *(prior evidence, to be re-validated)* | not assessed |
 | P3-S18 | A record within one minute belongs to that minute; minutes are half-open | TBD | — | not assessed |
-| P3-S19 | A record spanning several whole minutes is spread evenly across them | TBD | — | not assessed |
+| P3-S19 | A record spanning several minutes is spread in proportion to the seconds active in each | TBD | — | not assessed |
 | P3-S20 | A late record is priced at the price of its own minute | TBD | `billing/test/rating.test.ts` › "rating and ledger (D18–D20) › a late record is priced at the rate of its own event time, not of its arrival" *(prior evidence, to be re-validated)* | not assessed |
 | P3-S21 | A charge is computed exactly and rounded once, down to the micro | TBD | — | not assessed |
 | P3-S22 | Traffic within the reserved rate is covered by the reservation's accrual | TBD | — | not assessed |
 | P3-S23 | Permitted burst is billed at usage_price for the excess only | TBD | — | not assessed |
-| P3-S24 | Traffic above the reserved rate on a product without burst is kept and reported | TBD | — | not assessed |
-| P3-S25 | Attributable traffic outside an active reservation is billed at usage_price and counts toward exposure | TBD | — | not assessed |
+| P3-S24 | Traffic above the reserved rate on a product without burst is dropped and not billed | TBD | — | not assessed |
+| P3-S41 | Records showing traffic carried above the reserved rate on a product without burst are kept and reported | TBD | — | not assessed |
+| P3-S25 | Attributable traffic outside an active reservation is billed at usage_price and counts toward usage exposure | TBD | — | not assessed |
 | P3-S26 | Traffic that cannot be attributed is quarantined, not billed, and reported | TBD | — | not assessed |
 | P3-S27 | Quarantined traffic is charged, and its supplier paid, only if attributed within dispute_window | TBD | — | not assessed |
 | P3-S28 | A record that cannot be read is kept with its reason and not charged | TBD | — | not assessed |
@@ -139,12 +149,12 @@ such tests belong in the test plan, not in the scenario.
 | P3-S34 | A price correction is an amendment, in either direction, with who made it and why | TBD | — | not assessed |
 | P3-S35 | A buyer can see, for any minute, the original charge and every amendment with its reason | TBD | — | not assessed |
 | P3-S36 | Recomputing any period gives exactly the recorded charges and amendments | TBD | — | not assessed |
-| P3-S37 | The business can see each account's exposure | TBD | — | not assessed |
+| P3-S37 | The business can see each account's usage exposure | TBD | — | not assessed |
 | P3-S38 | A record later than max_lateness is still charged and reported as a breach | TBD | — | not assessed |
 | P3-S39 | Accepted records can be retrieved by reservation, link and minute | TBD | — | not assessed |
 | P4-S01 | Repeated and reordered notifications change the wallet once per transaction | TBD | `billing/test/wallet.test.ts` › "payment webhooks (D19 wallet) › repeated and out-of-order webhooks credit the wallet exactly once" *(prior evidence, to be re-validated)* | not assessed |
 | P4-S02 | A reversal arriving before its payment is held and matched | TBD | — | not assessed |
-| P4-S03 | A reversal whose payment does not arrive within 72 h is applied | TBD | — | not assessed |
+| P4-S03 | A reversal whose payment does not arrive within 72 h is escalated, never applied | TBD | — | not assessed |
 | P4-S04 | A redelivery whose contents differ from the original moves no money and is reported | TBD | — | not assessed |
 | P4-S05 | A malformed notification moves no money | TBD | `billing/test/wallet.test.ts` › "payment webhooks (D19 wallet) › malformed webhooks are rejected by the validation pipe" *(prior evidence, to be re-validated)* | not assessed |
 | P4-S06 | A KES top-up is credited at the rate shown before the buyer confirmed | TBD | — | not assessed |
@@ -154,18 +164,18 @@ such tests belong in the test plan, not in the scenario.
 | P4-S10 | Charges accrue against the hold, and the hold rolls forward | TBD | — | not assessed |
 | P4-S11 | The unused hold is released when a reservation ends early | TBD | — | not assessed |
 | P4-S12 | A booking that is not confirmed holds no funds | TBD | — | not assessed |
-| P4-S13 | A credit-limit account is not held but its commitments count against its limit | TBD | — | not assessed |
+| P4-S13 | A credit-limit account is not held, but its coverage counts against its headroom | TBD | — | not assessed |
 | P4-S14 | A credit-limit account is invoiced monthly for its posted charges | TBD | — | not assessed |
-| P4-S15 | The headline figure is available headroom | TBD | — | not assessed |
+| P4-S15 | The headline figure is available headroom, net of funds held and usage exposure | TBD | — | not assessed |
 | P4-S16 | The answer itemises balance, holds, accrued charges and estimated unposted usage | TBD | — | not assessed |
 | P4-S17 | The ledger balance shown equals the ledger | TBD | `billing/test/kafka.e2e.test.ts` › "request-reply: @MessagePattern answers a wallet balance query over Kafka" *(prior evidence, to be re-validated)* | not assessed |
-| P4-S18 | An account whose hold cannot roll forward is suspended | TBD | — | not assessed |
-| P4-S19 | A credit-limit account is suspended before charges plus exposure would exceed its limit | TBD | — | not assessed |
+| P4-S18 | An account is suspended when its headroom would fall below zero | TBD | — | not assessed |
+| P4-S19 | Suspension comes before any account can owe more than its headroom allows | TBD | — | not assessed |
 | P4-S20 | A suspended account's reservations keep their capacity during the grace | TBD | — | not assessed |
 | P4-S21 | A suspended account's usage-priced traffic is blocked | TBD | — | not assessed |
 | P4-S22 | Funds arriving within the grace resume the account automatically | TBD | — | not assessed |
 | P4-S23 | At the end of the grace the reservations are released and the buyer is told | TBD | — | not assessed |
-| P4-S24 | The buyer is warned before suspension | TBD | — | not assessed |
+| P4-S24 | The buyer is warned when headroom falls below low_balance_warning | TBD | — | not assessed |
 | P4-S25 | Each change of standing is notified at least once, and repeats change nothing | TBD | — | not assessed |
 | P4-S26 | The current standing can be asked for at any time | TBD | — | not assessed |
 | P4-S27 | Enforcement later than its target is reported | TBD | — | not assessed |
@@ -182,7 +192,7 @@ such tests belong in the test plan, not in the scenario.
 | P4-S38 | Every account ends at the split of each minute's final total, whatever the arrival order | TBD | `billing/test/rating.test.ts` › "rating and ledger (D18–D20) › seed %i: duplicates, shuffling and late records give the same ledger as in-order delivery" *(prior evidence, to be re-validated)* | not assessed |
 | P4-S39 | A late-traffic amendment never reduces any party's amount and never credits the buyer | TBD | `billing/test/rating.test.ts` › "rating and ledger (D18–D20) › seed %i: duplicates, shuffling and late records give the same ledger as in-order delivery" *(prior evidence, to be re-validated)*<br>`billing/test/rating.test.ts` › "rating and ledger (D18–D20) › late usage never claws back a supplier, even where largest remainder would (Alabama paradox)" *(prior evidence, to be re-validated)* | not assessed |
 | P4-S40 | A supplier's statement shows each share and the rule and weights that produced it | TBD | — | not assessed |
-| P4-S41 | A correction caused by Share's error comes out of Share's commission | TBD | — | not assessed |
+| P4-S41 | A correction caused by Share's error is borne by Share in full | TBD | — | not assessed |
 | P4-S42 | A supplier-caused error creates a supplier debt, with its reason visible | TBD | — | not assessed |
 | P4-S43 | A supplier owed at least the minimum is paid at the weekly payout | TBD | — | not assessed |
 | P4-S44 | A balance below the minimum carries forward | TBD | — | not assessed |
@@ -219,8 +229,10 @@ such tests belong in the test plan, not in the scenario.
 | X2-S06 | A route booking is acknowledged within ack_budget and has its outcome within its deadline | TBD | — | not assessed |
 | X2-S07 | A top-up is credited within 10 s of the provider's notification | TBD | — | not assessed |
 | X2-S08 | Suspension is enforced within 60 s of the decision | TBD | — | not assessed |
-| X2-S09 | An acknowledged fact survives any single failure | TBD | — | not assessed |
-| X2-S10 | Recovery time per capability | TBD | — | not assessed |
+| X2-S13 | Charges are posted within their timeliness target | TBD | — | not assessed |
+| X2-S09 | An acknowledged fact survives the loss of a node or a zone | TBD | — | not assessed |
+| X2-S12 | On the loss of a region, at most the last minute of acknowledged facts can be lost | TBD | — | not assessed |
+| X2-S10 | Recovery time per capability and failure scope | TBD | — | not assessed |
 | X2-S11 | Records can be retrieved up to the end of the retention period | TBD | — | not assessed |
 
 ## Mapping from the previous baseline
@@ -254,7 +266,7 @@ RFC that chooses it, and the need it served is covered by the scenarios named in
 | P2-S05 | P1-S04 | Covered by back-to-back bookings |
 | P2-S06 | (removed) | Hold idempotency is design; moved to RFC-002. Need covered by P2-S24 to P2-S28 |
 | P2-S07 | P2-S14 | Hold lapse is design; need stated as "capacity back by the deadline" (POL-26) |
-| P2-S08 | P1-S07, P2-S17, P2-S18 | Three-outcome protocol moved to RFC-002 |
+| P2-S08 | P1-S07, P2-S17, P2-S18, P2-S20 | Three-outcome protocol moved to RFC-002; waiting per POL-05 (amended) stated as outcomes |
 | P2-S09 | P2-S06, P2-S08, P2-S09 | Changed per POL-04 |
 | P2-S10 | P2-S13 | Unchanged in meaning |
 | P2-S11 | (removed) | Wake-ups are design; moved to RFC-002. Need covered by P2-S14, P2-S20 |
@@ -263,7 +275,7 @@ RFC that chooses it, and the need it served is covered by the scenarios named in
 | P2-S14 | P2-S16 | Wound-wait moved to RFC-002; the POL-02 rule stated as outcome |
 | P2-S15 | (removed) | Commit-point protection is design; need covered by P2-S05 |
 | P2-S16 | P2-S19 | Restated as a need: crossed requests settle before deadlines |
-| P2-S17 | P2-S20 | Restated as a need: retries are eventually confirmed |
+| P2-S17 | P2-S20 | Restated per POL-05 (amended): a waiting request is confirmed when the capacity in flight is released |
 | P2-S18 | P2-S28 | Restated: Share's record matches the partner's |
 | P2-S19 | P2-S30 | "Short random pause" removed |
 | P2-S20 | P2-S31 | Unchanged in meaning |
@@ -296,9 +308,9 @@ RFC that chooses it, and the need it served is covered by the scenarios named in
 | P3-S15 | P3-S17 | Merged into P3-S17 |
 | P3-S16 | P3-S12 | Restated as a need |
 | P3-S17 | P3-S37 | Changed: exposure formula moved to RFC; visibility required (POL-14) |
-| P3-S18 | P4-S18 | Changed per POL-15/16: suspension when the hold cannot roll forward |
+| P3-S18 | P4-S18 | Changed per POL-16/18: suspension when headroom would fall below zero |
 | P3-S19 | P4-S22 | Changed per POL-16: automatic resumption within grace |
-| P3-S20 | P4-S19 | Changed per POL-14: the limit includes exposure |
+| P3-S20 | P4-S18, P4-S19 | Changed per POL-16/18: one headroom rule, including usage exposure, for every account |
 | P3-S21 | P2-S38 | Changed per POL-15: funds hold at admission; owned by P2/P4 |
 | P3-S22 | (removed) | Transport; the funds check is P2-S38 within ack_budget |
 | P3-S23 | P4-S25 | Changed: at-least-once notification to network operations |

@@ -173,7 +173,7 @@ buyer may never retry.
 | Latency, top-up to credited balance | p99 ≤ 10 s from the payment provider's notification |
 | Latency, suspension decision to enforcement | ≤ 60 s |
 | Availability scope | Every target is per region |
-| Durability (RPO) | 0 for reservations, the ledger, payment events and accepted usage records, on loss of a node or a zone; ≤ 1 min on loss of a region |
+| Durability (RPO) | 0 for every acknowledged fact (reservations, the ledger, payment events, accepted usage records), on loss of a node, a zone or a region. A fact is acknowledged only once it is durable in two regions |
 | Recovery (RTO) | On loss of a node or zone: 5 min for admission, 15 min for billing and wallet. On loss of a region: 1 h |
 | Charge timeliness | A minute's reservation charge is posted within 2 min of the minute's end; usage-priced charges within `max_lateness` + 2 min |
 | Retention | Ledger, payment events, reservation history and raw usage: 7 years |
@@ -375,8 +375,10 @@ resumption suits self-serve and agent buyers.
 **Decision.** Every usage record is kept.
 - Traffic above the reserved rate is policed at the edge. Where the product permits
   burst, it is carried best effort on capacity that is otherwise idle, and billed at
-  `usage_price`. Where it does not, the excess is dropped and not billed: only traffic
-  carried is billed.
+  `usage_price`. Where it does not, the excess is dropped and not billed. If policing fails and
+  excess is carried anyway, it is still not billed to the buyer (the failure is Share's);
+  Share pays the supplier for it at `usage_price` from its own account, and the failure
+  is raised as an incident.
 - Traffic attributable to the account but outside an active reservation is billed at
   `usage_price` and counts toward exposure.
 - Traffic that cannot be attributed is quarantined, not billed, and reported to
@@ -491,9 +493,11 @@ regime).
 | Parameter | Default |
 |---|---|
 | `key_spend_limit` | Set per key by the account; none by default |
+| Key headroom | min(account headroom, `key_spend_limit` − key spending in the period); shown to that key as its headroom |
 | `key_spend_period` | One calendar day, UTC |
 | `key_inflight_limit` | Set per key; none by default |
-| `account_inflight_limit` | 10 × the account's largest confirmed reservation, in Mbps |
+| `account_inflight_limit` | max(`account_inflight_floor`, 10 × the account's largest confirmed reservation), in Mbps |
+| `account_inflight_floor` | 1,000 Mbps |
 | `key_rate_limit` | 50 requests/s per key |
 
 **Why.** "AI agents" are named buyers; a hard limit is the only control that works
@@ -561,3 +565,6 @@ that point. Two such legs cannot be made all-or-nothing.
 | 2026-10-11 | POL-17: dropped excess is not billed | Undefined |
 | 2026-10-11 | POL-26: `commit_margin` = 10 s; stuck-request alert | No value |
 | 2026-10-11 | POL-06: failure scopes for RPO/RTO; per-region scope; charge timeliness | Undefined |
+| 2026-10-11 | POL-17: carried excess on a non-burst product is not billed; Share pays the supplier and raises an incident | Undefined |
+| 2026-10-11 | POL-25: key headroom defined; `account_inflight_floor` = 1,000 Mbps | A new account could never book |
+| 2026-10-11 | POL-06: RPO 0 on region loss too; acknowledge only when durable in two regions | Money acknowledged to a payment provider is not redelivered, so it cannot be lost |

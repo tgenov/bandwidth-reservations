@@ -25,7 +25,8 @@ The business position, stated plainly:
 
 - **Reservation charges are known in advance**; usage-priced traffic is known only after the
   fact, so an account can always have sent more usage-priced traffic than it has been
-  charged for. That amount, the exposure, must be known and bounded (POL-14).
+  charged for. That amount, the usage exposure, must be known and bounded (POL-14), and it
+  counts against headroom for every account (POL-18).
 - **Late traffic only ever increases a charge; a price correction can move it either way.**
   Either way, a charge already made is never rewritten; it is amended.
 - **Late records are billed whenever they arrive** (POL-14). They are owed to a supplier.
@@ -59,21 +60,23 @@ cite the need they serve with a tag `@need-P3-Nn`.
 
 | ID | Need | Success measure |
 |---|---|---|
-| P3-N1 | **Reservations accrue exactly what was sold** (POL-01, POL-08, POL-27). Every minute a reservation is active accrues reserved rate × its booked reservation price, whether or not traffic crosses it; a part minute is a whole minute; there is no minimum term; accrual follows every change to the reservation from its effective minute and stops when it ends, is cancelled, is revoked or is released. | For any reservation history, the accruals equal a minute-by-minute recomputation from that history and the booked price. |
+| P3-N1 | **Reservations accrue exactly what was sold** (POL-01, POL-08, POL-27). Every minute a reservation is active accrues reserved rate × its booked reservation price, whether or not traffic crosses it; a part minute is a whole minute; there is no minimum term; accrual follows every change to the reservation from its effective minute (the added part of an extension or rate increase at the price in force when the change was made, POL-08) and stops when it ends, is cancelled, is revoked or is released. | For any reservation history, the accruals equal a minute-by-minute recomputation from that history and the booked price. |
 | P3-N2 | **Each minute is charged once.** However many charging runs overlap, restart or start afresh, every reservation-minute and every record is charged exactly once. | Zero missing or duplicated accruals and record charges under overlapping, restarted and fresh charging. |
 | P3-N3 | **Usage-priced traffic is counted exactly once, whatever the delivery.** Duplicated, shuffled and late delivery gives the same charges as delivering each record once, in order; no record is lost or counted twice while its minute is being charged. | Identical charges for any delivery order, duplication and lateness. |
-| P3-N4 | **Traffic belongs to well-defined minutes** (POL-13). A record's bytes are assigned to the minutes in which the flow was active, the same way every time; minutes are half-open. | The same record is always assigned to the same minutes. |
+| P3-N4 | **Traffic belongs to well-defined minutes** (POL-13). A record's bytes are assigned to the minutes in which the flow was active, in proportion to the seconds active in each, the same way every time; minutes are half-open. | The same record is always assigned to the same minutes. |
 | P3-N5 | **Traffic is priced as it happened** (POL-27, POL-11). A record is priced at the usage price in force in the minute its traffic happened, whenever it arrives; each charge is computed exactly and rounded once, down to the micro. | Every late record priced at the price of its own minute; every charge equal to its exact value rounded down. |
-| P3-N6 | **Each kind of traffic is billed by its rule** (POL-17). Traffic within a reservation's reserved rate is covered by its accrual; permitted burst and attributable traffic outside an active reservation are billed at `usage_price`; unattributable traffic is quarantined, not billed, and reported. | Every metered byte falls under exactly one rule, and quarantined traffic is reported to operations and the supplier. |
+| P3-N6 | **Each kind of traffic is billed by its rule** (POL-17). Traffic within a reservation's reserved rate is covered by its accrual; excess dropped at the edge on a product without burst is not billed; permitted burst and attributable traffic outside an active reservation are billed at `usage_price`; unattributable traffic is quarantined, not billed, and reported. | Every metered byte falls under exactly one rule, and quarantined traffic is reported to operations and the supplier. |
 | P3-N7 | **No record is silently discarded.** Every record received is kept: a record that cannot be read is kept with its reason, does not delay the records behind it, and can be billed once corrected. Accepted records are never altered or removed. | Every received record can be found later, with its outcome; none is ever changed. |
 | P3-N8 | **Past charges are amended, never rewritten, and every amendment is explained.** Late traffic only increases a charge; an authorised price correction can move it either way; each amendment is a separate entry with its reason. A buyer can see, for any minute, the original charge and every amendment; support can explain each. | No charge is ever modified in place; every amendment carries a reason and, for price corrections, who made it. |
 | P3-N9 | **Every charge can be reproduced.** Recomputing any period from the stored records, the reservation history and the price history gives exactly the recorded charges and amendments. | Recomputation matches for any period. |
-| P3-N10 | **Exposure is visible and its assumptions are policed** (POL-14). For every account the business can see the worst case owed for usage-priced traffic not yet charged; records later than `max_lateness` are still billed and reported as breaches of the bound. | Exposure visible for every account; every record later than `max_lateness` reported. |
+| P3-N10 | **Usage exposure is visible and its assumptions are policed** (POL-14, POL-18). For every account the business can see its usage exposure: the estimate of usage-priced traffic carried but not yet charged, plus the bound for `max_lateness`. Records later than `max_lateness` are still billed and reported as breaches of the bound. | Usage exposure visible for every account; every record later than `max_lateness` reported. |
 | P3-N11 | **Metered traffic is evidence.** Accepted records can be retrieved by reservation, link and minute for as long as they are retained, for delivery evidence and disputes. | Every accepted record retrievable for the retention period (X2). |
 
-Throughput at the target scale, charge timeliness, durability of accepted records and
-retention are owned by [X2](X2-non-functional-targets.md). Suspension, and enforcement
-against an account whose exposure or funds run out, are owned by
+Throughput at the target scale, charge timeliness (POL-06: a minute's reservation charge
+posted within 2 min of its end; usage-priced charges within `max_lateness` + 2 min),
+durability of accepted records and retention are owned by
+[X2](X2-non-functional-targets.md). Headroom, which includes usage exposure, and
+suspension when it would fall below zero are owned by
 [P4](P4-wallet-and-settlement.md). Authorisation of price corrections is owned by
 [X1](X1-security-and-tenancy.md).
 
@@ -86,10 +89,10 @@ made in the mock interview. "Decided" means set in the [policy register](../02-s
 |---|---|
 | Guaranteed products are priced per Mbps-minute reserved, accrued per minute, no minimum term; usage pricing applies only to best-effort products and permitted burst. | *Decided* (POL-01) |
 | A booked reservation keeps its price for its life; an open-ended reservation's price changes only with `price_notice`; prices change only on minute boundaries. | *Decided* (POL-27) |
-| Exporters cut flows at `flow_active_timeout` (60 s); a record that still spans several minutes is spread evenly across them, each at its own price. | *Decided* (POL-13) |
+| Exporters cut flows at `flow_active_timeout` (60 s); a record that still spans several minutes is spread across them in proportion to the seconds active in each, each part at its own minute's price. | *Decided* (POL-13) |
 | Late records are billed whenever they arrive; `max_lateness` (180 s) is the lateness the exposure bound assumes. | *Decided* (POL-14) |
 | Charges are computed exactly and rounded once, down to the micro, in USD. | *Decided* (POL-11, POL-20) |
-| Traffic above the reserved rate is policed at the edge; permitted burst is carried best effort on idle capacity. | *Decided* (POL-17) |
+| Traffic above the reserved rate is policed at the edge; permitted burst is carried best effort on idle capacity; where burst is not permitted the excess is dropped and not billed. | *Decided* (POL-17) |
 | The source is reliable: no record is lost and export is 1:1 (unsampled). | *Assumed* |
 | Every record has a unique ID: the exporter plus a sequence number, as in NetFlow v9 / IPFIX. | *Assumed* (see open question 1) |
 | Every record carries the bytes of one flow, its start time and its end time. | *Assumed* (POL-13 needs the start time) |
@@ -117,8 +120,10 @@ made in the mock interview. "Decided" means set in the [policy register](../02-s
 
 Answered by the policy register and removed: terminate at zero or allow a negative balance
 (POL-15, POL-16; now P4); resumption after top-up (POL-16; now P4); how late a record can be
-(POL-14); price rises during the unmetered window (POL-14, POL-27); long flows (POL-13);
-unknown records (POL-17).
+(POL-14); price rises during the unmetered window (POL-14, POL-27); long flows and how they
+are spread (POL-13, as amended: in proportion to the seconds active); unknown records
+(POL-17); over-rate traffic on a product without burst (POL-17, as amended: dropped and not
+billed); charge timeliness (POL-06, as amended).
 
 1. **Sequence numbers.** NetFlow and IPFIX sequence numbers are finite counters that wrap and
    may restart when an exporter restarts. Is the "unique ID" assumption safe over the
@@ -127,11 +132,7 @@ unknown records (POL-17).
    2.25 PB a day but leaves the flow-record rate "to be sized from exporter data".
 3. **Attribution.** How is a record matched to an account and a reservation: by interface,
    VLAN, address range? This decides what "unattributable" means in practice (POL-17).
-4. **Over-rate traffic on a product without burst.** POL-17 polices it at the edge and keeps
-   every record, but does not say whether records showing it are billed. The spec requires
-   only that they are kept and reported.
-5. **"Spread evenly".** For a record spanning several minutes, POL-13 says the bytes are
-   spread evenly across the minutes it was active. Equal shares per minute, or in proportion
-   to the time active in each minute? They differ for a flow that starts or ends mid-minute.
-6. **Charge timeliness.** How soon after a minute ends must its accruals and its usage-priced
-   traffic first be charged? POL-06 sets no target; X2 records the gap.
+4. **Excess carried despite policing.** POL-17 says only traffic carried is billed and that
+   excess on a product without burst is dropped. If records show such excess was in fact
+   carried (policing failed), is it billed, and at what price? The spec requires only that
+   the records are kept and the failure reported (P3-S41).

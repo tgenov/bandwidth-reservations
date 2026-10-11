@@ -49,10 +49,11 @@ Feature: Wallet, funds holds, ledger and supplier settlement
       Then the ledger balance of "b1" is 0 USD
 
     @P4-S03 @need-P4-N13 @POL-21
-    Scenario: A reversal whose payment does not arrive within 72 h is applied
-      Given the provider delivered "MP3 reversed 2.000000 USD" for "b1"
-      When 72 h pass without "MP3 completed"
-      Then the reversal of 2.000000 USD is applied to "b1"
+    Scenario: A reversal whose payment does not arrive within 72 h is escalated, never applied
+      Given the provider delivered "MP3 reversed 2.000000 USD" for "b1", and "MP3 completed" never arrived
+      When 72 h pass
+      Then the ledger balance of "b1" is unchanged by the reversal
+      And the reversal is escalated to operations for reconciliation with the payment partner
 
     @P4-S04 @need-P4-N1
     Scenario: A redelivery whose contents differ from the original moves no money and is reported
@@ -126,8 +127,8 @@ Feature: Wallet, funds holds, ledger and supplier settlement
       When a booking by "b1" ends rejected, invalid or failed
       Then no funds are held for it
 
-    @P4-S13 @need-P4-N3 @POL-15
-    Scenario: A credit-limit account is not held but its commitments count against its limit
+    @P4-S13 @need-P4-N3 @POL-15 @POL-18
+    Scenario: A credit-limit account is not held, but its coverage counts against its headroom
       Given account "e1" has a `credit_limit` (POL-15) and no balance
       When "e1" is confirmed a reservation
       Then no funds are held for it
@@ -142,10 +143,10 @@ Feature: Wallet, funds holds, ledger and supplier settlement
   Rule: The buyer sees available headroom, itemised
 
     @P4-S15 @need-P4-N4 @POL-18
-    Scenario: The headline figure is available headroom
-      Given account "b1" has a ledger balance of 1.000000 USD, 0.288000 USD held and no credit limit
+    Scenario: The headline figure is available headroom, net of funds held and usage exposure
+      Given account "b1" has a ledger balance of 1.000000 USD, 0.288000 USD held, a usage exposure of 0.012000 USD and no credit limit
       When "b1" asks for its balance
-      Then the headline figure is 0.712000 USD of available headroom
+      Then the headline figure is 0.700000 USD of available headroom
 
     @P4-S16 @need-P4-N4 @POL-18
     Scenario: The answer itemises balance, holds, accrued charges and estimated unposted usage
@@ -162,17 +163,23 @@ Feature: Wallet, funds holds, ledger and supplier settlement
     Background:
       Given `suspension_grace` is equal to `coverage_window` (POL-16 default)
 
-    @P4-S18 @need-P4-N5 @POL-16
-    Scenario: An account whose hold cannot roll forward is suspended
-      Given account "b1" holds funds for its reservations
-      When its headroom cannot cover rolling the hold forward
-      Then "b1" is suspended
+    @P4-S18 @need-P4-N5 @POL-16 @POL-18
+    Scenario Outline: An account is suspended when its headroom would fall below zero
+      Given account "<account>" is <kind>
+      When <cause>
+      Then "<account>" is suspended
 
-    @P4-S19 @need-P4-N5 @POL-14 @POL-16
-    Scenario: A credit-limit account is suspended before charges plus exposure would exceed its limit
-      Given account "e1" has a `credit_limit` (POL-15)
-      When its posted charges plus its exposure (P3) reach its credit limit
-      Then "e1" is suspended before any further usage-priced traffic can take it beyond the limit
+      Examples:
+        | account | kind                                    | cause                                                         |
+        | b1      | prepaid, holding funds for reservations | its headroom cannot cover rolling the funds hold forward      |
+        | b1      | prepaid, holding funds for reservations | its usage exposure exceeds what is left of its headroom       |
+        | e1      | a credit-limit account (POL-15)         | its usage exposure exceeds what is left of its headroom       |
+
+    @P4-S19 @need-P4-N5 @POL-14 @POL-16 @POL-18
+    Scenario: Suspension comes before any account can owe more than its headroom allows
+      Given any account, prepaid or with a credit limit
+      When its usage-priced traffic grows
+      Then it is suspended no later than the moment its headroom (POL-18), net of usage exposure, would fall below zero
 
     @P4-S20 @need-P4-N5 @POL-16
     Scenario: A suspended account's reservations keep their capacity during the grace
@@ -199,10 +206,10 @@ Feature: Wallet, funds holds, ledger and supplier settlement
       Then "b1"'s reservations are released, and their capacity is available to other buyers
       And the buyer is told which reservations were released and why
 
-    @P4-S24 @need-P4-N5
-    Scenario: The buyer is warned before suspension
-      Given account "b1"'s headroom is falling toward the point where its hold cannot roll forward
-      When it reaches the warning threshold (not yet in the policy register; P4 open question 3)
+    @P4-S24 @need-P4-N5 @POL-16
+    Scenario: The buyer is warned when headroom falls below low_balance_warning
+      Given account "b1" holds an open-ended reservation whose charges for one coverage window are 0.288000 USD
+      When its headroom falls below 0.072000 USD, the `low_balance_warning` (POL-16 default: a quarter of one coverage window's charges)
       Then the buyer is warned, with the top-up that would avoid suspension
 
   Rule: Network operations always knows an account's standing
@@ -323,11 +330,11 @@ Feature: Wallet, funds holds, ledger and supplier settlement
   Rule: Supplier earnings are final, except for the supplier's own errors
 
     @P4-S41 @need-P4-N11 @POL-23
-    Scenario: A correction caused by Share's error comes out of Share's commission
-      Given a charge on "R1" was posted and split
-      When a price correction caused by Share's error reduces it
-      Then the buyer is credited the reduction
-      And the reduction is taken from Share's commission
+    Scenario: A correction caused by Share's error is borne by Share in full
+      Given a charge of 100.000000 USD on "R1" was posted and split, Share's commission share being 15.000000 USD
+      When a price correction caused by Share's error reduces it by 40.000000 USD
+      Then the buyer is credited 40.000000 USD
+      And the whole 40.000000 USD is borne from Share's own account, though it exceeds the commission on that charge
       And no supplier's balance changes
 
     @P4-S42 @need-P4-N11 @POL-22 @POL-23

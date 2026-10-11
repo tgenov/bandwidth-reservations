@@ -148,17 +148,17 @@ Feature: Booking, changing and ending route reservations, all or nothing
       When X and Y compete for that capacity
       Then X is confirmed and Y is rejected
 
-    @P2-S17 @need-P2-N4
-    Scenario: A request is rejected for no fit only if it does not fit on committed capacity
-      Given no capacity on L is held for any pending request
-      When any booking on L is rejected for no fit
+    @P2-S17 @need-P2-N4 @POL-05
+    Scenario: A request that waits is rejected for no fit only if it does not fit on committed capacity
+      Given a booking on L that did not ask not to wait
+      When it is rejected for no fit
       Then at the moment of rejection its window did not fit alongside the committed rate on L
 
     @P2-S18 @need-P2-N4 @POL-05 @POL-10
-    Scenario: A request rejected because capacity it needs is in flight is told when to retry
+    Scenario: A request that asks not to wait is rejected at once with retry_after when capacity it needs is in flight
       Given a pending request in flight holds 8 Mbps on L for [10:00, 11:00)
-      When another booking for 8 Mbps on L for [10:00, 11:00) is rejected while that request is in flight
-      Then the rejection gives a `retry_after` of the in-flight request's remaining deadline
+      When another buyer books 8 Mbps on L for [10:00, 11:00) with `wait = false` (POL-05)
+      Then the booking is rejected at once with a `retry_after` of the in-flight request's remaining deadline
 
     @P2-S19 @need-P2-N4
     Scenario: Crossed requests settle without waiting for capacity holds to time out
@@ -169,11 +169,19 @@ Feature: Booking, changing and ending route reservations, all or nothing
       Then both have their outcomes before either deadline passes
       And at least one of them is confirmed
 
-    @P2-S20 @need-P2-N4
-    Scenario: A buyer who keeps retrying a request that fits is eventually confirmed
-      Given a booking fits on the committed capacity of every leg
-      When the buyer keeps sending it, each time it is rejected only because capacity is in flight
-      Then it is eventually confirmed, unless other bookings are confirmed that leave it no room
+    @P2-S20 @need-P2-N4 @POL-05 @POL-26
+    Scenario: A contended request waits, pending, and is confirmed if the capacity in flight is released within its deadline
+      Given a pending request in flight holds 8 Mbps on L for [10:00, 11:00)
+      And another buyer books 8 Mbps on L for [10:00, 11:00) without asking not to wait
+      When the in-flight request ends without confirmation before the second booking's deadline (POL-26)
+      Then the second booking is confirmed
+
+    @P2-S52 @need-P2-N4 @POL-05 @POL-10
+    Scenario: A waiting request whose capacity is then confirmed to the request ahead of it is rejected with a counter-offer
+      Given a pending request in flight holds 8 Mbps on L for [10:00, 11:00)
+      And another buyer's booking of 8 Mbps on L for [10:00, 11:00) is waiting for it
+      When the in-flight request is confirmed
+      Then the waiting booking is rejected for no fit, with the counter-offer of POL-10
 
     @P2-S21 @need-P2-N4 @POL-02
     Scenario: Changing the priority rule does not change the outcome of uncontended requests
@@ -287,7 +295,7 @@ Feature: Booking, changing and ending route reservations, all or nothing
 
     @P2-S36 @need-P2-N7 @POL-26 @POL-28
     Scenario: A partner whose holds are too short is booked as a partner without holds
-      Given partner link S holds capacity for less than `route_deadline_max` plus the commit margin (POL-26)
+      Given partner link S holds capacity for less than `route_deadline_max` plus `commit_margin` (POL-26)
       When a buyer books a route over S and Q
       Then the request is refused before anything is held, stating that a route may include at most one leg without holds
 
@@ -308,24 +316,24 @@ Feature: Booking, changing and ending route reservations, all or nothing
 
     @P2-S39 @need-P2-N8 @POL-25
     Scenario: A booking beyond an agent key's spending limit is rejected
-      Given an agent key whose spending limit for the period (POL-25) would be exceeded by a booking
+      Given an agent key whose funds held plus charges accrued by its bookings in the current `key_spend_period` would exceed its `key_spend_limit` (POL-25) with a new booking
       When the key makes the booking
       Then the booking is rejected stating that the key's spending limit would be exceeded
 
     @P2-S40 @need-P2-N8 @POL-25
     Scenario Outline: A booking beyond a limit on capacity in flight is rejected
-      Given the <holder>'s capacity in flight is at its limit (POL-25)
+      Given the Mbps in requests of the <holder> not yet decided is at its <limit> (POL-25)
       When the <holder> makes another booking
       Then the booking is rejected stating that the <holder>'s limit on capacity in flight is reached
 
       Examples:
-        | holder    |
-        | agent key |
-        | account   |
+        | holder    | limit                    |
+        | agent key | `key_inflight_limit`     |
+        | account   | `account_inflight_limit` |
 
     @P2-S41 @need-P2-N8 @POL-25
     Scenario: Requests from an agent key above its rate limit are refused
-      Given an agent key that has reached its request-rate limit (POL-25)
+      Given an agent key that has reached its `key_rate_limit` (POL-25)
       When the key sends another request
       Then the request is refused stating the rate limit and when the key may send again
 
@@ -394,12 +402,12 @@ Feature: Booking, changing and ending route reservations, all or nothing
   Rule: Operations can see requests in trouble
 
     @P2-S51 @need-P2-N10
-    Scenario Outline: A request in trouble is visible to operations with its reason
-      Given a booking request that <state>
+    Scenario: A failed request is visible to operations with its reason
+      Given a booking request that failed
       When operations looks for requests in trouble
       Then the request is listed with its reason and the leg concerned
 
-      Examples:
-        | state                                              |
-        | failed                                             |
-        | has been pending longer than operations expects    |
+    @P2-S53 @need-P2-N10 @need-P2-N3 @POL-26
+    Scenario: A request still pending after its deadline plus commit_margin raises an operational alert
+      When a booking request is still pending after its deadline plus `commit_margin` (POL-26)
+      Then operations is alerted, with the request, the leg concerned and how long it has been pending

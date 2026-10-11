@@ -29,7 +29,7 @@ Feature: Rating reservations and metered traffic
   So that I am paid for all the capacity and traffic I deliver
 
   As Share's risk owner
-  I want to see each account's exposure, and to know when the assumptions behind it were broken
+  I want to see each account's usage exposure, and to know when the assumptions behind it were broken
   So that the loss from usage-priced traffic not yet charged is bounded
 
   Rule: Every minute a reservation is active accrues its reserved rate at its booked price
@@ -112,6 +112,14 @@ Feature: Rating reservations and metered traffic
         | was shown    | charged the fee as shown        |
         | was not shown| not charged any cancellation fee |
 
+    @P3-S40 @need-P3-N1 @POL-08 @POL-27
+    Scenario: An extension's added part accrues at the price in force when it was made; the existing part keeps its price
+      Given a confirmed reservation of 100 Mbps for [10:00, 12:00) on the route, booked at 2 micro-USD per Mbps-minute
+      And the route's `reservation_price` is now 3 micro-USD per Mbps-minute
+      When the reservation is extended to end at 13:00
+      Then each minute of [10:00, 12:00) accrues 200 micro-USD
+      And each minute of [12:00, 13:00) accrues 300 micro-USD
+
   Rule: Each reservation-minute and each record is charged exactly once
 
     @P3-S12 @need-P3-N2
@@ -177,10 +185,15 @@ Feature: Rating reservations and metered traffic
         | 12:06:00 | 12:06:20 | 12:06:00 | 12:07:00 |
 
     @P3-S19 @need-P3-N4 @POL-13
-    Scenario: A record spanning several whole minutes is spread evenly across them
-      Given a flow record for "a1" of 3 GB for a flow active from 12:05:00 to 12:08:00
+    Scenario Outline: A record spanning several minutes is spread in proportion to the seconds active in each
+      Given a flow record for "a1" of 3 GB for a flow active from <start> to <end>
       When the record is charged
-      Then 1 GB is charged in each of the minutes starting 12:05, 12:06 and 12:07
+      Then <split>
+
+      Examples:
+        | start    | end      | split                                                                               |
+        | 12:05:00 | 12:08:00 | 1 GB is charged in each of the minutes starting 12:05, 12:06 and 12:07              |
+        | 12:05:30 | 12:07:00 | 1 GB is charged in the minute starting 12:05 and 2 GB in the minute starting 12:06  |
 
   Rule: Traffic is priced at the price in force in the minute it happened
 
@@ -225,18 +238,25 @@ Feature: Rating reservations and metered traffic
       When "a1" carries 1.75 GB on the reservation in one minute, 1 GB more than 100 Mbps for 60 s
       Then a charge of 10,000 micro-USD for usage-priced traffic is made for that minute, for the 1 GB of burst
 
-    @P3-S24 @need-P3-N6 @need-P3-N7 @POL-17
-    Scenario: Traffic above the reserved rate on a product without burst is kept and reported
+    @P3-S24 @need-P3-N6 @POL-17
+    Scenario: Traffic above the reserved rate on a product without burst is dropped and not billed
+      Given the product does not permit burst
+      When "a1" sends more than 100 Mbps for 60 s in one minute and the excess is dropped at the edge
+      Then no charge for usage-priced traffic is made for that minute
+      And the records for that minute are kept
+
+    @P3-S41 @need-P3-N6 @need-P3-N7 @POL-17
+    Scenario: Records showing traffic carried above the reserved rate on a product without burst are kept and reported
       Given the product does not permit burst
       When records show "a1" carrying more than 100 Mbps for 60 s in one minute
       Then the records are kept
       And the excess is reported to network operations as traffic that should have been policed
 
     @P3-S25 @need-P3-N6 @POL-17
-    Scenario: Attributable traffic outside an active reservation is billed at usage_price and counts toward exposure
+    Scenario: Attributable traffic outside an active reservation is billed at usage_price and counts toward usage exposure
       When records show traffic attributable to "a1" in a minute outside any active reservation of "a1"
       Then it is charged at `usage_price` (POL-01)
-      And it counts toward "a1"'s exposure until it is charged
+      And it counts toward "a1"'s usage exposure (POL-18) until it is charged
 
     @P3-S26 @need-P3-N6 @POL-17
     Scenario: Traffic that cannot be attributed is quarantined, not billed, and reported
@@ -331,19 +351,19 @@ Feature: Rating reservations and metered traffic
       When the period is recomputed from the stored records, the reservation history and the price history
       Then the recomputed charges and amendments equal the recorded ones
 
-  Rule: Exposure is visible, and breaches of its assumptions are reported
+  Rule: Usage exposure is visible, and breaches of its assumptions are reported
 
-    @P3-S37 @need-P3-N10 @POL-14
-    Scenario: The business can see each account's exposure
+    @P3-S37 @need-P3-N10 @POL-14 @POL-18
+    Scenario: The business can see each account's usage exposure
       Given an account with usage-priced traffic
-      When finance asks for the account's exposure
-      Then it is given as the most the account can owe for usage-priced traffic not yet charged, assuming `max_lateness` (POL-14) and the enforcement time in X2
+      When finance asks for the account's usage exposure
+      Then it is given as the estimate of usage-priced traffic carried but not yet charged, plus the bound for traffic that may still arrive within `max_lateness` (POL-14, POL-18)
 
     @P3-S38 @need-P3-N10 @POL-14
     Scenario: A record later than max_lateness is still charged and reported as a breach
       When a record arrives later than `max_lateness` (POL-14) after the end of its minute
       Then it is charged like any late record
-      And it is reported as a breach of the exposure bound, with its exporter and lateness
+      And it is reported as a breach of the usage exposure bound, with its exporter and lateness
 
   Rule: Accepted records are kept as evidence of what was delivered
 

@@ -120,19 +120,24 @@ Feature: Selling capacity on one link without overselling
       When a buyer books 5 Mbps on the link alone for [10:00, 11:00)
       Then the booking is rejected
 
-    @P1-S11 @need-P1-N3 @POL-05 @POL-04
-    Scenario: A single-link booking blocked only by capacity in flight is confirmed if that capacity is released in time
+    @P1-S11 @need-P1-N3 @POL-05 @POL-26
+    Scenario: A single-link booking blocked only by capacity in flight waits, and is confirmed if that capacity is released within its deadline
       Given a route request in flight holds 6 Mbps on the link for [10:00, 11:00)
       And a buyer books 5 Mbps on the link alone for [10:00, 11:00)
-      When the route request ends without confirmation within `ack_budget` (POL-04)
+      When the route request ends without confirmation before the single-link booking's deadline (POL-26)
       Then the single-link booking is confirmed
 
     @P1-S12 @need-P1-N3 @need-P1-N4 @POL-05 @POL-10
-    Scenario: A single-link booking still blocked by capacity in flight after ack_budget is rejected with retry_after
+    Scenario: A single-link booking that asks not to wait is rejected at once with retry_after
       Given a route request in flight holds 6 Mbps on the link for [10:00, 11:00), with 20 s of its deadline left
-      And a buyer books 5 Mbps on the link alone for [10:00, 11:00)
-      When the route request is still in flight after `ack_budget` (POL-04)
-      Then the single-link booking is rejected with a `retry_after` of the route request's remaining deadline
+      When a buyer books 5 Mbps on the link alone for [10:00, 11:00) with `wait = false` (POL-05)
+      Then the booking is rejected at once with a `retry_after` of the route request's remaining deadline
+
+    @P1-S34 @need-P1-N3 @POL-05 @POL-04
+    Scenario: A single-link booking still waiting after ack_budget is answered pending
+      Given a route request in flight holds 6 Mbps on the link for [10:00, 11:00)
+      When a buyer books 5 Mbps on the link alone for [10:00, 11:00) and the route request is still in flight after `ack_budget` (POL-04)
+      Then the response to the single-link booking is pending
 
   Rule: Concurrent bookings are decided as if one at a time
 
@@ -295,7 +300,7 @@ Feature: Selling capacity on one link without overselling
       When the link's supplier books planned maintenance taking 2 Mbps for a day less than `maintenance_notice` (POL-07) ahead
       Then the maintenance booking is rejected, stating the notice required
 
-  Rule: A permanent reduction re-routes affected reservations, or revokes the newest first, with notice
+  Rule: A permanent reduction offers an equivalent path, or revokes the newest first, with notice
 
     Background:
       Given a link with a capacity of 10 Mbps
@@ -303,10 +308,23 @@ Feature: Selling capacity on one link without overselling
       And a confirmed open-ended reservation B of 4 Mbps on the link, confirmed after A
 
     @P1-S31 @need-P1-N8 @POL-07
-    Scenario: An affected reservation is moved to an equivalent path when one exists
+    Scenario: An affected buyer is offered an equivalent path on the terms of POL-07
       Given an equivalent path exists for B
       When the link's supplier permanently reduces its capacity to 6 Mbps
-      Then B is moved to the equivalent path and its holder is told
+      Then the holder of B is offered the equivalent path: the same endpoints and rate, latency and SLA class no worse, at B's original price
+
+    @P1-S35 @need-P1-N8 @POL-07
+    Scenario: An accepted offer moves the reservation to the equivalent path at its original price
+      Given the holder of B has been offered an equivalent path after a permanent reduction
+      When the holder accepts the offer
+      Then B continues on the equivalent path at its original price
+      And A stays confirmed on the link
+
+    @P1-S36 @need-P1-N8 @POL-07
+    Scenario: A declined offer is treated as no equivalent path
+      Given the holder of B has been offered an equivalent path after a permanent reduction
+      When the holder declines the offer
+      Then B is revoked with effect no earlier than `revocation_notice` (POL-07) from the announcement
 
     @P1-S32 @need-P1-N8 @POL-07
     Scenario: Without an equivalent path, the newest reservations are revoked first, with notice
