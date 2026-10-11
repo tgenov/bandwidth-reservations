@@ -394,7 +394,7 @@ Feature: Selling capacity on one link without overselling
       And the holder of A is offered nothing, because A fits the reduced capacity
 
     @P1-S35 @need-P1-N8 @POL-07
-    Scenario: An accepted offer moves the reservation to the equivalent path at its original price when the notice ends
+    Scenario: An accepted offer moves the reservation to the equivalent path, at the lower of its original price and the path's price, when the notice ends
       Given the holder of B has been offered an equivalent path after a permanent reduction to 4 Mbps announced on day D
       When the holder accepts the offer
       Then from the end of `revocation_notice` (POL-07) after the announcement, B continues on the equivalent path at the lower of its original price and the path's price

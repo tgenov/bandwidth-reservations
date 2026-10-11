@@ -178,15 +178,19 @@ Feature: Non-functional targets
       Then it answers correctly again within <target>
 
       Examples:
-        | capability          | scope                         | target |
-        | admission           | a node or zone                | 1 min  |
-        | usage ingestion     | a node or zone                | 1 min  |
-        | rating and posting  | a node or zone                | 5 min  |
-        | the wallet          | a node or zone                | 5 min  |
-        | admission           | a region (declared disaster)  | 1 h    |
-        | usage ingestion     | a region (declared disaster)  | 1 h    |
-        | rating and posting  | a region (declared disaster)  | 1 h    |
-        | the wallet          | a region (declared disaster)  | 1 h    |
+        | capability               | scope                        | target |
+        | admission                | a node or zone               | 1 min  |
+        | usage ingestion          | a node or zone               | 1 min  |
+        | rating and posting       | a node or zone               | 5 min  |
+        | the wallet               | a node or zone               | 5 min  |
+        | payouts                  | a node or zone               | 15 min |
+        | reporting and statements | a node or zone               | 30 min |
+        | admission                | a region (declared disaster) | 1 h    |
+        | usage ingestion          | a region (declared disaster) | 1 h    |
+        | rating and posting       | a region (declared disaster) | 1 h    |
+        | the wallet               | a region (declared disaster) | 1 h    |
+        | payouts                  | a region (declared disaster) | 1 h    |
+        | reporting and statements | a region (declared disaster) | 1 h    |
 
   Rule: Records are kept for the retention period
 

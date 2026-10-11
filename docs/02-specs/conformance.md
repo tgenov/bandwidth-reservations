@@ -6,12 +6,11 @@ satisfies it, which tests show it, and whether it is met. It is filled in at the
 requirements, and the code will then be changed to conform. Until then every row is
 `not assessed` and every Design cell is `TBD`.
 
-The matrix is regenerated whenever scenarios change; it reflects the specs after the
-second requirements-gate resolution of 2026-10-11 (policy rounds 3 to 5; see
-[the round-5 resolution record](../reviews/03-requirements-gate-resolution.md) and
-[the round-3/4 record](../reviews/02-requirements-gate-resolution.md)). Rows are in file
-order, which is Rule order; IDs added in each round are numbered after each file's
-previous highest ID.
+The matrix is regenerated whenever scenarios change; it reflects the specs as aligned
+with the consolidated [policy register](policy-register.md) of 2026-10-11 (see also the
+requirements-gate resolution records [02](../reviews/02-requirements-gate-resolution.md)
+and [03](../reviews/03-requirements-gate-resolution.md)). Rows are in file order, which is Rule order; new IDs are numbered after each
+file's previous highest ID.
 
 The `.feature` files never carry verification status, test names or defect notes; they
 live only here. Status values, once assessed: `met`, `partly met` (for example met on one
@@ -20,7 +19,7 @@ path only), `not met`. A scenario met only on some paths is never `met`.
 Tests marked *prior evidence, to be re-validated* are the citations the previous baseline
 gave for a scenario with the same ID. They show what the prototype once checked; they do
 not establish conformance, and where the scenario's meaning has changed since (for
-example P2-S15, P2-S16 and P2-S19 under POL-02 round 3) they may no longer apply.
+example P2-S15, P2-S16 and P2-S19 under POL-02) they may no longer apply.
 Generators, seeds, client counts and fault rates used by such tests belong in the test
 plan, not in the scenario.
 
@@ -70,7 +69,7 @@ plan, not in the scenario.
 | P1-S30 | Maintenance booked with less than the required notice is rejected | TBD | — | not assessed |
 | P1-S51 | Works carried out on sold capacity anyway are an unplanned outage attributed to the supplier | TBD | — | not assessed |
 | P1-S31 | Only the buyer who would otherwise not fit is offered an equivalent path, on the terms of POL-07 | TBD | — | not assessed |
-| P1-S35 | An accepted offer moves the reservation to the equivalent path at its original price when the notice ends | TBD | — | not assessed |
+| P1-S35 | An accepted offer moves the reservation to the equivalent path, at the lower of its original price and the path's price, when the notice ends | TBD | — | not assessed |
 | P1-S36 | A declined offer means revocation when the notice ends | TBD | — | not assessed |
 | P1-S45 | An offer not answered within offer_window counts as declined | TBD | — | not assessed |
 | P1-S32 | Without an equivalent path, the newest reservation is revoked when the notice ends | TBD | — | not assessed |
@@ -97,6 +96,7 @@ plan, not in the scenario.
 | P2-S13 | A request whose partner never answers has failed by its deadline and holds nothing | TBD | — | not assessed |
 | P2-S55 | A request with a partner leg does not begin committing later than its deadline less commit_margin | TBD | — | not assessed |
 | P2-S14 | Capacity held for a request that is not confirmed is free on Share links at once, and at a partner by the deadline | TBD | — | not assessed |
+| P2-S93 | Share releases every hold of a request at its deadline, a partner hold that would last longer included | TBD | — | not assessed |
 | P2-S56 | A buyer may withdraw a pending request | TBD | — | not assessed |
 | P2-S57 | Withdrawing a request after its partner leg without holds was booked cancels that leg at Share's cost | TBD | — | not assessed |
 | P2-S15 | Competing requests that wait do not all lose | TBD | `test/routes.test.ts` › "randomised contention (seed 11/12/13): never oversold, competitors never all lose, all sagas finish" *(prior evidence, to be re-validated)* | not assessed |
@@ -166,6 +166,7 @@ plan, not in the scenario.
 | P2-S78 | A suspended account cannot add to a reservation | TBD | — | not assessed |
 | P2-S79 | Concurrent changes to one reservation are applied one at a time, in arrival order | TBD | — | not assessed |
 | P2-S81 | A cancellation is never delayed by a pending change, which then fails | TBD | — | not assessed |
+| P2-S94 | A shortening to the next minute boundary is a cancellation; any other shortening waits its turn | TBD | — | not assessed |
 | P2-S80 | A change still pending when its reservation is ended by Share is not confirmed | TBD | — | not assessed |
 | P2-S82 | A cancellation over a partner leg takes effect for the buyer whatever the partner answers | TBD | — | not assessed |
 | P2-S83 | An extension or increase over a partner leg is confirmed on every leg or leaves the reservation unchanged | TBD | — | not assessed |
@@ -340,12 +341,14 @@ plan, not in the scenario.
 | X1-S03 | Another account's reservation cannot be changed | TBD | — | not assessed |
 | X1-S04 | A supplier sees only its own links and settlements | TBD | — | not assessed |
 | X1-S28 | A supplier sees the reservations on its link, but not who holds them | TBD | — | not assessed |
+| X1-S30 | Withdrawn consent stops the supplier seeing the buyer's identity from then on | TBD | — | not assessed |
 | X1-S24 | A webhook goes only to its own account's endpoint and carries nothing about another account | TBD | — | not assessed |
 | X1-S05 | An agent key acts only for the account that issued it | TBD | — | not assessed |
 | X1-S06 | A revoked agent key is refused within 60 s of its revocation | TBD | — | not assessed |
 | X1-S07 | An operation by an agent key records the key | TBD | — | not assessed |
 | X1-S18 | An account administrator issues, changes and revokes keys and sets their limits | TBD | — | not assessed |
 | X1-S19 | An agent key cannot manage keys or limits, its own or another's | TBD | — | not assessed |
+| X1-S29 | Only an account administrator can consent to identify the account to a supplier | TBD | — | not assessed |
 | X1-S25 | An account user who is not an account administrator cannot manage keys or limits | TBD | — | not assessed |
 | X1-S20 | Every change to an agent key or its limits records who made it and when | TBD | — | not assessed |
 | X1-S21 | An account cannot have more than account_max_keys keys | TBD | — | not assessed |

@@ -89,6 +89,14 @@ Feature: Security, tenancy and audit
         | after an account administrator of "b1" consented to identify "b1" to "s1" | "b1"'s account identity                            |
         | after a compliance disclosure under a legal order that requires it (X1-S12) | "b1"'s account identity, recorded with the order |
 
+    @X1-S30 @need-X1-N2 @need-X1-N8 @POL-33
+    Scenario: Withdrawn consent stops the supplier seeing the buyer's identity from then on
+      Given buyer "b1" holds a confirmed reservation R on a link of supplier "s1"
+      And an account administrator of "b1" consented to identify "b1" to "s1"
+      When the administrator withdraws that consent
+      Then every later view by "s1" of that link's schedule shows nothing that identifies "b1" or links R to "b1"'s other reservations
+      And the withdrawal is recorded with the administrator and the time
+
     @X1-S24 @need-X1-N2 @POL-04
     Scenario: A webhook goes only to its own account's endpoint and carries nothing about another account
       Given "b1" and "b2" have each registered a webhook endpoint
@@ -146,6 +154,20 @@ Feature: Security, tenancy and audit
         | change another key's limits                    |
         | issue a new agent key                          |
         | revoke another agent key                       |
+
+    @X1-S29 @need-X1-N9 @need-X1-N2 @POL-25 @POL-33
+    Scenario Outline: Only an account administrator can consent to identify the account to a supplier
+      Given buyer "b1" holds a confirmed reservation R on a link of supplier "s1"
+      And a principal of "b1" that is <principal>
+      When that principal tries to consent to identify "b1" to "s1"
+      Then the request is refused and no consent is recorded
+      And the attempt is recorded
+      And the schedule of that link, asked for by a principal of "s1", shows nothing that identifies "b1" or links R to "b1"'s other reservations
+
+      Examples:
+        | principal                                         |
+        | an agent key                                      |
+        | a user without the account administrator right    |
 
     @X1-S25 @need-X1-N9 @POL-25
     Scenario Outline: An account user who is not an account administrator cannot manage keys or limits

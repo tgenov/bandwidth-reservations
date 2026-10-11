@@ -160,6 +160,14 @@ Feature: Booking, changing and ending route reservations, all or nothing
       Then its capacity on L1 is available to other buyers from the moment of the outcome
       And its capacity held at P is released no later than the request's deadline
 
+    @P2-S93 @need-P2-N3 @need-P2-N7 @POL-26
+    Scenario: Share releases every hold of a request at its deadline, a partner hold that would last longer included
+      Given a pending route booking over Share link L1 and partner link P, with a deadline of 30 s, holds capacity on both
+      And P's hold would last 120 s if left to expire
+      When the request's deadline arrives and it has not been confirmed
+      Then the request has failed as of its deadline
+      And at its deadline Share releases its hold on L1 and its hold at P, without waiting for the hold at P to expire
+
     @P2-S56 @need-P2-N3 @POL-08
     Scenario: A buyer may withdraw a pending request
       Given a booking request of the buyer is pending and holds capacity
@@ -475,7 +483,7 @@ Feature: Booking, changing and ending route reservations, all or nothing
 
     @P2-S37 @need-P2-N7 @need-P2-N1
     Scenario: A route over two partners with holds of different lengths is all or nothing
-      Given a route over partner links P1 and P2, whose holds last different lengths of time, each long enough for the request's deadline
+      Given a route over partner links P1 and P2, whose holds last different lengths of time, each lasting at least `route_deadline_max` + `commit_margin` (70 s at the defaults)
       When the booking has its outcome
       Then it is confirmed on both or holds nothing on either
 
@@ -738,6 +746,17 @@ Feature: Booking, changing and ending route reservations, all or nothing
       When the account cancels R
       Then R ends at 10:01
       And the extension fails with the reason "reservation ended" and holds nothing
+
+    @P2-S94 @need-P2-N9 @POL-08
+    Scenario Outline: A shortening to the next minute boundary is a cancellation; any other shortening waits its turn
+      Given an extension of R to 20:00 is pending, waiting for capacity in flight on L2
+      When the account shortens R to end at <end>
+      Then <result>
+
+      Examples:
+        | end   | result                                                                                                                  |
+        | 10:01 | R ends at 10:01, as a cancellation, without waiting for the extension, which fails with the reason "reservation ended" and holds nothing |
+        | 12:00 | the shortening is decided after the extension, in arrival order, against R as the extension leaves it, and R then ends at 12:00 |
 
     @P2-S80 @need-P2-N9 @POL-07 @POL-16 @POL-30
     Scenario Outline: A change still pending when its reservation is ended by Share is not confirmed

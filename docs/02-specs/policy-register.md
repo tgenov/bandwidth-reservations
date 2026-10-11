@@ -411,7 +411,8 @@ newest-first on an unplanned outage (the network cannot choose).
 - A cancellation fee goes wholly to the partner that imposed it: not split, no
   commission. It is posted as a fee charge line (POL-11).
 
-- A shorten whose new end is the next minute boundary is a cancellation. Any other
+- A shorten whose new end is at or before the next minute boundary (including an end
+  already past) is a cancellation, effective at the next minute boundary. Any other
   shorten does not end the reservation and is ordered with other changes by arrival.
 
 **Why.** No term is the product's main promise. Admitting only the difference keeps
@@ -960,9 +961,10 @@ capacity.
 | `route_deadline_max` | 60 s |
 | `commit_margin` | 10 s |
 
-- Share releases every hold of a request, partner holds included, at its deadline. A
-  partner hold only has to outlast the deadline; one shorter than `route_deadline_max` +
-  `commit_margin` makes the partner one without holds (POL-28).
+- A partner counts as offering holds only if its holds last at least
+  `route_deadline_max` + `commit_margin`; otherwise it is a partner without holds
+  (POL-28). Whatever their length, Share releases every hold of a request, partner holds
+  included, at the request's deadline.
 
 **Why.** Fast single-link agents keep short deadlines; nobody can choose a deadline that
 could never be met. Failing as of the deadline means capacity is never stranded by an
@@ -1190,3 +1192,4 @@ administrator, keeps disclosure a deliberate account decision that an agent cann
 | 2026-10-11 | Round 6 (POL-06): RTO on node or zone loss of 15 min for payouts and 30 min for reporting and statements, within their 99.9% monthly budget (about 43 min) | No recovery target for payouts or reporting |
 | 2026-10-11 | Consolidated: each entry states the current rule; history above | Stacked round amendments were hard to read and partly superseded |
 | 2026-10-11 | POL-08: a shorten to the next minute boundary is a cancellation; POL-26: Share releases partner holds at the deadline | Left unstated by consolidation |
+| 2026-10-11 | POL-08: a shorten to an end at or before the next minute boundary is a cancellation; POL-26: hold-length test restated unambiguously | Spec cleanup found the gaps |
