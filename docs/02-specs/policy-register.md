@@ -60,6 +60,8 @@ finding).
 | POL-26 | Route deadline | Chosen per request, default 30 s, maximum 60 s |
 | POL-27 | Price changes | On minute boundaries only; a booked reservation keeps its price |
 | POL-28 | Partners without holds | Booked last; at most one per route; Share bears the cancellation cost |
+| POL-29 | Idempotency | Per account; a different principal is refused; 24 h for bookings, 7 years for money |
+| POL-30 | Termination by Share | Only for fraud, legal order or network abuse, recorded |
 
 ---
 
@@ -109,6 +111,19 @@ wins; no request waits forever.
 non-discriminatory, which a carrier-neutral marketplace needs. Value-based priority
 invites gaming (inflating size or duration to win); customer tiers create a two-class
 market at odds with standardised pricing.
+
+**Amended (round 3).** The priority rule orders requests that are **waiting**, and resolves
+**crossings** (two requests each holding capacity the other needs): the older keeps what
+it holds and the younger releases its conflicting holds and waits, within its own
+deadline. A request that already holds capacity it needs, with no crossing, keeps it; an
+older request does not pre-empt it.
+
+The guarantee is: **contention alone never makes every competitor lose.** It covers
+requests that wait (the default) and whose deadline outlasts the outcome of the request
+ahead of them. A request that opts out (`wait = false`), or chooses a deadline shorter
+than the outcome it waits on, has excluded itself. Losses caused by failures (a partner's
+refusal or fault, an expired deadline after a fault) are not contention losses; for them
+the guarantee is that nothing is left held and the buyer is told why.
 
 ## POL-03. Interrupted route requests: resume within the deadline
 
@@ -182,6 +197,20 @@ buyer may never retry.
 current load. Seven years covers the record-retention rules common across the planned
 markets; legal must confirm it per market (POL-24).
 
+**Amended (round 3).** - **Node or zone loss is transparent.** Admission RTO ≤ 1 min; billing and
+  wallet ≤ 5 min. Region loss is a declared disaster, outside the availability
+  measurement, with RTO 1 h and RPO 0.
+- **Availability** is the share of minutes in a calendar month in which the service
+  answers correctly within its latency target, measured by synthetic probes from outside
+  the region.
+- **Provisional design load until exporter data exists:** flow records at an assumed
+  mean of 100 KB of traffic per record, i.e. about 260,000 records/s average for
+  2.25 PB/day; design for 600,000/s peak. Payment notifications: 1,000/s peak. Admission
+  mix: 80% single-link, 20% routes; 70% of requests fit. All four are to be replaced by
+  measurements before production.
+- X2's 200 ms target for a single-link booking is to an answer, final or `pending`
+  (POL-04); a final answer is expected within it when no capacity is in flight.
+
 ## POL-07. Loss of supply: never revoke silently
 
 *Answers D-07 (R-11).*
@@ -208,6 +237,23 @@ markets; legal must confirm it per market (POL-24).
 could not be delivered. Pro-rata degradation breaks every buyer's guarantee to spare
 one.
 
+**Amended (round 3).** Mechanics of a permanent reduction:
+1. The supplier must keep the capacity for `revocation_notice`; the reduction takes
+   effect when the notice ends. New sales stop at once at the reduced capacity.
+2. Only reservations that would otherwise not fit are affected: just enough, newest
+   first, to fit the reduced capacity. Each added part (POL-08) has its own age.
+3. An equivalent-path offer goes to each affected buyer and lapses after `offer_window`;
+   no answer counts as declined. A declined or lapsed offer means revocation at the end
+   of the notice.
+4. Planned maintenance bookings accrue nothing and are excluded from rating and
+   settlement. Only the link's own supplier may book maintenance or change the link's
+   capacity.
+
+| Parameter | Default |
+|---|---|
+| `offer_window` | 7 days |
+| `maintenance_notice` | 14 calendar days (replaces 10 business days) |
+
 ## POL-08. Changing a reservation
 
 *Answers D-08 (R-12).*
@@ -226,6 +272,23 @@ booking time and charged on cancellation. Share absorbs partner fees it did not 
 
 **Why.** No term is the product's main promise. Admitting only the difference keeps
 modifications as safe as new bookings.
+
+**Amended (round 3).** - A rate increase applies from the next minute boundary to the end of the
+  reservation. A rate that differs over sub-windows is a separate reservation.
+- A decrease removes the most recently added part first (last in, first out).
+- A change is admitted like a new booking: capacity, funds (the hold grows with the
+  coverage of the added part), key headroom and limits. A suspended account may cancel,
+  shorten or decrease, but not extend or increase.
+- Changes to one reservation are applied one at a time, in arrival order; each is
+  checked against the reservation as left by the previous one.
+- A change or cancellation of a route applies to every leg; partner legs follow the
+  partner's terms shown at booking.
+- A partner's minimum term is charged on early cancellation as a cancellation fee,
+  shown at booking. The funds hold at admission is the larger of the coverage and that
+  fee. When reservations are released after suspension (POL-16) the buyer pays the fee;
+  when revoked (POL-07), Share pays it.
+- A buyer may withdraw a pending request: it fails as "withdrawn" and releases what it
+  holds; a final-only partner leg already booked is cancelled at Share's cost (POL-28).
 
 ## POL-09. Selling horizon
 
@@ -272,6 +335,11 @@ residue stays in the payee's account for the next payout; Share never keeps resi
 **Why.** At micro precision, rounding in the buyer's favour costs nothing material and
 is a trust signal; carrying residues makes cumulative payouts exact.
 
+**Amended (round 3).** **The unit rounded once** is a charge line: one reservation (or, for
+usage-priced traffic, one account and product on one route) for one minute. An amendment
+to a charge line is the line's exact new total rounded down once, less what was already
+charged for that line; amendments are split the same way (POL-12).
+
 ## POL-12. Splitting revenue among parties
 
 *Answers D-12 (R-18).*
@@ -291,6 +359,10 @@ payout period.
 parties systematically favours the largest share, often Share's own commission. Webster
 is monotone and unbiased. At micro precision the per-minute deviation is immaterial, so
 quota-capped methods add complexity without benefit.
+
+**Amended (round 3).** Ties among suppliers are broken in route leg order, first leg first; Share's
+commission loses to every supplier. The split is per route: a usage charge line is
+always for one route (POL-11).
 
 ## POL-13. Flows that span several minutes
 
@@ -324,6 +396,14 @@ includes the unmetered window: suspend early rather than lose beyond the limit.
 |---|---|
 | `max_lateness` | 180 s |
 
+**Amended (round 3).** Usage exposure's lateness part = `usage_rate_cap` × (`max_lateness` + the
+suspension-to-enforcement target of POL-06) × `usage_price`, where `usage_rate_cap` is
+a per-account, per-product rate policed at the edge for traffic with no reserved rate.
+
+| Parameter | Default |
+|---|---|
+| `usage_rate_cap` | Set at onboarding per account and product; 100 Mbps by default |
+
 ## POL-15. Funds at admission
 
 *Answers D-15 (R-21).*
@@ -343,6 +423,17 @@ for insufficient funds is acceptable; the rejection states the top-up needed (PO
 
 **Why.** Prepaid is the regional norm. Holding a short window, not the term, keeps the
 no-upfront promise while bounding Share's risk to one window.
+
+**Amended (round 3).** - **Future reservations:** the hold for the first coverage window is taken at
+  admission and kept until the reservation starts, then rolls forward as usual.
+- **Credit-limit accounts:** admission takes a **credit hold** for the coverage window,
+  counted as funds held in the headroom formula (POL-18). Invoices are due in
+  `invoice_terms`; unpaid after that, the account is suspended under POL-16; unpaid
+  debt is written off after 90 days (POL-21).
+
+| Parameter | Default |
+|---|---|
+| `invoice_terms` | 30 days |
 
 ## POL-16. Suspension and resumption
 
@@ -368,6 +459,14 @@ of POL-07.
 **Why.** A grace period funded by the existing hold costs Share nothing. Automatic
 resumption suits self-serve and agent buyers.
 
+**Amended (round 3).** - A suspended account resumes when its headroom is at least zero with every
+  reservation's full coverage hold restored. A warning or suspension notice quotes that
+  amount.
+- When a reversal leaves the balance below the funds held, reservations are still kept
+  for the full `suspension_grace`; Share bears up to one coverage window (POL-23).
+- `low_balance_warning` = max(a quarter of one coverage window's charges, 1 USD), so an
+  account without reservations is still warned.
+
 ## POL-17. Traffic that does not match a reservation
 
 *Answers D-17 (R-24).*
@@ -391,6 +490,17 @@ resumption suits self-serve and agent buyers.
 
 **Why.** Without oversubscription, burst may only use capacity no one reserved.
 
+**Amended (round 3).** - Every guaranteed product carries a `usage_price`, used for attributable traffic
+  outside a reservation and for what Share pays a supplier for carried excess, even when
+  the product does not permit burst.
+- Traffic "above the reserved rate" is measured per minute: bytes in the minute beyond
+  reserved rate × 60 s.
+- Quarantined traffic attributed within `dispute_window` is billed to the buyer at the
+  price of the traffic's minute, and the supplier is paid. After the window, neither.
+- **One count per route.** When legs report different byte counts for the same traffic,
+  the egress (delivered) count is billed to the buyer, and suppliers are paid their split
+  of that charge.
+
 ## POL-18. The balance a buyer sees
 
 *Answers D-18 (R-27).*
@@ -403,6 +513,10 @@ account, prepaid or credit-limit. The response itemises the ledger balance, held
 accrued but not yet posted, and an estimate of unposted usage.
 
 **Why.** Agents decide on headroom; finance reconciles on the itemised figures.
+
+**Amended (round 3).** Charges accrued but not yet posted stay within funds held until posted; they
+are itemised for information, not deducted twice. Usage exposure is itemised in its two
+parts (unposted usage; the lateness bound).
 
 ## POL-19. History
 
@@ -427,6 +541,16 @@ at payout at the shown rate. Share carries no FX risk between charge and payout.
 **Why.** Wholesale capacity in the region is priced in USD. A single settlement
 currency keeps the ledger simple; the mechanism must still tag every amount with its
 currency so more can be added.
+
+**Amended (round 3).** - A top-up converts at the shown rate, rounded **up** to the micro (in the
+  buyer's favour). A payout converts at the shown rate, rounded down to the provider's
+  minor unit; the residue, converted back at the same rate, is carried in USD.
+- A shown rate is valid for `fx_quote_validity`. A payment arriving later is credited at
+  the partner's rate at notification, and that rate is shown on the statement.
+
+| Parameter | Default |
+|---|---|
+| `fx_quote_validity` | 15 min |
 
 ## POL-21. Reversals, refunds and credits
 
@@ -466,6 +590,17 @@ that charge. Supplier earnings are never reduced for a Share error.
 **Why.** Central billing is the supplier proposition: the supplier sells capacity, Share
 collects. Under POL-15, the risk is bounded by one coverage window per buyer.
 
+**Amended (round 3).** - Price corrections are allowed in both directions within `dispute_window`,
+  with the cause (Share, a supplier, other) and the reason recorded. A price locked at
+  booking (POL-27) can only be corrected downwards.
+- When a correction is caused by one supplier's error, each share is recomputed by
+  splitting the corrected total: the supplier at fault owes its own reduction (as
+  supplier debt, POL-22); Share bears every other party's reduction, so no other
+  supplier's earnings fall.
+- Every cost Share bears (a partner cancellation under POL-28, an equivalent-path price
+  difference, an unshown partner fee, carried excess) is paid from Share's own account to
+  the supplier concerned, as its own ledger movement.
+
 ## POL-24. Regulation
 
 *Answers D-24 (R-37).*
@@ -477,6 +612,12 @@ reconciled with the partner daily.
 
 **Requires legal confirmation per market** (in Kenya, the National Payment System Act
 regime).
+
+**Amended (round 3).** Daily reconciliation proves: (1) funds held at the partner equal the sum of
+positive buyer balances plus supplier amounts owed and not yet paid out; and (2) every
+provider transaction in the partner's report matches exactly one ledger top-up, reversal
+or payout, and the reverse. Provider settlement reports and bank statements are
+reconciled daily under the same rule. Any difference is an operational alert.
 
 ## POL-25. Controls for AI agents
 
@@ -503,6 +644,25 @@ regime).
 **Why.** "AI agents" are named buyers; a hard limit is the only control that works
 without a human in the loop.
 
+**Amended (round 3).** - An agent key cannot change its own limits, create keys or raise any limit;
+  only an account administrator can.
+- Revoking a key takes effect within 60 s for new requests. Its pending requests fail
+  with the reason "key revoked" and release what they hold; confirmed reservations are
+  unaffected.
+- **Key spending** in a period = funds held for the key's reservations + charges accrued
+  in the period that those holds did not cover. Nothing is counted twice.
+- Capacity in flight is counted per request, at its reserved rate.
+- Account-level bounds across every key and user:
+
+| Parameter | Default |
+|---|---|
+| `account_rate_limit` | 200 booking requests/s |
+| `account_max_keys` | 100 |
+| `key_poll_limit` | 20 status polls/s per key; polls do not count toward booking limits; retries do |
+
+- Concurrent bookings by one account or key are checked against headroom and limits as
+  if applied one at a time: their combined effect never exceeds either.
+
 ## POL-26. Route deadline
 
 *Answers D-26 (R-42).*
@@ -519,6 +679,11 @@ commit margin is treated as a partner without holds (POL-28).
 
 A request still pending after its deadline plus `commit_margin` is an operational
 alert: by design it cannot happen.
+
+**Amended (round 3).** Every outcome exists by the request's deadline. `commit_margin` is reserved
+inside the deadline: a request does not begin committing later than deadline −
+`commit_margin`. A request still pending at its deadline is an operational alert.
+(Replaces "deadline plus `commit_margin`".)
 
 ## POL-27. Price changes
 
@@ -548,6 +713,36 @@ Commercially, holds are preferred as a listing condition.
 secured, so the buyer still gets all or nothing; Share bears the cost if it fails after
 that point. Two such legs cannot be made all-or-nothing.
 
+
+## POL-29. Idempotency
+
+*Answers GA-23, GA-24 (requirements gate A).*
+
+**Decision.** Idempotency keys are scoped per account. A reuse of a key by a different
+principal of the same account (another agent key or user) is refused, not answered with
+the other principal's outcome. A key identifies its request for `idempotency_retention`.
+"The same request" means the same route, window, rate, product and `wait` setting; a
+reuse with any of these different is refused. Every money-moving input (payment
+notifications, transfer confirmations, payout instructions, operator corrections) is
+idempotent by its own source reference, under the same rules.
+
+| Parameter | Default |
+|---|---|
+| `idempotency_retention` | 24 h for booking requests; the 7-year retention (POL-06) for money-moving inputs |
+
+A payout already instructed is never instructed again for the same amounts; a repeated
+transfer confirmation has no further effect.
+
+## POL-30. Termination by Share
+
+*Answers GA-09 (requirements gate A).*
+
+**Decision.** Besides the account's own request, POL-07 and POL-16, Share may end a
+reservation only for a closed list of reasons: fraud, a sanctions or legal order, or
+abuse of the network (for example attack traffic). Notice is given where the law allows;
+charges stop at termination; charges already accrued are not refunded. Each termination
+records the reason and the operator.
+
 ---
 
 ## Amendments
@@ -568,3 +763,4 @@ that point. Two such legs cannot be made all-or-nothing.
 | 2026-10-11 | POL-17: carried excess on a non-burst product is not billed; Share pays the supplier and raises an incident | Undefined |
 | 2026-10-11 | POL-25: key headroom defined; `account_inflight_floor` = 1,000 Mbps | A new account could never book |
 | 2026-10-11 | POL-06: RPO 0 on region loss too; acknowledge only when durable in two regions | Money acknowledged to a payment provider is not redelivered, so it cannot be lost |
+| 2026-10-11 | Round 3 (requirements gate A and B): amendments to POL-02, 06, 07, 08, 11, 12, 14, 15, 16, 17, 18, 20, 23, 24, 25, 26; new POL-29 (idempotency) and POL-30 (termination by Share). Each amendment is in its entry, marked "Amended (round 3)" | 34 policy questions from the gate reviews |
