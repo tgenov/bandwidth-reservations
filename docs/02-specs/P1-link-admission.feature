@@ -6,10 +6,11 @@
 # more); @POL-nn is a policy it depends on. Conformance (design, tests, status) is kept in
 # conformance.md, never here.
 #
-# Times are HH:MM in UTC on one day; windows are half-open, [start, end). "now" is the
-# current minute boundary and "H" is the end of the selling horizon (now + selling_horizon).
-# Rates and windows in the examples are illustrations; a value that is a policy parameter
-# is the POL default.
+# Every link in this file is a Share link: its schedule is kept by Share. Partner links
+# are P2. Times are HH:MM in UTC on one day; windows are half-open, [start, end). "now" is
+# the current minute boundary and "H" is the end of the selling horizon
+# (now + selling_horizon). Rates and windows in the examples are illustrations; a value
+# that is a policy parameter is the POL default.
 
 Feature: Selling capacity on one link without overselling
 
@@ -29,6 +30,7 @@ Feature: Selling capacity on one link without overselling
 
     Background:
       Given a link with a capacity of 10 Mbps
+      And it is 09:00
       And the link has no reservations
 
     @P1-S01 @need-P1-N2
@@ -51,8 +53,8 @@ Feature: Selling capacity on one link without overselling
 
     @P1-S03 @need-P1-N2
     Scenario: A booking needs room, not a completely free gap
-      Given a confirmed reservation of 5 Mbps on the link for [08:00, 20:00)
-      When a buyer books 5 Mbps on the link for [09:00, 10:00)
+      Given a confirmed reservation of 5 Mbps on the link for [09:00, 20:00)
+      When a buyer books 5 Mbps on the link for [10:00, 11:00)
       Then the booking is confirmed
 
     @P1-S04 @need-P1-N2
@@ -66,13 +68,19 @@ Feature: Selling capacity on one link without overselling
         | 11:00 | 12:00 | starts where the reservation ends       |
         | 09:00 | 10:00 | ends where the reservation starts       |
 
-    @P1-S05 @need-P1-N2
-    Scenario: Every decision agrees with a minute-by-minute check of the schedule
+    @P1-S05 @need-P1-N1 @need-P1-N2 @POL-05
+    Scenario: A booking is confirmed only if the link has room for it, beside every hold, when it is confirmed
       Given any schedule of confirmed reservations and capacity holds on the link
-      When a buyer books any rate for any valid window
-      Then the booking is confirmed if and only if, at every minute of the window, the committed rate plus the capacity held plus the requested rate is at most the link's capacity
+      When any booking on the link is confirmed
+      Then at the moment it was confirmed, at every minute of its window, the committed rate plus the capacity held for other requests plus its rate was at most the link's capacity
 
-    @P1-S06 @need-P1-N2 @need-P1-N6
+    @P1-S37 @need-P1-N2 @POL-05
+    Scenario: A booking is rejected for no fit only if it does not fit beside what is committed
+      Given any schedule of confirmed reservations and capacity holds on the link
+      When any booking on the link is rejected for no fit
+      Then at the moment it was rejected, at some minute of its window, the committed rate plus its rate exceeded the link's capacity
+
+    @P1-S06 @need-P1-N2 @need-P1-N6 @POL-09
     Scenario: A year-long booking is checked at every minute of its window
       Given a confirmed reservation of 4 Mbps on the link for the next 12 months
       And a confirmed reservation of 6 Mbps on the link for one hour in the sixth month
@@ -83,26 +91,28 @@ Feature: Selling capacity on one link without overselling
 
     Background:
       Given a link with a capacity of 10 Mbps
+      And it is 09:00
       And the link has no reservations
-      And a pending booking request holds 6 Mbps on the link for [10:00, 11:00)
+      And a pending booking request holds 6 Mbps on the link for [10:00, 11:00), with 20 s of its deadline left
 
-    @P1-S07 @need-P1-N1 @need-P1-N3
-    Scenario: Capacity held for a pending request is not sold to anyone else
-      When another buyer books 5 Mbps on the link for [10:00, 11:00)
-      Then that booking is not confirmed while the pending request still holds its capacity
+    @P1-S07 @need-P1-N1 @need-P1-N3 @POL-05
+    Scenario: Capacity held for a pending request is not sold to anyone else; the next booking waits
+      When another buyer books 5 Mbps on the link for [10:00, 11:00), with `wait` at its default
+      Then that booking is neither confirmed nor rejected while the pending request holds its capacity
+      And it waits, pending, within its own deadline (POL-05)
 
-    @P1-S08 @need-P1-N3 @need-P1-N7
-    Scenario Outline: Capacity held for a request that ends without confirmation is available again
+    @P1-S08 @need-P1-N3 @need-P1-N7 @POL-05
+    Scenario Outline: Capacity held for a request that ends without confirmation is free again at once
       Given the pending request ends <outcome>
       When another buyer books 10 Mbps on the link for [10:00, 11:00)
-      Then that booking is confirmed
+      Then that booking is confirmed at once, without waiting
 
       Examples:
         | outcome  |
         | rejected |
         | failed   |
 
-    @P1-S09 @need-P1-N3
+    @P1-S09 @need-P1-N3 @POL-05
     Scenario: Confirming a pending request does not count its capacity twice
       Given the pending request is confirmed
       When another buyer books 4 Mbps on the link for [10:00, 11:00)
@@ -112,6 +122,7 @@ Feature: Selling capacity on one link without overselling
 
     Background:
       Given a link with a capacity of 10 Mbps
+      And it is 09:00
       And the link has no reservations
 
     @P1-S10 @need-P1-N3 @POL-05
@@ -123,7 +134,7 @@ Feature: Selling capacity on one link without overselling
     @P1-S11 @need-P1-N3 @POL-05 @POL-26
     Scenario: A single-link booking blocked only by capacity in flight waits, and is confirmed if that capacity is released within its deadline
       Given a route request in flight holds 6 Mbps on the link for [10:00, 11:00)
-      And a buyer books 5 Mbps on the link alone for [10:00, 11:00)
+      And a single-link booking of 5 Mbps on the link for [10:00, 11:00) is waiting for it
       When the route request ends without confirmation before the single-link booking's deadline (POL-26)
       Then the single-link booking is confirmed
 
@@ -135,9 +146,9 @@ Feature: Selling capacity on one link without overselling
 
     @P1-S34 @need-P1-N3 @POL-05 @POL-04
     Scenario: A single-link booking still waiting after ack_budget is answered pending
-      Given a route request in flight holds 6 Mbps on the link for [10:00, 11:00)
-      When a buyer books 5 Mbps on the link alone for [10:00, 11:00) and the route request is still in flight after `ack_budget` (POL-04)
-      Then the response to the single-link booking is pending
+      Given a route request in flight holds 6 Mbps on the link for [10:00, 11:00), with 20 s of its deadline left
+      When a buyer books 5 Mbps on the link alone for [10:00, 11:00), with `wait` at its default
+      Then the response to the single-link booking within `ack_budget` (POL-04) is pending
 
   Rule: Concurrent bookings are decided as if one at a time
 
@@ -159,13 +170,14 @@ Feature: Selling capacity on one link without overselling
       Given a link with a capacity of 10 Mbps
       And it is 10:00
       And a confirmed reservation of 8 Mbps on the link for [10:00, 12:00)
+      And apart from what a scenario adds, the link has no other reservations or capacity held
 
     @P1-S15 @need-P1-N4 @POL-10
     Scenario: A rejection states the largest rate that fits the requested window
       When a buyer books 5 Mbps on the link for [10:00, 11:00)
       Then the booking is rejected stating that 2 Mbps is the largest rate that fits [10:00, 11:00)
 
-    @P1-S16 @need-P1-N4 @POL-10
+    @P1-S16 @need-P1-N4 @POL-10 @POL-09
     Scenario: A rejection states the earliest window of the requested length that fits the requested rate
       When a buyer books 5 Mbps on the link for [10:00, 11:00)
       Then the booking is rejected stating that [12:00, 13:00) is the earliest one-hour window within the selling horizon that fits 5 Mbps
@@ -175,17 +187,25 @@ Feature: Selling capacity on one link without overselling
       When a buyer books 5 Mbps on the link for [10:00, 11:00)
       Then the rejection identifies no other account, no other reservation and no traffic
 
+    @P1-S38 @need-P1-N4 @POL-10 @POL-09
+    Scenario: When nothing fits, the rejection says so
+      Given a confirmed open-ended reservation of 2 Mbps on the link from 10:00
+      When a buyer books 9 Mbps on the link for [10:00, 11:00)
+      Then the booking is rejected stating that 0 Mbps is the largest rate that fits [10:00, 11:00)
+      And stating that no one-hour window within the selling horizon fits 9 Mbps
+
   Rule: Only confirmed reservations hold capacity once a request has its outcome
 
     Background:
       Given a link with a capacity of 10 Mbps
+      And it is 09:00
       And the link has no reservations
 
     @P1-S18 @need-P1-N7
     Scenario Outline: A request that was not confirmed leaves the link as if it had never been made
       Given a booking request for 4 Mbps on the link for [10:00, 11:00) ended <outcome>
       When a buyer books 10 Mbps on the link for [10:00, 11:00)
-      Then the booking is confirmed
+      Then the booking is confirmed at once
 
       Examples:
         | outcome                           |
@@ -193,27 +213,31 @@ Feature: Selling capacity on one link without overselling
         | failed                            |
         | invalid                           |
 
-  Rule: A window must be well formed and within the selling horizon
+  Rule: A request must be well formed: its window within the selling horizon, its rate a whole number of Mbps
 
     Background:
       Given a link with a capacity of 10 Mbps
       And the link has no reservations
       And a selling horizon of `selling_horizon` (POL-09), ending at H
 
-    @P1-S19 @need-P1-N5 @POL-09
-    Scenario Outline: A malformed window is invalid, not a capacity answer
-      When a buyer books 8 Mbps on the link for a window from <start> to <end>
+    @P1-S19 @need-P1-N5 @POL-09 @POL-31
+    Scenario Outline: A malformed request is invalid, not a capacity answer
+      When a buyer books <rate> Mbps on the link for a window from <start> to <end>
       Then the request is invalid, neither confirmed nor rejected, and holds no capacity
 
       Examples:
-        | start            | end              | case                                      |
-        | now + 1 h        | now + 1 h        | empty                                     |
-        | now + 2 h        | now + 1 h        | backwards                                 |
-        | now - 1 min      | now + 1 h        | starts before the current minute          |
-        | now + 1 h 30 s   | now + 2 h        | starts off a minute boundary              |
-        | H                | H + 1 h          | starts at the end of the selling horizon  |
-        | H - 10 min       | H + 10 min       | ends beyond the selling horizon           |
-        | H + 5 min        | open             | open-ended, starting beyond the horizon   |
+        | rate | start          | end              | case                                      |
+        | 8    | now + 1 h      | now + 1 h        | empty                                     |
+        | 8    | now + 2 h      | now + 1 h        | backwards                                 |
+        | 8    | now - 1 min    | now + 1 h        | starts before the current minute          |
+        | 8    | now + 1 h 30 s | now + 2 h        | starts off a minute boundary              |
+        | 8    | now + 1 h      | now + 2 h 30 s   | ends off a minute boundary                |
+        | 8    | H              | H + 1 h          | starts at the end of the selling horizon  |
+        | 8    | H - 10 min     | H + 10 min       | ends beyond the selling horizon           |
+        | 8    | H + 5 min      | open             | open-ended, starting beyond the horizon   |
+        | 0    | now + 1 h      | now + 2 h        | a rate below `rate_min` (POL-31)          |
+        | -1   | now + 1 h      | now + 2 h        | a negative rate                           |
+        | 1.5  | now + 1 h      | now + 2 h        | a rate that is not a whole number of Mbps |
 
     @P1-S20 @need-P1-N5 @POL-09
     Scenario Outline: A window that reaches the edge of what is sold is valid
@@ -225,6 +249,11 @@ Feature: Selling capacity on one link without overselling
         | 8    | now        | now + 1 h | starts in the current minute               |
         | 8    | H - 10 min | H         | ends exactly at the selling horizon        |
         | 2    | H - 1 min  | open      | open-ended from the last sellable minute   |
+
+    @P1-S39 @need-P1-N5 @need-P1-N4 @POL-10
+    Scenario: A rate above the link's capacity is rejected with a counter-offer, not invalid
+      When a buyer books 11 Mbps on the link for [now + 1 h, now + 2 h)
+      Then the booking is rejected stating that 10 Mbps is the largest rate that fits that window
 
   Rule: An open-ended reservation is guaranteed as the selling horizon rolls forward
 
@@ -249,28 +278,28 @@ Feature: Selling capacity on one link without overselling
       When a buyer books 10 Mbps on the link for [now, now + 1 h)
       Then the booking is confirmed
 
-  Rule: An unplanned loss of capacity stops new sales but never revokes a reservation
+  Rule: An unplanned loss of capacity stops new sales at once but never revokes a reservation
 
     Background:
       Given a link with a capacity of 10 Mbps
       And it is 09:00
       And confirmed reservations A and B, each of 4 Mbps on the link for [10:00, 12:00)
 
-    @P1-S24 @need-P1-N8 @POL-07
+    @P1-S24 @need-P1-N8 @need-P1-N1 @POL-07
     Scenario: New bookings are decided against the reduced capacity at once
       When an unplanned outage reduces the link's capacity to 6 Mbps
       Then a booking of 1 Mbps on the link for [10:00, 11:00) is rejected
 
     @P1-S25 @need-P1-N8 @POL-07
-    Scenario: Reservations that no longer fit stay confirmed and are flagged as affected
+    Scenario: Every reservation on a link reduced below what is committed stays confirmed and is flagged as affected
       When an unplanned outage reduces the link's capacity to 6 Mbps
       Then A and B are still confirmed
-      And A and B are flagged as affected reservations
+      And A and B are both flagged as affected reservations (POL-07)
 
     @P1-S26 @need-P1-N8 @POL-07
-    Scenario: The holders of affected reservations and network operations are told
+    Scenario: The holders of affected reservations and network operations are told within affected_notice_time
       When an unplanned outage reduces the link's capacity to 6 Mbps
-      Then the holders of A and B and network operations are told which reservations are affected and from when
+      Then within `affected_notice_time` (POL-07) of the reduction being recorded, the holders of A and B and network operations are told which reservations are affected and from when
 
     @P1-S27 @need-P1-N8 @POL-07
     Scenario: Restored capacity is sellable again
@@ -278,12 +307,33 @@ Feature: Selling capacity on one link without overselling
       When the link's capacity is restored to 10 Mbps
       Then a booking of 2 Mbps on the link for [10:00, 11:00) is confirmed
 
-  Rule: Planned maintenance is booked ahead, on free capacity only
+    @P1-S40 @need-P1-N8 @POL-07
+    Scenario: When capacity is restored, the affected flag ends and the holders are told
+      Given an unplanned outage has reduced the link's capacity to 6 Mbps, and A and B are flagged as affected
+      When the link's capacity is restored to 10 Mbps
+      Then A and B are no longer affected from the minute of the restoration
+      And within `affected_notice_time` (POL-07) their holders and network operations are told
+
+    @P1-S41 @need-P1-N8 @need-P1-N1 @POL-07 @POL-05 @POL-10
+    Scenario: A pending request that no longer fits the reduced capacity is rejected, not confirmed
+      Given a pending booking request holds 2 Mbps on the link for [10:00, 11:00)
+      When an unplanned outage reduces the link's capacity to 6 Mbps
+      Then the pending request is rejected for no fit, with the counter-offer of POL-10
+      And it holds no capacity on the link
+
+    @P1-S42 @need-P1-N8 @need-P1-N1 @POL-07 @POL-05
+    Scenario: A waiting request is decided against the reduced capacity
+      Given a pending booking request holds 2 Mbps on the link for [10:00, 11:00)
+      And a booking of 1 Mbps on the link for [10:00, 11:00) is waiting for it
+      When an unplanned outage reduces the link's capacity to 6 Mbps
+      Then the waiting booking is rejected for no fit, and is never confirmed into capacity the link no longer has
+
+  Rule: Planned maintenance is booked ahead by the link's supplier, on free capacity only
 
     Background:
       Given a link with a capacity of 10 Mbps
       And a confirmed reservation of 8 Mbps on the link for [10:00, 12:00) on day D
-      And day D is at least `maintenance_notice` (POL-07) ahead
+      And day D is at least `maintenance_notice` (POL-07: 14 calendar days) ahead
 
     @P1-S28 @need-P1-N8 @POL-07
     Scenario: Maintenance that fits on free capacity is booked
@@ -297,48 +347,95 @@ Feature: Selling capacity on one link without overselling
 
     @P1-S30 @need-P1-N8 @POL-07
     Scenario: Maintenance booked with less than the required notice is rejected
-      When the link's supplier books planned maintenance taking 2 Mbps for a day less than `maintenance_notice` (POL-07) ahead
-      Then the maintenance booking is rejected, stating the notice required
+      When the link's supplier books planned maintenance taking 2 Mbps for [10:00, 12:00) on a day 13 calendar days ahead
+      Then the maintenance booking is rejected, stating the notice required, `maintenance_notice` (POL-07)
 
-  Rule: A permanent reduction offers an equivalent path, or revokes the newest first, with notice
+  Rule: A permanent reduction keeps the capacity for the notice, then moves, reduces or revokes only what no longer fits, newest first
 
     Background:
       Given a link with a capacity of 10 Mbps
+      And it is 09:00 on day D
       And a confirmed open-ended reservation A of 4 Mbps on the link
       And a confirmed open-ended reservation B of 4 Mbps on the link, confirmed after A
 
     @P1-S31 @need-P1-N8 @POL-07
-    Scenario: An affected buyer is offered an equivalent path on the terms of POL-07
+    Scenario: Only the buyer who would otherwise not fit is offered an equivalent path, on the terms of POL-07
       Given an equivalent path exists for B
-      When the link's supplier permanently reduces its capacity to 6 Mbps
+      When the link's supplier announces a permanent reduction of its capacity to 4 Mbps
       Then the holder of B is offered the equivalent path: the same endpoints and rate, latency and SLA class no worse, at B's original price
+      And the offer is open for `offer_window` (POL-07)
+      And the holder of A is offered nothing, because A fits the reduced capacity
 
     @P1-S35 @need-P1-N8 @POL-07
-    Scenario: An accepted offer moves the reservation to the equivalent path at its original price
-      Given the holder of B has been offered an equivalent path after a permanent reduction
+    Scenario: An accepted offer moves the reservation to the equivalent path at its original price when the notice ends
+      Given the holder of B has been offered an equivalent path after a permanent reduction to 4 Mbps announced on day D
       When the holder accepts the offer
-      Then B continues on the equivalent path at its original price
+      Then from the end of `revocation_notice` (POL-07) after the announcement, B continues on the equivalent path at its original price
       And A stays confirmed on the link
+      And no reservation on the link is revoked
 
     @P1-S36 @need-P1-N8 @POL-07
-    Scenario: A declined offer is treated as no equivalent path
-      Given the holder of B has been offered an equivalent path after a permanent reduction
+    Scenario: A declined offer means revocation when the notice ends
+      Given the holder of B has been offered an equivalent path after a permanent reduction to 4 Mbps announced on day D
       When the holder declines the offer
-      Then B is revoked with effect no earlier than `revocation_notice` (POL-07) from the announcement
+      Then B is revoked when `revocation_notice` (POL-07) after the announcement has passed, and not before
+      And A stays confirmed
+
+    @P1-S45 @need-P1-N8 @POL-07
+    Scenario: An offer not answered within offer_window counts as declined
+      Given the holder of B has been offered an equivalent path after a permanent reduction to 4 Mbps announced on day D
+      When `offer_window` (POL-07) passes without an answer
+      Then the offer has lapsed as declined
+      And B is revoked when `revocation_notice` after the announcement has passed
 
     @P1-S32 @need-P1-N8 @POL-07
-    Scenario: Without an equivalent path, the newest reservations are revoked first, with notice
+    Scenario: Without an equivalent path, the newest reservation is revoked when the notice ends
       Given no equivalent path exists for A or B
-      When the link's supplier permanently reduces its capacity to 6 Mbps
-      Then B is revoked with effect no earlier than `revocation_notice` (POL-07) from the announcement
+      When the link's supplier announces a permanent reduction of its capacity to 4 Mbps
+      Then B is revoked when `revocation_notice` (POL-07) after the announcement has passed
       And A stays confirmed
       And the holder of B is told when the revocation takes effect
+
+    @P1-S43 @need-P1-N8 @need-P1-N1 @POL-07
+    Scenario: During the notice, new sales are decided against the reduced capacity
+      Given the link's supplier announced a permanent reduction of its capacity to 4 Mbps on day D
+      When a buyer books 1 Mbps on the link for [10:00, 11:00) on day D + 1
+      Then the booking is rejected, although the link still carries 10 Mbps until the notice ends
+
+    @P1-S44 @need-P1-N8 @POL-07
+    Scenario: A reservation to be revoked keeps its capacity until the notice ends
+      Given the link's supplier announced a permanent reduction of its capacity to 4 Mbps on day D, and no equivalent path exists for B
+      When less than `revocation_notice` (POL-07) has passed since the announcement
+      Then B is still confirmed at 4 Mbps on the link, with its capacity
+
+    @P1-S46 @need-P1-N8 @POL-07 @POL-08
+    Scenario: Each added part of a reservation has its own age
+      Given A was increased by 2 Mbps after B was confirmed
+      And no equivalent path exists for A or B
+      When the link's supplier announces a permanent reduction of its capacity to 8 Mbps
+      Then only the 2 Mbps added to A are affected, and B is not
+      And when `revocation_notice` (POL-07) has passed, A is 4 Mbps and B is still 4 Mbps
+
+    @P1-S47 @need-P1-N8 @POL-07
+    Scenario: Only just enough Mbps are taken from the newest part, and its holder may then cancel without fee
+      Given no equivalent path exists for A or B
+      When the link's supplier announces a permanent reduction of its capacity to 6 Mbps
+      Then only 2 Mbps of B are affected
+      And when `revocation_notice` (POL-07) has passed, B is 2 Mbps and A is still 4 Mbps
+      And the holder of B is told that it may cancel B without any cancellation fee
 
   Rule: What was known to be reserved at any past time can be retrieved
 
     @P1-S33 @need-P1-N9 @POL-19
-    Scenario: The schedule as known at a past time includes reservations changed since
+    Scenario Outline: The schedule as known at a past time includes reservations changed since
       Given at 09:00 a reservation R of 6 Mbps on a link was confirmed for [10:00, 12:00)
-      And at 09:30 R was cancelled
-      When operations asks for the link's schedule as known at 09:15
-      Then it shows R confirmed at 6 Mbps for [10:00, 12:00)
+      And at 09:30:20 R was cancelled, with effect from 09:31
+      And it is now 13:00
+      When operations asks for the link's schedule as known at <time>
+      Then it shows <known>
+
+      Examples:
+        | time  | known                                        |
+        | 08:45 | no reservation R                             |
+        | 09:15 | R confirmed at 6 Mbps for [10:00, 12:00)     |
+        | 09:45 | R cancelled with effect from 09:31           |

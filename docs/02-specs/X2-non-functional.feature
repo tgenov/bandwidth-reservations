@@ -19,11 +19,11 @@ Feature: Non-functional targets
   I want no acknowledged reservation, money movement, payment event or accepted record ever lost, and records kept 7 years
   So that the books and the schedule can always be trusted and audited
 
-  Rule: Each capability meets its availability target
+  Rule: Each capability meets its availability target, measured by probes from outside the region
 
     @X2-S01 @need-X2-N1 @POL-06
     Scenario Outline: Availability per capability
-      When the availability of <capability> is measured in each region over a calendar month
+      When the availability of <capability> is measured in each region over a calendar month, as the share of available minutes (X2-N1)
       Then it is at least <target>
 
       Examples:
@@ -33,6 +33,18 @@ Feature: Non-functional targets
         | the wallet                            | 99.9%                 |
         | payouts                               | 99.9%                 |
         | reporting and statements              | 99.9%                 |
+
+    @X2-S16 @need-X2-N1 @POL-06
+    Scenario Outline: A minute is available only if at least 90% of its probes succeed
+      Given a capability probed at least every 10 s from at least two locations outside the region
+      When in one minute <succeeded> of its <probes> probes get a correct answer within the operation's latency value
+      Then the minute counts as <counted>
+
+      Examples:
+        | probes | succeeded | counted     | case                                         |
+        | 12     | 11        | available   | 91.7%                                        |
+        | 12     | 10        | unavailable | 83.3%                                        |
+        | 12     | 12        | available   | every probe succeeds, during planned maintenance too |
 
     @X2-S02 @need-X2-N1 @need-X2-N4 @POL-06
     Scenario: Ingestion may lag but never loses an accepted record
@@ -45,22 +57,24 @@ Feature: Non-functional targets
     @X2-S03 @need-X2-N2 @POL-06
     Scenario: Admission sustains the design load, on the hottest link too, within its latency targets
       Given admission requests at 25,000 per second overall, of which 2,500 per second are on one link
+      And 80% of them single-link bookings and 20% routes, of which 70% fit
       When the load is sustained for one hour
-      Then every latency target in X2-S05 and X2-S06 is met
+      Then every latency target in X2-S05, X2-S15 and X2-S06 is met
 
     @X2-S04 @need-X2-N2 @POL-06
     Scenario: Metering keeps up with the design volume of traffic
-      Given traffic at about 2.25 PB per day, 50 times 45 TB per day
+      Given traffic at about 2.25 PB per day, 50 times 45 TB per day, as flow records of 100 KB on average
+      And records arriving at about 260,000 per second on average, with peaks of 600,000 per second
       When the load is sustained for one hour
-      Then the delay between a record's arrival and its being charged does not grow
+      Then the timeliness targets of X2-S13 are met throughout
 
   Rule: Each operation meets its latency target under the design load
 
     @X2-S05 @need-X2-N3 @POL-06 @POL-04
-    Scenario Outline: A single-link booking gets its final answer within ack_budget, whatever the booking's length
+    Scenario Outline: A single-link booking is answered, final or pending, within ack_budget, whatever the booking's length
       Given the design load
       When buyers book single links for windows of <length>
-      Then the 99th percentile time to a final answer is at most 200 ms
+      Then the 99th percentile time to an answer, final or pending, is at most 200 ms
 
       Examples:
         | length      |
@@ -69,32 +83,44 @@ Feature: Non-functional targets
         | 12 months   |
         | open-ended  |
 
+    @X2-S15 @need-X2-N3 @POL-06 @POL-04
+    Scenario: A single-link booking on a link with no capacity in flight gets its final answer within ack_budget
+      Given the design load
+      When buyers book single Share links on which no capacity is in flight
+      Then the 99th percentile time to a final answer is at most 200 ms
+
     @X2-S06 @need-X2-N3 @POL-06 @POL-04 @POL-26
-    Scenario: A route booking is acknowledged within ack_budget and has its outcome within its deadline
+    Scenario: A route booking is acknowledged within ack_budget and has its outcome by its deadline
       Given the design load
       When buyers book routes
       Then the 99th percentile time to the first response is at most 200 ms
-      And every request has its outcome within its deadline
+      And every request has its outcome by its deadline
 
     @X2-S07 @need-X2-N3 @POL-06
     Scenario: A top-up is credited within 10 s of the provider's notification
-      When payment notifications for completed top-ups arrive under the design load
+      Given payment notifications at their design peak of 1,000 per second
+      When notifications for completed top-ups arrive
       Then the 99th percentile time from notification to credited headroom is at most 10 s
 
-    @X2-S08 @need-X2-N3 @POL-06
+    @X2-S17 @need-X2-N3 @POL-06 @POL-16
+    Scenario: A change of standing reaches network operations within standing_notice_time of the decision
+      When an account is suspended or resumed
+      Then network operations has the new standing within `standing_notice_time` (POL-06: 10 s) of the decision
+
+    @X2-S08 @need-X2-N3 @POL-06 @POL-16
     Scenario: Suspension is enforced within 60 s of the decision
       When an account is suspended
-      Then its usage-priced traffic is blocked at the edge within 60 s of the decision
+      Then its usage-priced traffic is blocked at the edge within 60 s of the decision, network operations' part being what remains after `standing_notice_time`
 
-    @X2-S13 @need-X2-N3 @need-P3-N2 @POL-06 @POL-14
+    @X2-S13 @need-X2-N3 @POL-06 @POL-14
     Scenario Outline: Charges are posted within their timeliness target
       When a minute ends with <charge>
-      Then that charge is posted within <target> of the minute's end
+      Then that charge is posted to the ledger within <target> of the minute's end
 
       Examples:
-        | charge                                  | target                                  |
-        | a reservation's accrual for the minute  | 2 min                                   |
-        | usage-priced traffic                    | `max_lateness` (POL-14) + 2 min         |
+        | charge                                                          | target                                  |
+        | a reservation's accrual for the minute                          | 2 min                                   |
+        | usage-priced traffic whose records arrive within `max_lateness` | `max_lateness` (POL-14) + 2 min         |
 
   Rule: No acknowledged fact is ever lost
 
@@ -137,13 +163,13 @@ Feature: Non-functional targets
       Then it answers correctly again within <target>
 
       Examples:
-        | capability  | scope           | target |
-        | admission   | a node or zone  | 5 min  |
-        | billing     | a node or zone  | 15 min |
-        | the wallet  | a node or zone  | 15 min |
-        | admission   | a region        | 1 h    |
-        | billing     | a region        | 1 h    |
-        | the wallet  | a region        | 1 h    |
+        | capability  | scope                         | target |
+        | admission   | a node or zone                | 1 min  |
+        | billing     | a node or zone                | 5 min  |
+        | the wallet  | a node or zone                | 5 min  |
+        | admission   | a region (declared disaster)  | 1 h    |
+        | billing     | a region (declared disaster)  | 1 h    |
+        | the wallet  | a region (declared disaster)  | 1 h    |
 
   Rule: Records are kept for the retention period
 

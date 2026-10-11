@@ -5,10 +5,12 @@
 # Tags: @P2-Snn is the scenario's stable ID; @need-P2-Nn is the need it serves; @POL-nn a
 # policy it depends on. Conformance (design, tests, status) is kept in conformance.md.
 #
-# A booking on one link is a route of one leg (POL-05). Window validity is P1's rule
-# (P1-S19, P1-S20) and applies to every booking. Times are HH:MM in UTC; windows are
-# half-open. Values in examples are illustrations; a policy parameter's value is its
-# POL default.
+# A booking on one link is a route of one leg (POL-05). Window and rate validity are P1's
+# rule (P1-S19, P1-S20) and apply to every booking and change. Times are HH:MM in UTC;
+# windows are half-open. Outcomes are the glossary's: confirmed, rejected, invalid,
+# failed (pending until then); a submission refused before it becomes a request is "not
+# accepted". Values in examples are illustrations; a policy parameter's value is its POL
+# default. Amounts are USD; "micro-USD" is 10^-6 USD.
 
 Feature: Booking, changing and ending route reservations, all or nothing
 
@@ -18,7 +20,7 @@ Feature: Booking, changing and ending route reservations, all or nothing
 
   As an agent operator
   I want the marketplace to enforce the limits I set on each agent key
-  So that an agent cannot book or hold more than I allow without a human in the loop
+  So that an agent cannot book, hold or spend more than I allow without a human in the loop
 
   As a supplier or partner
   I want capacity set aside for an unfinished request to come back within a known time
@@ -32,6 +34,7 @@ Feature: Booking, changing and ending route reservations, all or nothing
 
     Background:
       Given a route over Share links L1 and L2 and partner link P, each with a capacity of 10 Mbps
+      And it is 09:00
 
     @P2-S01 @need-P2-N1
     Scenario: A route whose every leg fits is confirmed on every leg
@@ -40,7 +43,7 @@ Feature: Booking, changing and ending route reservations, all or nothing
       Then the booking is confirmed
       And a reservation of 4 Mbps for [10:00, 20:00) exists on L1, L2 and P
 
-    @P2-S02 @need-P2-N1 @need-P2-N4 @POL-10
+    @P2-S02 @need-P2-N1 @need-P2-N11 @POL-10
     Scenario: A route with a leg that does not fit is rejected, naming that leg, and holds nothing
       Given L2 has a confirmed reservation of 8 Mbps for [10:00, 15:00)
       When a buyer books the route at 5 Mbps for [12:00, 18:00)
@@ -66,11 +69,11 @@ Feature: Booking, changing and ending route reservations, all or nothing
         | Share's booking process crashes and restarts             |
         | the booking's deadline passes                            |
 
-    @P2-S05 @need-P2-N1 @POL-07 @POL-16
-    Scenario: A confirmed route is withdrawn only under the supply-loss and suspension policies
+    @P2-S05 @need-P2-N1 @POL-07 @POL-08 @POL-16 @POL-30
+    Scenario: A confirmed route ends only at its account's request or by Share's decision under the supply-loss, suspension and termination policies
       Given a confirmed route reservation
       When any number of other bookings, failures and restarts occur
-      Then the reservation stays confirmed unless it is revoked under POL-07 or released under POL-16, or its account changes or ends it
+      Then the reservation stays confirmed unless its account changes or ends it (POL-08), or Share revokes it (POL-07), releases it (POL-16) or terminates it (POL-30)
 
   Rule: Every request is answered within ack_budget, finally if possible, otherwise as pending
 
@@ -81,7 +84,7 @@ Feature: Booking, changing and ending route reservations, all or nothing
 
     @P2-S07 @need-P2-N2 @POL-04
     Scenario: A request whose outcome is known within ack_budget gets its final outcome
-      Given a booking on one Share link that has room
+      Given a booking on one Share link that has room, with no capacity in flight on it
       When a buyer books it
       Then the response within `ack_budget` (POL-04) is the final outcome, confirmed
 
@@ -99,10 +102,10 @@ Feature: Booking, changing and ending route reservations, all or nothing
       When the booking's outcome is known
       Then the outcome is sent to the webhook, signed, and retried until acknowledged for up to `webhook_retry` (POL-04)
 
-    @P2-S10 @need-P2-N2
+    @P2-S10 @need-P2-N2 @POL-04 @POL-29
     Scenario: An outcome never changes once reported
       Given a booking request has been reported confirmed, rejected, invalid or failed
-      When the buyer asks for its status at any later time
+      When the buyer asks for its status at any later time within `idempotency_retention` (POL-29)
       Then the same outcome is reported
 
   Rule: A request has its outcome by its deadline
@@ -113,46 +116,102 @@ Feature: Booking, changing and ending route reservations, all or nothing
       Then the request's deadline is `route_deadline_default` (POL-26) after it was received
 
     @P2-S12 @need-P2-N3 @POL-26
-    Scenario: A deadline beyond the maximum is invalid
-      When a buyer books a route with a deadline longer than `route_deadline_max` (POL-26)
+    Scenario Outline: A deadline outside its bounds is invalid
+      When a buyer books a route <route> with a deadline of <deadline>
       Then the request is invalid and holds nothing
 
+      Examples:
+        | route                          | deadline | case                                                       |
+        | over Share links L1 and L2     | 61 s     | longer than `route_deadline_max`                           |
+        | over Share links L1 and L2     | 0 s      | zero                                                       |
+        | over Share links L1 and L2     | -5 s     | negative                                                   |
+        | over Share links L1 and L2     | 0.5 s    | shorter than `route_deadline_min`                          |
+        | over Share link L1 and partner link P | 10 s | shorter than `commit_margin` plus `route_deadline_min` |
+
+    @P2-S86 @need-P2-N3 @POL-26
+    Scenario Outline: A deadline at the edge of its bounds is valid
+      When a buyer books a route <route> with a deadline of <deadline>
+      Then the request is not invalid
+
+      Examples:
+        | route                                 | deadline |
+        | over Share links L1 and L2            | 1 s      |
+        | over Share link L1 and partner link P | 11 s     |
+        | over Share link L1 and partner link P | 60 s     |
+
     @P2-S13 @need-P2-N3 @POL-26
-    Scenario: A request still without an outcome at its deadline fails and holds nothing
+    Scenario: A request whose partner never answers has failed by its deadline and holds nothing
       Given a route booking whose partner has not answered
-      When the request's deadline passes
-      Then the booking fails with the reason that its deadline passed
+      When the request's deadline arrives
+      Then by its deadline the booking has failed, with the reason that its deadline passed
       And no capacity is held for it on any leg
 
-    @P2-S14 @need-P2-N3 @POL-26
-    Scenario: Capacity held for a request that is not confirmed is available again by its deadline
-      Given a pending route booking holds capacity on its legs
-      When the request ends rejected or failed, for any reason
-      Then that capacity is available to other buyers no later than the request's deadline
+    @P2-S55 @need-P2-N3 @POL-26
+    Scenario: A request with a partner leg does not begin committing later than its deadline less commit_margin
+      Given a route booking over Share link L1 and partner link P whose partner had not answered by its deadline less `commit_margin` (POL-26)
+      When the partner then answers that the leg fits
+      Then the booking is not confirmed
+      And by its deadline it has failed, with the reason that its deadline passed, and holds nothing on L1 or P
 
-  Rule: When requests compete, at least one that can be served wins, and nobody waits forever
+    @P2-S14 @need-P2-N3 @need-P2-N7 @POL-26
+    Scenario: Capacity held for a request that is not confirmed is free on Share links at once, and at a partner by the deadline
+      Given a pending route booking over Share link L1 and partner link P holds capacity on both
+      When the request ends rejected or failed, for any reason
+      Then its capacity on L1 is available to other buyers from the moment of the outcome
+      And its capacity held at P is released no later than the request's deadline
+
+    @P2-S56 @need-P2-N3 @POL-08
+    Scenario: A buyer may withdraw a pending request
+      Given a booking request of the buyer is pending and holds capacity
+      When the buyer withdraws it
+      Then the request fails with the reason "withdrawn"
+      And it holds nothing on any leg
+
+    @P2-S57 @need-P2-N3 @need-P2-N7 @POL-08 @POL-28
+    Scenario: Withdrawing a request after its partner leg without holds was booked cancels that leg at Share's cost
+      Given a pending route booking over Share link L1 and partner link Q of a partner without holds, and Q has been booked for it
+      When the buyer withdraws the request
+      Then the request fails with the reason "withdrawn"
+      And Share cancels the booking on Q, bearing its cost (POL-28)
+      And the buyer is not charged for the request
+
+  Rule: When requests compete, contention alone never makes every waiting competitor lose, and nobody waits beyond its deadline
 
     Background:
       Given a Share link L with a capacity of 10 Mbps and no reservations
+      And it is 09:00
 
-    @P2-S15 @need-P2-N4 @POL-02
-    Scenario: Competing requests that can each be served alone do not all lose
-      Given several buyers book 8 Mbps on L for [10:00, 11:00) at the same time
+    @P2-S15 @need-P2-N4 @POL-02 @POL-05 @POL-26
+    Scenario: Competing requests that wait do not all lose
+      Given several buyers book 8 Mbps on L for [10:00, 11:00) at the same time, each with `wait` at its default and the default deadline
+      And no request ends for any reason other than contention
       When every booking has its outcome
       Then exactly one of them is confirmed
+      And every other is rejected for no fit
 
-    @P2-S16 @need-P2-N4 @POL-02
-    Scenario: Under the request_age rule the earlier request wins
+    @P2-S16 @need-P2-N4 @POL-02 @POL-05
+    Scenario: Under the request_age rule, the oldest waiting request gets capacity that is released
       Given `priority_rule` is `request_age` (POL-02)
-      And booking X for 8 Mbps on L for [10:00, 11:00) was received before booking Y for the same
-      When X and Y compete for that capacity
-      Then X is confirmed and Y is rejected
+      And a request Z holds 8 Mbps on L for [10:00, 11:00)
+      And bookings X and Y for 8 Mbps on L for [10:00, 11:00) are both waiting for it, X received before Y
+      When Z ends without confirmation
+      Then X is confirmed
+      And Y is rejected for no fit
+
+    @P2-S58 @need-P2-N4 @POL-02 @POL-05
+    Scenario: A request already holding capacity is not pre-empted by an older one
+      Given `priority_rule` is `request_age` (POL-02)
+      And a route request X needs 8 Mbps on L for [10:00, 11:00) and is still securing an earlier leg
+      And a single-link request Y, received after X, holds 8 Mbps on L for [10:00, 11:00)
+      When X reaches L
+      Then Y keeps its capacity held on L
+      And X waits, pending, within its own deadline
 
     @P2-S17 @need-P2-N4 @POL-05
     Scenario: A request that waits is rejected for no fit only if it does not fit on committed capacity
-      Given a booking on L that did not ask not to wait
+      Given a booking on L with `wait` at its default
       When it is rejected for no fit
-      Then at the moment of rejection its window did not fit alongside the committed rate on L
+      Then at the moment of rejection its window did not fit beside the committed rate on L
 
     @P2-S18 @need-P2-N4 @POL-05 @POL-10
     Scenario: A request that asks not to wait is rejected at once with retry_after when capacity it needs is in flight
@@ -160,19 +219,52 @@ Feature: Booking, changing and ending route reservations, all or nothing
       When another buyer books 8 Mbps on L for [10:00, 11:00) with `wait = false` (POL-05)
       Then the booking is rejected at once with a `retry_after` of the in-flight request's remaining deadline
 
-    @P2-S19 @need-P2-N4
-    Scenario: Crossed requests settle without waiting for capacity holds to time out
-      Given request A has capacity held on link L1 and needs link L2
-      And request B has capacity held on L2 and needs L1
-      And neither fits while the other holds its capacity
+    @P2-S59 @need-P2-N4 @POL-02 @POL-05
+    Scenario: A request that asked not to wait is outside the contention guarantee
+      Given a request A holds 8 Mbps on L for [10:00, 11:00)
+      And a booking B of 8 Mbps on L for the same window, made with `wait = false`, was rejected at once with `retry_after`
+      When A then fails
+      Then B is still rejected
+      And no reservation of that capacity exists, and nothing is held for A or B
+
+    @P2-S61 @need-P2-N4 @POL-02 @POL-26
+    Scenario: A request whose deadline is shorter than the outcome it waits on is outside the contention guarantee
+      Given a route request A holds 8 Mbps on L for [10:00, 11:00), and its partner leg answers slowly
+      And a booking B of 8 Mbps on L for the same window waits for it, with a deadline of 5 s
+      When B's deadline passes before A has its outcome, and A then fails
+      Then B has failed with the reason that its deadline passed
+      And neither A nor B is confirmed, and nothing is held for either
+
+    @P2-S62 @need-P2-N4 @POL-02
+    Scenario: Losses caused by failures leave nothing held and tell each buyer why
+      Given requests A and B compete for 8 Mbps on L for [10:00, 11:00), A holding it and B waiting
+      When A fails because its partner leg faults, and B then fails because its own partner leg faults
+      Then neither A nor B is confirmed
+      And nothing is held for either on any leg
+      And each buyer is told the reason its request failed
+
+    @P2-S19 @need-P2-N4 @POL-02 @POL-05 @POL-10
+    Scenario: In a crossing, the older request keeps its holds and the younger releases its conflicting holds and waits
+      Given `priority_rule` is `request_age` (POL-02)
+      And Share links L1 and L2, each with a capacity of 10 Mbps
+      And request A, received before request B, holds 8 Mbps on L1 and needs 8 Mbps on L2 for [10:00, 11:00)
+      And request B holds 8 Mbps on L2 and needs 8 Mbps on L1 for [10:00, 11:00)
+      And each would be confirmed if the other did not exist
       When both proceed at the same time
-      Then both have their outcomes before either deadline passes
-      And at least one of them is confirmed
+      Then B releases its capacity held on L2 and waits, pending, within its own deadline
+      And A is confirmed before either deadline passes
+      And B is then rejected for no fit, with the counter-offer of POL-10
+
+    @P2-S60 @need-P2-N4 @POL-02 @POL-05
+    Scenario: The younger request of a crossing is confirmed if the older then ends without confirmation
+      Given requests A and B crossed on L1 and L2 as in P2-S19, and B has released its hold on L2 and is waiting
+      When A ends without confirmation for a reason of its own, within B's deadline
+      Then B is confirmed
 
     @P2-S20 @need-P2-N4 @POL-05 @POL-26
     Scenario: A contended request waits, pending, and is confirmed if the capacity in flight is released within its deadline
       Given a pending request in flight holds 8 Mbps on L for [10:00, 11:00)
-      And another buyer books 8 Mbps on L for [10:00, 11:00) without asking not to wait
+      And another buyer's booking of 8 Mbps on L for [10:00, 11:00), with `wait` at its default, is waiting for it
       When the in-flight request ends without confirmation before the second booking's deadline (POL-26)
       Then the second booking is confirmed
 
@@ -191,10 +283,10 @@ Feature: Booking, changing and ending route reservations, all or nothing
 
   Rule: A request interrupted by Share's own failure resumes if it still can, otherwise fails cleanly
 
-    @P2-S22 @need-P2-N5 @POL-03
+    @P2-S22 @need-P2-N5 @POL-03 @POL-26
     Scenario: An interrupted request that can still finish within its deadline is resumed
       Given a route booking is in progress
-      When Share's booking process crashes and restarts with enough of the deadline left to finish
+      When Share's booking process crashes and restarts while the request can still complete its remaining steps by its deadline (less `commit_margin` with a partner leg, POL-26)
       Then the booking reaches its outcome as if there had been no crash
       And the buyer sees one outcome
 
@@ -207,28 +299,57 @@ Feature: Booking, changing and ending route reservations, all or nothing
 
   Rule: Retrying a request with the same idempotency key never books twice
 
-    @P2-S24 @need-P2-N6
+    @P2-S24 @need-P2-N6 @POL-29
     Scenario: The same request sent twice at once is booked once
       When a buyer sends the same booking request twice at the same time with the same idempotency key
       Then both responses report the same request and outcome
       And one reservation exists
 
-    @P2-S25 @need-P2-N6
+    @P2-S25 @need-P2-N6 @POL-29
     Scenario: A retry after the outcome returns the original outcome, even after a restart
-      Given a booking request was confirmed
+      Given a booking request was confirmed less than `idempotency_retention` (POL-29) ago
       And Share's booking process has restarted since
       When the buyer retries the request with the same idempotency key
       Then the response is the original outcome
       And still one reservation exists
 
-    @P2-S26 @need-P2-N6
-    Scenario: A different request under a key already used is refused
-      Given a buyer booked a route at 3 Mbps with idempotency key "k1"
-      When the same account sends a booking at 4 Mbps with key "k1"
-      Then the second request is refused as a reuse of the key for a different request
+    @P2-S26 @need-P2-N6 @POL-29
+    Scenario Outline: A different request under a key already used is not accepted
+      Given a buyer booked a route at 3 Mbps for [10:00, 11:00) with idempotency key "k1"
+      When the same principal sends a booking with key "k1" that differs only in its <field>
+      Then the second submission is not accepted, as a reuse of the key for a different request
       And the first request is unaffected
 
-    @P2-S27 @need-P2-N6
+      Examples:
+        | field         |
+        | route         |
+        | window        |
+        | rate          |
+        | product       |
+        | `wait` setting |
+
+    @P2-S63 @need-P2-N6 @POL-29
+    Scenario: A retry that differs only in its deadline is the same request
+      Given a buyer booked a route with idempotency key "k4" and a deadline of 30 s
+      When the same principal sends the same booking with key "k4" and a deadline of 20 s
+      Then the response is that of the first request
+      And no second request is started
+
+    @P2-S64 @need-P2-N6 @need-X1-N4 @POL-29
+    Scenario: A key reused by another principal of the same account is not accepted, and learns nothing
+      Given agent key K1 of account "b1" sent a booking request with idempotency key "k5"
+      When agent key K2 of "b1" sends the same booking with idempotency key "k5"
+      Then K2's submission is not accepted, as a reuse of the key by another principal
+      And the answer reveals nothing of K1's request or its outcome
+      And K1's request is unaffected
+
+    @P2-S65 @need-P2-N6 @POL-29
+    Scenario: After idempotency_retention a key identifies a new request
+      Given a booking with idempotency key "k6" was made more than `idempotency_retention` (POL-29) ago
+      When the same account sends a different booking with key "k6"
+      Then it is decided as a new request on its own merits
+
+    @P2-S27 @need-P2-N6 @POL-29
     Scenario: A retry while the request is pending returns its current status
       Given a booking request with key "k2" is pending
       When the buyer retries it with key "k2"
@@ -238,11 +359,12 @@ Feature: Booking, changing and ending route reservations, all or nothing
 
     Background:
       Given a route over Share link L1 and partner link P
+      And it is 09:00
 
     @P2-S28 @need-P2-N7
     Scenario: Retried partner calls never book the partner twice
       Given the partner fails some calls, times out after doing the work on others and is slow at random
-      When route bookings over P are made, confirmed and released
+      When any number of route bookings over P are made and each has its outcome, and some confirmed ones are later cancelled
       Then Share's record of bookings on P matches the partner's record
 
     @P2-S29 @need-P2-N7 @need-P2-N1
@@ -253,11 +375,11 @@ Feature: Booking, changing and ending route reservations, all or nothing
 
     @P2-S30 @need-P2-N7
     Scenario: A transient partner refusal does not end the request before its deadline
-      Given the partner says it cannot take the leg right now
-      When the request is still within its deadline
-      Then the request is neither rejected nor failed because of that answer alone
+      Given a route booking over P is pending
+      When the partner answers that it cannot take the leg right now, and the request's deadline has not passed
+      Then the request is still pending, neither rejected nor failed because of that answer
 
-    @P2-S31 @need-P2-N7 @POL-10
+    @P2-S31 @need-P2-N7 @need-P2-N11 @POL-10
     Scenario: A definite partner refusal rejects the route, naming the partner link
       When the partner says the leg does not fit
       Then the booking is rejected naming P as the blocking link
@@ -274,30 +396,35 @@ Feature: Booking, changing and ending route reservations, all or nothing
     Background:
       Given partner link Q belongs to a partner without holds
 
-    @P2-S33 @need-P2-N7 @POL-28
-    Scenario: A partner without holds is booked only after every other leg and the funds are secured
+    @P2-S33 @need-P2-N7 @POL-28 @POL-15
+    Scenario Outline: A partner without holds is booked only after every other leg and the funds are secured
       Given a route over Share link L1 and Q
-      When L1 cannot be secured, or the funds hold cannot be taken
+      When <step> cannot be secured
       Then Q is never booked for that request
 
+      Examples:
+        | step                         |
+        | the capacity on L1           |
+        | the funds hold (POL-15)      |
+
     @P2-S34 @need-P2-N7 @POL-28
-    Scenario: A route with two legs on partners without holds is refused
+    Scenario: A route with two legs on partners without holds is rejected before anything is held
       Given a route over Q and another partner link without holds
       When a buyer books the route
-      Then the request is refused before anything is held, stating that a route may include at most one such leg
+      Then the booking is rejected before anything is held, stating that a route may include at most one such leg
 
-    @P2-S35 @need-P2-N7 @POL-28
+    @P2-S35 @need-P2-N7 @POL-28 @POL-23
     Scenario: A failure after the partner without holds was booked cancels it at Share's cost
       Given a route over Share link L1 and Q, and Q has been booked for a request
       When a later step of that request fails
-      Then Share cancels the booking on Q
+      Then Share cancels the booking on Q, bearing its cost (POL-23)
       And the buyer is not charged for the failed request
 
     @P2-S36 @need-P2-N7 @POL-26 @POL-28
-    Scenario: A partner whose holds are too short is booked as a partner without holds
+    Scenario: A partner whose holds are too short counts as a partner without holds
       Given partner link S holds capacity for less than `route_deadline_max` plus `commit_margin` (POL-26)
       When a buyer books a route over S and Q
-      Then the request is refused before anything is held, stating that a route may include at most one leg without holds
+      Then the booking is rejected before anything is held, stating that a route may include at most one leg without holds
 
     @P2-S37 @need-P2-N7 @need-P2-N1
     Scenario: A route over two partners with holds of different lengths is all or nothing
@@ -307,18 +434,34 @@ Feature: Booking, changing and ending route reservations, all or nothing
 
   Rule: Funds and limits are checked before a reservation is confirmed
 
-    @P2-S38 @need-P2-N8 @POL-15 @POL-10
-    Scenario: A booking the account cannot fund is rejected, stating the top-up needed
-      Given an account whose headroom is less than the funds hold a booking needs (POL-15)
-      When the account books it
-      Then the booking is rejected for insufficient funds, stating the top-up needed: the funds hold less the headroom
+    @P2-S38 @need-P2-N8 @POL-15 @POL-18 @POL-10
+    Scenario Outline: A booking the account cannot fund is rejected, stating the payment needed
+      Given <account>, which leaves a headroom of 0.200000 USD (POL-18)
+      When the account books a reservation whose funds hold, or credit hold, would be 0.288000 USD (POL-15)
+      Then the booking is rejected for insufficient funds, stating a payment of 0.088000 USD: the hold less the headroom
       And nothing is held for it
 
+      Examples:
+        | account                                                                                                   |
+        | a prepaid account with a ledger balance of 0.488000 USD and 0.288000 USD of funds held                     |
+        | a credit-limit account with a `credit_limit` of 1.000000 USD, a ledger balance of -0.500000 USD and 0.300000 USD of credit holds |
+
     @P2-S39 @need-P2-N8 @POL-25
-    Scenario: A booking beyond an agent key's spending limit is rejected
-      Given an agent key whose key headroom (POL-25) is less than the funds hold a new booking needs, because of its `key_spend_limit`
-      When the key makes the booking
-      Then the booking is rejected stating that the key's spending limit would be exceeded
+    Scenario Outline: A booking beyond an agent key's spending limit is rejected; key spending is counted over the period
+      Given account "b1" has a headroom of 10.000000 USD
+      And agent key K of "b1" has a `key_spend_limit` of 1.000000 USD per `key_spend_period` (POL-25: one calendar day, UTC)
+      And K's only reservation, an open-ended one booked in the previous period, has 0.288000 USD of funds held
+      And K's reservations, including any that have ended, accrued <today> USD of charges in the current period and <before> USD in the previous one
+      When K books a reservation whose funds hold would be 0.288000 USD
+      Then K's spending is <spending> USD and its key headroom <headroom> USD
+      And the booking is <outcome>
+
+      Examples:
+        | today    | before   | spending | headroom | outcome                                                           |
+        | 0.000000 | 0.000000 | 0.288000 | 0.712000 | confirmed                                                         |
+        | 0.072000 | 0.000000 | 0.360000 | 0.640000 | confirmed                                                         |
+        | 0.072000 | 0.500000 | 0.360000 | 0.640000 | confirmed                                                         |
+        | 0.500000 | 0.000000 | 0.788000 | 0.212000 | rejected, stating that the key's spending limit would be exceeded |
 
     @P2-S40 @need-P2-N8 @POL-25
     Scenario Outline: A booking beyond a limit on capacity in flight is rejected
@@ -337,23 +480,98 @@ Feature: Booking, changing and ending route reservations, all or nothing
       When it books 800 Mbps, within `account_inflight_floor` (POL-25 default 1,000 Mbps)
       Then the booking is not rejected for the account's limit on capacity in flight
 
+    @P2-S66 @need-P2-N8 @POL-25
+    Scenario: Capacity in flight is counted once per request, at its reserved rate, whatever the number of legs
+      Given an account with no confirmed reservation and nothing in flight
+      When it books a route of three legs at 1,000 Mbps
+      Then the booking is not rejected for the account's limit on capacity in flight, which counts it as 1,000 Mbps
+
     @P2-S41 @need-P2-N8 @POL-25
-    Scenario: Requests from an agent key above its rate limit are refused
-      Given an agent key that has reached its `key_rate_limit` (POL-25)
-      When the key sends another request
-      Then the request is refused stating the rate limit and when the key may send again
+    Scenario Outline: Booking requests above a rate limit are not accepted, and the key may be used again
+      Given the <holder> has reached its <limit> (POL-25)
+      When it sends another booking request with a new idempotency key
+      Then the submission is not accepted, stating the rate limit and when it may send again
+      And no request is created, and the idempotency key may be used again
+
+      Examples:
+        | holder                                    | limit                                |
+        | agent key                                 | `key_rate_limit` (50 requests/s)     |
+        | account, across all its keys and users    | `account_rate_limit` (200 requests/s) |
+
+    @P2-S67 @need-P2-N8 @POL-25
+    Scenario: Status polls above key_poll_limit are not accepted
+      Given an agent key has made 20 status polls in the current second, its `key_poll_limit` (POL-25)
+      When it polls again
+      Then the poll is not accepted, stating when it may poll again
+
+    @P2-S68 @need-P2-N8 @POL-25
+    Scenario Outline: Status polls do not count toward booking rate limits; retries do
+      When an agent key sends <submission>
+      Then it <counts> toward `key_rate_limit` and `account_rate_limit` (POL-25)
+
+      Examples:
+        | submission                                   | counts       |
+        | a status poll                                | does not count |
+        | a retry of a booking request with its key    | counts       |
 
     @P2-S42 @need-P2-N8 @POL-16
-    Scenario: A suspended account cannot book
-      Given an account that is suspended (POL-16)
-      When the account makes a booking
-      Then the booking is rejected stating that the account is suspended and the top-up that would resume it
+    Scenario: A suspended account cannot book, and is told the amount that would resume it
+      Given account "b1" is suspended (POL-16), with one open-ended reservation whose full coverage hold is 0.288000 USD
+      And "b1" has a ledger balance of 0.216000 USD, 0.216000 USD of funds held and no usage exposure
+      When "b1" makes a booking
+      Then the booking is rejected stating that the account is suspended
+      And stating that a top-up of 1.072000 USD would resume it: 0.072000 USD to restore the full hold and 1.000000 USD to reach `low_balance_warning`
+
+    @P2-S69 @need-P2-N8 @POL-16
+    Scenario: A request still pending when its account is suspended is not confirmed
+      Given a booking request of account "b1" is pending
+      When "b1" is suspended before the request has its outcome
+      Then the request is rejected, stating that the account is suspended and the resume amount (POL-16)
+      And it holds nothing
+
+    @P2-S70 @need-P2-N8 @POL-15 @POL-25
+    Scenario: Concurrent bookings by one account are funded as if decided one at a time
+      Given any number of booking requests by one account, from any of its users and agent keys, at the same time
+      When every request has its outcome
+      Then the holds of those confirmed never together exceeded the account's headroom
+      And there is an order of the requests in which deciding them one at a time gives every one of them the same outcome
+
+    @P2-S71 @need-P2-N8 @POL-25
+    Scenario: Concurrent bookings by one agent key never together exceed its limits
+      Given any number of booking requests by one agent key at the same time
+      When every request has its outcome
+      Then the holds of those confirmed never together exceeded the key's headroom
+      And the key's capacity in flight never exceeded its `key_inflight_limit` (POL-25)
+
+    @P2-S72 @need-P2-N8 @need-X1-N3 @POL-25
+    Scenario: Revoking an agent key fails its pending requests and leaves its reservations with the account
+      Given agent key K of account "b1" has a pending booking request and a confirmed reservation
+      When an account administrator of "b1" revokes K
+      Then the pending request fails with the reason "key revoked" and holds nothing
+      And the confirmed reservation is unaffected and stays with "b1"
+
+  Rule: A route rejection says what the buyer can get instead on every leg
+
+    Background:
+      Given a route over Share links L1 and L2, each with a capacity of 10 Mbps
+      And it is 09:00
+      And L1 has a confirmed reservation of 7 Mbps for [10:00, 11:00)
+      And L2 has a confirmed reservation of 8 Mbps for [11:00, 12:00)
+      And apart from these, L1 and L2 have no reservations or capacity held
+
+    @P2-S73 @need-P2-N11 @POL-10 @POL-09
+    Scenario: A route counter-offer fits every leg, not only the blocking one
+      When a buyer books the route at 5 Mbps for [10:00, 11:00)
+      Then the booking is rejected naming L1 as the blocking link
+      And stating that 3 Mbps is the largest rate that fits [10:00, 11:00) on every leg
+      And stating that [12:00, 13:00) is the earliest one-hour window within the selling horizon that fits 5 Mbps on every leg
 
   Rule: A reservation is changed or ended as one unit, without risk to what the buyer already has
 
     Background:
       Given it is 10:00:30
       And a confirmed reservation R of 4 Mbps for [09:00, 18:00) on a route over Share links L1 and L2, each with a capacity of 10 Mbps
+      And R's account is active, and its headroom and key headroom cover every change below unless the scenario says otherwise
 
     @P2-S43 @need-P2-N9 @POL-08
     Scenario: A cancellation takes effect at the next minute boundary on every leg
@@ -369,7 +587,8 @@ Feature: Booking, changing and ending route reservations, all or nothing
 
     @P2-S45 @need-P2-N9 @POL-08
     Scenario: An extension is admitted for the added period only
-      Given L2 has 6 Mbps confirmed for another buyer for [18:00, 20:00)
+      Given L2 has 3 Mbps confirmed for another buyer for [09:00, 18:00)
+      And L2 has 6 Mbps confirmed for another buyer for [18:00, 20:00)
       When the account extends R to end at 20:00
       Then the extension is confirmed, and R ends at 20:00
 
@@ -381,7 +600,14 @@ Feature: Booking, changing and ending route reservations, all or nothing
       And R is unchanged, at 4 Mbps for [09:00, 18:00)
 
     @P2-S47 @need-P2-N9 @POL-08
-    Scenario: A rate increase is admitted for the difference only, and a rejection leaves the reservation as it was
+    Scenario: A rate increase is admitted for the difference only, from the next minute boundary to the end
+      Given L1 has 2 Mbps confirmed for another buyer for [09:00, 18:00)
+      When the account increases R to 8 Mbps
+      Then the increase is confirmed
+      And R is 8 Mbps from 10:01 to 18:00, and 4 Mbps before 10:01
+
+    @P2-S74 @need-P2-N9 @POL-08
+    Scenario: A rejected rate increase leaves the reservation as it was
       Given L1 has 4 Mbps confirmed for another buyer for [09:00, 18:00)
       When the account increases R to 8 Mbps
       Then the increase is rejected naming L1
@@ -394,9 +620,9 @@ Feature: Booking, changing and ending route reservations, all or nothing
       And from 10:01 the 3 Mbps released on L1 and L2 is available to other buyers
 
     @P2-S49 @need-P2-N9 @POL-08
-    Scenario: A change to part of a route is refused
+    Scenario: A change to part of a route is rejected
       When the account asks to cancel R on L2 only
-      Then the request is refused, stating that a route is changed or cancelled as one unit
+      Then the change is rejected, stating that a route is changed or cancelled as one unit
       And R is unchanged
 
     @P2-S50 @need-P2-N9 @POL-08
@@ -404,6 +630,110 @@ Feature: Booking, changing and ending route reservations, all or nothing
       Given a route with a partner leg that imposes a minimum term and a cancellation fee
       When a buyer is shown the price of a booking on it
       Then the price shows the minimum term and the cancellation fee
+
+    @P2-S75 @need-P2-N9 @need-P2-N8 @POL-08 @POL-15 @POL-10
+    Scenario: An extension the account cannot fund is rejected, stating the payment needed, and the reservation is unchanged
+      Given the route's `reservation_price` is 2 micro-USD per Mbps-minute
+      And the account's headroom is 0.000500 USD
+      When the account extends R to end at 20:00, whose added part needs a funds hold of 0.000960 USD (4 Mbps for 120 minutes)
+      Then the extension is rejected for insufficient funds, stating a payment of 0.000460 USD
+      And R is unchanged, at 4 Mbps for [09:00, 18:00)
+
+    @P2-S76 @need-P2-N9 @need-P2-N8 @POL-08 @POL-25
+    Scenario: A change beyond the agent key's headroom is rejected and the reservation is unchanged
+      Given the change is made by an agent key whose key headroom is less than the funds hold its added part needs
+      When the key increases R to 8 Mbps
+      Then the increase is rejected stating that the key's spending limit would be exceeded
+      And R is unchanged
+
+    @P2-S77 @need-P2-N9 @POL-08 @POL-16
+    Scenario Outline: A suspended account can still reduce what it has
+      Given R's account is suspended (POL-16)
+      When the account <change>
+      Then <result>
+
+      Examples:
+        | change                      | result                  |
+        | cancels R                   | R ends at 10:01         |
+        | shortens R to end at 12:00  | R ends at 12:00         |
+        | decreases R to 1 Mbps       | R is 1 Mbps from 10:01  |
+
+    @P2-S78 @need-P2-N9 @POL-08 @POL-16
+    Scenario Outline: A suspended account cannot add to a reservation
+      Given R's account is suspended (POL-16)
+      When the account <change>
+      Then the change is rejected, stating that the account is suspended and the resume amount
+      And R is unchanged
+
+      Examples:
+        | change                     |
+        | extends R to end at 20:00  |
+        | increases R to 8 Mbps      |
+
+    @P2-S79 @need-P2-N9 @POL-08
+    Scenario: Concurrent changes to one reservation are applied one at a time, in arrival order
+      Given any number of changes to R that do not end it, sent at the same time by different principals of the account
+      When every change has its outcome
+      Then each was decided against R as left by the change before it in arrival order
+      And R ends in the state that applying them one at a time in that order gives
+
+    @P2-S81 @need-P2-N9 @POL-08
+    Scenario: A cancellation is never delayed by a pending change, which then fails
+      Given an extension of R to 20:00 is pending, waiting for capacity in flight on L2
+      When the account cancels R
+      Then R ends at 10:01
+      And the extension fails with the reason "reservation ended" and holds nothing
+
+    @P2-S80 @need-P2-N9 @POL-07 @POL-16 @POL-30
+    Scenario Outline: A change still pending when its reservation is ended by Share is not confirmed
+      Given an extension of R to 20:00 is pending
+      When R is <ended> before the extension has its outcome
+      Then the extension fails with the reason "reservation ended" and holds nothing
+      And no capacity is confirmed for R after it ended
+
+      Examples:
+        | ended                                              |
+        | revoked at the end of `revocation_notice` (POL-07) |
+        | released at the end of `suspension_grace` (POL-16) |
+        | terminated by Share (POL-30)                       |
+
+    @P2-S82 @need-P2-N9 @need-P2-N7 @POL-08
+    Scenario: A cancellation over a partner leg takes effect for the buyer whatever the partner answers
+      Given a confirmed reservation R2 over Share link L1 and partner link P
+      And the partner's API fails or times out when Share cancels the leg on P
+      When the account cancels R2
+      Then R2 ends at 10:01 on every leg, and its charges stop then (P3)
+      And Share keeps cancelling the leg on P until the partner confirms, and its record of P is then reconciled with the partner's
+
+    @P2-S83 @need-P2-N9 @need-P2-N1 @POL-08 @POL-28
+    Scenario: An extension or increase over a partner leg is confirmed on every leg or leaves the reservation unchanged
+      Given a confirmed reservation R2 over Share link L1 and partner link P
+      When the account extends or increases R2, and any step on any leg fails
+      Then the change is either confirmed on L1 and P, or R2 is unchanged on both
+
+    @P2-S84 @need-P2-N9 @POL-08 @POL-09
+    Scenario Outline: Renewals, short shortenings and extensions past the horizon follow the change rules
+      When the account <change>
+      Then <result>
+
+      Examples:
+        | change                                        | result                                                                       |
+        | renews R for two more hours                   | the renewal is decided as an extension of R to 20:00, admitted for [18:00, 20:00) only |
+        | shortens R to end at 10:01                    | R ends at 10:01, as a cancellation                                           |
+        | shortens R to end at 10:00                    | R ends at 10:01, as a cancellation from the next minute boundary             |
+        | extends R to end beyond the selling horizon   | the change is invalid, and R is unchanged                                    |
+        | makes R open-ended                            | it is decided as an extension of R from 18:00, admitted for the added part only |
+
+    @P2-S85 @need-P2-N9 @POL-08
+    Scenario Outline: An open-ended reservation can be given an end, or cancelled before it starts
+      Given a confirmed open-ended reservation R3 of 4 Mbps on L1 and L2 from 12:00
+      When the account <change>
+      Then <result>
+
+      Examples:
+        | change                     | result                                                        |
+        | sets R3 to end at 14:00    | R3 ends at 14:00, as a shortening                              |
+        | cancels R3                 | R3 is cancelled from 10:01, before it starts, and never accrues |
 
   Rule: Operations can see requests in trouble
 
@@ -414,6 +744,6 @@ Feature: Booking, changing and ending route reservations, all or nothing
       Then the request is listed with its reason and the leg concerned
 
     @P2-S53 @need-P2-N10 @need-P2-N3 @POL-26
-    Scenario: A request still pending after its deadline plus commit_margin raises an operational alert
-      When a booking request is still pending after its deadline plus `commit_margin` (POL-26)
+    Scenario: A request still pending at its deadline raises an operational alert
+      When a booking request is still pending at its deadline (POL-26)
       Then operations is alerted, with the request, the leg concerned and how long it has been pending

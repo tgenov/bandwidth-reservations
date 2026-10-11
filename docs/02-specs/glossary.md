@@ -10,25 +10,26 @@ as *replaces …*.
 | Quantity | Convention |
 |---|---|
 | Rate | Mbps (10⁶ bits per second). Gbps is written only in prose, as 1 Gbps = 1,000 Mbps. |
-| Volume of traffic | GB = 10⁹ bytes. |
+| Volume of traffic | GB = 10⁹ bytes. At 100 Mbps, one minute carries 0.75 GB. |
 | Money | An amount always carries its currency, for example `12.50 USD`. Exact amounts are given in **micros** where precision matters: `1 USD = 1,000,000 micro-USD`. |
 | Time of day | `HH:MM` or `HH:MM:SS` in UTC on one calendar day, unless a scenario says otherwise. |
 | Window | Half-open: `[10:00, 11:00)` includes 10:00 and excludes 11:00. |
-| Durations | Written with their unit (`30 s`, `24 h`, `12 months`). |
+| Durations | Written with their unit (`30 s`, `24 h`, `12 months`, `14 calendar days`). |
 
 ## People and parties
 
 | Term | Meaning |
 |---|---|
 | **Account** | The entity that pays or is paid: a buyer account or a supplier account. Reservations, booking requests, the wallet, agent keys and statements belong to an account. *Replaces "customer" where the paying entity is meant.* |
+| **Account administrator** | A user of a buyer account with the right to issue, change and revoke the account's agent keys and set their limits. Only an account administrator can do these things; an agent key never can (POL-25). |
 | **Buyer** | A person, an enterprise or an AI agent acting for a buyer account. *Replaces "client" and "customer" where the person or agent is meant.* |
-| **Agent key** | A credential an account issues to an AI agent or other automated client. It acts only for that account, and carries its own `key_spend_limit` per `key_spend_period`, `key_inflight_limit` and `key_rate_limit` (POL-25). |
-| **Key spending** | Funds held plus charges accrued by the bookings an agent key made in the current `key_spend_period` (POL-25). |
+| **Agent key** | A credential an account issues to an AI agent or other automated client. It acts only for that account, and carries its own `key_spend_limit` per `key_spend_period`, `key_inflight_limit` and `key_rate_limit` (POL-25). An account has at most `account_max_keys` keys. Revoking a key takes effect for new requests within 60 s; its pending requests then fail with the reason "key revoked". |
+| **Key spending** | For one agent key in the current `key_spend_period`: the funds held for the key's reservations, plus charges accrued in the period that those holds did not cover. Nothing is counted twice (POL-25). |
 | **Key headroom** | The headroom shown to and enforced for an agent key: the lower of the account's headroom and `key_spend_limit` less key spending (POL-25). |
-| **Agent operator** | The person at a buyer account who issues agent keys and sets their limits. |
+| **Agent operator** | The account administrator who issues agent keys and sets their limits. |
 | **Principal** | Whoever performs an operation, once authenticated: an account user, an agent key, a supplier user, an operator or an internal service. |
 | **Operator** | A member of Share's staff acting under a role (support, network operations, finance). |
-| **Supplier** | An infrastructure provider whose links are sold through the marketplace and who is paid a share of the charges for them. |
+| **Supplier** | An infrastructure provider whose links are sold through the marketplace and who is paid a share of the charges for them. Only a link's own supplier may book maintenance on it or change its capacity (POL-07). |
 | **Partner** | A supplier whose link's schedule is kept in the partner's own system, not Share's. A link of this kind is a **partner link**; a link whose schedule Share keeps is a **Share link**. |
 | **Partner without holds** | A partner that can only book immediately and finally, and cannot set capacity aside for a time first. A partner whose holds last less than `route_deadline_max` plus `commit_margin` is treated as one (POL-26, POL-28). |
 | **Payment provider** | The service a buyer pays through (M-Pesa, Stripe, Adyen and similar). It notifies the marketplace of payments by **payment notification**. |
@@ -42,31 +43,41 @@ as *replaces …*.
 | **Link** | A connection with a fixed **capacity** in Mbps that is sold in slices. |
 | **Schedule** | Everything that occupies a link's capacity, minute by minute: confirmed reservations and capacity holds. |
 | **Schedule owner** | The single authority that decides every booking on a link, single-link or route (POL-05). There is exactly one at a time per link. |
-| **Route** | One or more links, in order, booked for the same window at the same reserved rate, as one unit. A booking on a single link is a route of one leg (POL-05). |
+| **Route** | One or more links, in order, booked for the same window at the same reserved rate, as one unit. A booking on a single link is a route of one leg (POL-05). The legs are numbered in route order, first leg first (POL-12). |
 | **Leg** | One link of a route. |
-| **Reservation** | A confirmed right to carry traffic up to a reserved rate on every leg of a route during a window. A reservation is created, changed and ended as one unit (POL-08). |
+| **Reservation** | A confirmed right to carry traffic up to a reserved rate on every leg of a route during a window. A reservation is created, changed and ended as one unit (POL-08). Its reserved rate is the same over its whole window; a rate that differs over sub-windows is a separate reservation. |
+| **Part of a reservation** | What one admission added: the original booking, or the difference added by one extension or rate increase (POL-08). Each part keeps its own price and its own age; a decrease removes the most recently added part first (POL-08, POL-07). |
 | **Reserved rate** | The rate, in Mbps, that a reservation guarantees. *Replaces "usage" when used of reserved capacity.* |
 | **Committed rate** | On one link at one minute: the sum of the reserved rates of the confirmed reservations on it. |
 | **Peak** | The highest committed rate, or committed rate plus capacity held, at any minute of a window. |
-| **Booking request** | A buyer's request to create or change a reservation. It carries an idempotency key and a deadline, and ends with exactly one outcome. |
-| **Outcome** | What a booking request ends as: **confirmed** (every leg secured; the reservation exists), **rejected** (it does not fit, or funds or limits do not allow it; the rejection is a counter-offer), **invalid** (the request itself is malformed; it is neither confirmed nor rejected), or **failed** (it could not be completed for another reason, such as its deadline passing; it holds nothing). Until it has an outcome, a request is **pending**. *Replaces "admitted", "allowed", "refused", "fails as an invalid window".* |
-| **Capacity hold** | Capacity set aside on a link for a pending booking request. It counts against the link's capacity, and lasts no longer than the request's deadline. **Capacity in flight** is the Mbps in requests not yet decided, limited per key and per account by `key_inflight_limit` and `account_inflight_limit`, the latter never below `account_inflight_floor` (POL-25). *Replaces "hold" where it meant capacity.* |
-| **Funds hold** | Money in a wallet set aside, not charged, to cover a reservation's charges for the coverage window (POL-15). It reduces headroom, not the ledger balance. |
-| **Coverage window** | The period of future charges that a funds hold covers: `coverage_window` (POL-15), or the whole reservation if shorter. The hold rolls forward as charges accrue. |
-| **Deadline** | The time by which a booking request must have its outcome. Chosen per request, within `route_deadline_max` (POL-26). A request still pending after its deadline plus `commit_margin` raises an operational alert. |
-| **Waiting** | A request that fits only if a request in flight ends without confirmation waits, pending, within its own deadline (POL-05). A buyer can ask not to wait (`wait = false`) and is then rejected at once with `retry_after`. |
+| **Booking request** | A buyer's request to create or change a reservation. It carries an idempotency key, a deadline and a `wait` setting, and ends with exactly one outcome. |
+| **Outcome** | What a booking request ends as: **confirmed** (every leg secured; the reservation exists, or the change is made), **rejected** (it does not fit, or funds, limits or standing do not allow it; the rejection is a counter-offer where one can be computed), **invalid** (the request itself is malformed; it is neither confirmed nor rejected), or **failed** (it could not be completed for another reason, such as its deadline passing, the buyer withdrawing it ("withdrawn") or its agent key being revoked ("key revoked"); it holds nothing). Until it has an outcome, a request is **pending**. *Replaces "admitted", "allowed", "refused" (of a booking request), "fails as an invalid window".* |
+| **Not accepted** | A submission that does not become a booking request: refused before anything is decided, because it is unauthenticated, over a rate limit, or reuses an idempotency key for a different request or from a different principal (POL-25, POL-29). No request is created, nothing is held, it has no outcome, and it never changes the request that first used the key. A key that was not already in use may be used again. |
+| **Capacity hold** | Capacity set aside on a link for a pending booking request. It counts against the link's capacity. On a Share link it is released the moment the request has an outcome other than confirmed; at a partner it is released no later than the request's deadline. **Capacity in flight** is the Mbps in requests not yet decided, counted once per request at its reserved rate, whatever the number of legs, and limited per key and per account by `key_inflight_limit` and `account_inflight_limit`, the latter never below `account_inflight_floor` (POL-25). *Replaces "hold" where it meant capacity.* |
+| **Funds hold** | Money in a wallet set aside, not charged, to cover a reservation's charges for the coverage window (POL-15), or a partner cancellation fee if larger (POL-08). It reduces headroom, not the ledger balance, and it is not a money movement. For a reservation that starts in the future it is taken at admission and kept until the reservation starts. |
+| **Credit hold** | For a credit-limit account, the same amount a funds hold would be, taken at admission against the credit limit. It counts as funds held in the headroom formula (POL-15, POL-18). |
+| **Coverage window** | The period of future charges that a funds hold covers: `coverage_window` (POL-15), or the whole reservation if shorter. The hold rolls forward as charges accrue, except while the account is suspended. |
+| **Deadline** | The time by which a booking request has its outcome. Chosen per request, within `route_deadline_max`; `route_deadline_default` if not stated (POL-26). Every outcome exists by the deadline: `commit_margin` is reserved inside it, so a request does not begin committing later than deadline − `commit_margin`. A request still pending at its deadline raises an operational alert. |
+| **Waiting** | A request that fits only if a request in flight ends without confirmation waits, pending, within its own deadline (POL-05). The priority rule orders requests that are waiting (POL-02). A buyer can ask not to wait (`wait = false`) and is then rejected at once with `retry_after`. |
+| **Crossing** | Two requests each holding capacity the other needs. Under the priority rule the older keeps what it holds and the younger releases its conflicting holds and waits, within its own deadline (POL-02). |
+| **Contention guarantee** | Contention alone never makes every competitor lose. It covers requests that wait (the default) and whose deadline outlasts the outcome of the request ahead of them. A request that asks not to wait, or chooses a deadline shorter than the outcome it waits on, has excluded itself. A loss caused by a failure (a partner's refusal or fault, an expired deadline after a fault) is not a contention loss; for it, nothing is left held and the buyer is told why (POL-02). |
+| **Withdrawal** | A buyer ending its own pending request. The request fails with the reason "withdrawn" and releases what it holds (POL-08). |
 | **`ack_budget`** | The time within which every booking request receives a response, final or pending (POL-04). |
-| **`retry_after`** | In the immediate rejection of a request that asked not to wait (`wait = false`) and needs capacity held for another request in flight: that request's remaining deadline, after which the capacity is either confirmed or released (POL-05). |
-| **Counter-offer** | The content of a rejection that tells the buyer what they can get instead (POL-10). |
-| **Idempotency key** | A key the buyer chooses for a booking request. Requests from the same account with the same key are the same request. Keys are scoped to the account. |
+| **`retry_after`** | In the immediate rejection of a request that asked not to wait (`wait = false`) and needs capacity held for another request in flight: that request's remaining deadline, after which the capacity is either confirmed or released (POL-05). Also, in a submission not accepted over a rate limit, when the principal may send again (POL-25). |
+| **Counter-offer** | The content of a rejection that tells the buyer what they can get instead (POL-10). For a route: the largest rate that fits every leg for the requested window, the earliest window of the requested length that fits the requested rate on every leg, and the link that blocked it. |
+| **Idempotency key** | A key the buyer chooses for a booking request. It is scoped to the account and identifies its request for `idempotency_retention` (POL-29). The same key from the same principal with the same route, window, rate, product and `wait` setting is the same request; any other reuse within the retention is not accepted. |
+| **Source reference** | The reference by which a money-moving input (a payment notification, a transfer confirmation, a payout instruction, an operator correction) is identified, and by which it is idempotent (POL-29). |
 | **Window** | The period a reservation covers, `[start, end)`, at minute resolution, or `[start, open)` for an **open-ended** reservation that lasts until cancelled. |
 | **Minute boundary** | The start of a whole minute (`HH:MM:00`). |
 | **Selling horizon** | How far ahead the marketplace sells: a rolling `selling_horizon` from now (POL-09). *Replaces "horizon" and "booking horizon".* |
-| **Affected reservation** | A confirmed reservation on a link whose capacity has fallen below what is committed on it (POL-07). |
-| **Revocation** | Ending a confirmed reservation by Share's decision. It happens only under POL-07 (permanent reduction, when no equivalent path is accepted) or POL-16 (release at the end of suspension grace, a termination for non-payment). |
-| **Equivalent path** | On a permanent reduction, the path offered to an affected buyer: the same endpoints and rate, latency and SLA class no worse, at the original price; the buyer may decline (POL-07). |
-| **Planned maintenance booking** | A supplier's reservation against its own link that takes the capacity it will need for planned works (POL-07). |
+| **Affected reservation** | On an unplanned outage, a confirmed reservation on a link whose capacity has fallen below what is committed on it. On a permanent reduction, only the reservations (or parts) that would otherwise not fit the reduced capacity: just enough, newest first (POL-07). |
+| **Revocation** | Ending a confirmed reservation by Share's decision under POL-07 (permanent reduction, when no equivalent path is accepted, at the end of `revocation_notice`). |
+| **Release** | Ending a suspended account's reservations at the end of `suspension_grace`: a termination for non-payment (POL-16). |
+| **Termination** | Ending a reservation by Share's decision for a reason in POL-30's closed list: fraud, a sanctions or legal order, or abuse of the network. It records the reason and the operator; charges stop at termination and charges already accrued are not refunded. |
+| **Equivalent path** | On a permanent reduction, the path offered to an affected buyer: the same endpoints and rate, latency and SLA class no worse, at the original price. The offer lapses after `offer_window`; no answer counts as declined (POL-07). |
+| **Planned maintenance booking** | A supplier's booking against its own link that takes capacity it will need for planned works, at least `maintenance_notice` (14 calendar days) ahead. It accrues nothing and is excluded from rating and settlement (POL-07). |
 | **Known-at history** | The record that answers "what was known to be reserved on this link at time T", for any past T (POL-19). |
+| **Audit record** | The record of a change to money, capacity, a link or an agent key, or of an operator action: the principal, the time and, for an operator, the role and reason. It cannot be altered or removed and is kept for the retention period (POL-19, POL-06). |
 
 ## Pricing, metering and charges
 
@@ -74,21 +85,26 @@ as *replaces …*.
 |---|---|
 | **Product** | What is sold on a route. A **guaranteed product** is priced per reservation; a **best-effort product** (IP transit, CDN traffic) is priced per GB. A guaranteed product may **permit burst**. |
 | **Mbps-minute** | One Mbps reserved for one minute. The unit of reservation pricing (POL-01). |
-| **Reservation price** | `reservation_price` (POL-01): the price per Mbps-minute of a guaranteed product on a route. A reservation keeps the price it was booked at (POL-27). |
-| **Usage price** | `usage_price` (POL-01): the price per GB of traffic on a best-effort product, and of permitted burst. |
-| **Accrual** | A reservation's charge for one minute: reserved rate × reservation price, whether or not traffic crosses it. |
-| **Traffic** | The bytes actually carried. *Replaces "usage" when used of bytes.* |
+| **Reservation price** | `reservation_price` (POL-01): the price per Mbps-minute of a guaranteed product on a route. A reservation keeps the price it was booked at (POL-27); an added part keeps the price in force when it was added (POL-08). |
+| **Usage price** | `usage_price` (POL-01, POL-17): the price per GB of traffic on a best-effort product. Every guaranteed product also carries one, used for permitted burst, for attributable traffic outside a reservation, and for what Share pays a supplier for carried excess. |
+| **Accrual** | A reservation's charge for one minute: the sum over its parts of reserved rate × that part's price, whether or not traffic crosses it. |
+| **Traffic** | The bytes actually carried. On a route, the egress (delivered) count is the one billed (POL-17). *Replaces "usage" when used of bytes.* |
 | **Usage-priced traffic** | Traffic billed per GB: on best-effort products, burst, and traffic attributable to an account outside an active reservation (POL-17). |
-| **Burst** | Traffic above a reservation's reserved rate, on a product that permits it, carried best effort on otherwise idle capacity (POL-17). |
-| **Flow record** | A report from the network of the bytes one flow carried between a start time and an end time. |
+| **Burst** | On a product that permits it, the bytes in a minute beyond reserved rate × 60 s, carried best effort on otherwise idle capacity (POL-17). |
+| **Excess** | The same measure on a product that does not permit burst: policed at the edge and never billed to the buyer (POL-17). |
+| **`usage_rate_cap`** | A per-account, per-product rate policed at the edge for usage-priced traffic with no reserved rate; 100 Mbps by default (POL-14). |
+| **Flow record** | A report from the network of the bytes one flow carried between a start time and an end time. Its identity is unique for the retention period. |
 | **Exporter** | The network device that produces flow records. Each record is identified by its exporter and a sequence number. |
 | **Lateness** | How long after the end of the minute it belongs to a flow record arrives. `max_lateness` (POL-14) is the lateness the exposure bound assumes. |
-| **Quarantine** | Where traffic that cannot be attributed to an account is kept, unbilled, for attribution within `dispute_window` (POL-17). |
+| **Quarantine** | Where traffic that cannot be attributed to an account is kept, unbilled. If attributed within `dispute_window` it is billed at the price of its minute and its supplier is paid; after that, neither (POL-17). |
 | **Rating** | Turning accruals and traffic into charges. |
-| **Charge** | An amount owed by a buyer account for one reservation-minute, or for an account's usage-priced traffic in one minute. Computed exactly and rounded once, down to the micro (POL-11). |
-| **Amendment** | A separate, visible change to a charge that has already been made, with its reason. Late traffic only ever increases a charge; a price correction can move it either way. |
-| **Price correction** | An authorised change to a price that was set wrongly, applied to the minutes it affected through amendments. |
-| **Usage exposure** | The estimate of usage-priced traffic carried but not yet posted, plus the bound for traffic that may still arrive within `max_lateness` (POL-18, POL-14). It is deducted from headroom for every account. *Replaces "exposure".* |
+| **Charge line** | The unit a charge is computed and rounded for: one reservation for one minute; or, for usage-priced traffic, one account and product on one route for one minute (POL-11). |
+| **Charge** | An amount owed by a buyer account for one charge line. Computed exactly and rounded once, down to the micro (POL-11). |
+| **Cancellation fee** | A fee a partner leg imposes on early cancellation, including a partner's minimum term charged that way. Charged only if shown at booking; who pays depends on who ended the reservation (POL-08). |
+| **Posted** | Of a charge, amendment or other amount: written to the ledger as a money movement. |
+| **Amendment** | A separate, visible change to a charge that has already been posted, with its reason: the line's exact new total rounded down once, less what was already charged for that line (POL-11). Late traffic only ever increases a charge; a price correction can move it either way. |
+| **Price correction** | An authorised change, within `dispute_window`, to a price that was set wrongly, with its cause (Share, a supplier, other) and reason recorded, applied to the minutes it affected through amendments. A price locked at booking can only be corrected downwards (POL-23). |
+| **Usage exposure** | Usage-priced traffic carried but not yet posted (**unposted usage**), plus the **lateness bound**: `usage_rate_cap` × (`max_lateness` + the 60 s suspension-to-enforcement target) × `usage_price` (POL-14, POL-18). It is deducted from headroom for every account and itemised in its two parts. *Replaces "exposure".* |
 
 ## Money
 
@@ -96,17 +112,21 @@ as *replaces …*.
 |---|---|
 | **Micros** | Integer millionths (10⁻⁶) of a currency's major unit, always tagged with the currency (POL-11). |
 | **Wallet** | A buyer account's prepaid money, held through the payment partner. |
-| **Top-up** | A payment into a wallet. |
+| **Top-up** | A payment into a wallet. A top-up in another currency is converted at the rate shown, rounded up to the micro; the shown rate is valid for `fx_quote_validity`, after which the partner's rate at notification applies (POL-20). |
 | **Reversal** | The payment provider taking back a top-up (a chargeback) (POL-21). A reversal whose payment never arrives within 72 h is escalated, never applied. |
+| **Write-off** | Ending a negative balance at Share's cost, automatically, 90 days after it arose (POL-21, POL-23). |
 | **Ledger** | The record of every money movement. |
-| **Money movement** | A set of entries, all in one currency, that moves money between accounts and sums to zero. *Replaces "journal".* |
+| **Money movement** | A set of entries, all in one currency, that moves money between accounts and sums to zero. Each refers to the fact that caused it. *Replaces "journal".* |
 | **Ledger balance** | The sum of an account's ledger entries. |
-| **Headroom** | Available headroom (POL-18): ledger balance minus funds held minus usage exposure, plus any credit limit. The headline figure a buyer sees, and the one rule that governs admission and suspension for every account. The buyer is warned when it falls below `low_balance_warning` (POL-16). |
-| **Credit limit** | `credit_limit` (POL-15): an amount a vetted account may owe; such an account is settled by monthly invoice instead of funds holds. |
+| **Headroom** | Available headroom (POL-18): ledger balance minus funds held (credit holds included) minus usage exposure, plus any credit limit. The headline figure a buyer sees, and the one rule that governs admission and suspension for every account. Charges accrued but not yet posted stay within funds held and are itemised for information only. |
+| **`low_balance_warning`** | The headroom below which the buyer is warned: the larger of a quarter of one coverage window's charges and 1 USD (POL-16). |
+| **Credit limit** | `credit_limit` (POL-15): an amount a vetted account may owe. Such an account takes credit holds instead of funds holds and is invoiced monthly, due in `invoice_terms`. |
 | **Standing** | Whether an account is **active** or **suspended**. |
-| **Suspension** | The standing of an account whose headroom would fall below zero: its funds hold cannot roll forward, or its usage exposure exceeds what is left (POL-16). Lasts at most `suspension_grace` before its reservations are released. |
+| **Suspension** | The standing of an account whose headroom would fall below zero: its hold cannot roll forward, or its usage exposure exceeds what is left; or whose invoice is unpaid after `invoice_terms` (POL-16, POL-15). Lasts at most `suspension_grace` before its reservations are released. |
+| **Resume amount** | The top-up after which a suspended account's headroom is at least zero with every reservation's full coverage hold restored. A suspension notice quotes it (POL-16). |
 | **Commission** | Share's share of each charge. |
-| **Split** | Dividing a charge among the parties on its route (suppliers and Share's commission) by their **weights**, under the published apportionment rule and tie order (POL-12). |
-| **Payout** | Paying a supplier what it is owed. Complete only when the transfer is confirmed (POL-22). |
+| **Share's own account** | The ledger account from which Share pays every cost it bears (POL-23). |
+| **Split** | Dividing a charge among the parties on its route (suppliers and Share's commission) by their **weights**, under the published apportionment rule (Webster) and tie order: suppliers in route leg order, first leg first, and Share's commission after every supplier (POL-12). |
+| **Payout** | Paying a supplier what it is owed. Complete only when the transfer is confirmed (POL-22). A payout already instructed is never instructed again for the same amounts (POL-29). |
 | **Supplier debt** | An amount a supplier owes back, arising only from a supplier-caused error (POL-22, POL-23); Share bears its own errors in full. It is netted against later payouts. |
-| **Statement** | What an account can see of its own money: for a buyer, charges, amendments and their reasons; for a supplier, each share and the rule and weights that produced it. |
+| **Statement** | What an account can see of its own money. For a buyer: charges, amendments and their reasons, top-ups with their conversion rates, reversals and write-offs. For a supplier: each share with the charge, the weights and the rule and tie order that produced it, payouts, supplier debts with their reasons, residues carried, amounts Share paid it and why, and the deviation from exact proportions. |
