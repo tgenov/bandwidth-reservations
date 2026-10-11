@@ -37,7 +37,7 @@ Feature: Non-functional targets
     @X2-S16 @need-X2-N1 @POL-06
     Scenario Outline: A minute is available only if at least 90% of its probes succeed
       Given a capability probed at least every 10 s from at least two locations outside the region
-      When in one minute <succeeded> of its <probes> probes get a correct answer within the operation's latency value
+      When in one minute <succeeded> of its <probes> probes get a correct answer within the capability's per-probe limit (X2-S18)
       Then the minute counts as <counted>
 
       Examples:
@@ -45,6 +45,20 @@ Feature: Non-functional targets
         | 12     | 11        | available   | 91.7%                                        |
         | 12     | 10        | unavailable | 83.3%                                        |
         | 12     | 12        | available   | every probe succeeds, during planned maintenance too |
+
+    @X2-S18 @need-X2-N1 @POL-06 @POL-18
+    Scenario Outline: Each capability is probed by its own operation, against its own per-probe limit
+      When <capability> is probed
+      Then the probe asks for <operation>
+      And it succeeds only if it gets a correct answer within <limit>
+
+      Examples:
+        | capability               | operation                                   | limit  |
+        | the admission API        | a single-link booking answer                | 200 ms |
+        | usage ingestion          | a flow record acknowledged as accepted      | 1 s    |
+        | the wallet               | a balance and headroom answer               | 200 ms |
+        | payouts                  | a payout's status                           | 1 s    |
+        | reporting and statements | one day's statement                         | 2 s    |
 
     @X2-S02 @need-X2-N1 @need-X2-N4 @POL-06
     Scenario: Ingestion may lag but never loses an accepted record
@@ -96,7 +110,7 @@ Feature: Non-functional targets
       Then the 99th percentile time to the first response is at most 200 ms
       And every request has its outcome by its deadline
 
-    @X2-S07 @need-X2-N3 @POL-06
+    @X2-S07 @need-X2-N3 @POL-06 @POL-18
     Scenario: A top-up is credited within 10 s of the provider's notification
       Given payment notifications at their design peak of 1,000 per second
       When notifications for completed top-ups arrive
@@ -113,14 +127,15 @@ Feature: Non-functional targets
       Then its usage-priced traffic is blocked at the edge within 60 s of the decision, network operations' part being what remains after `standing_notice_time`
 
     @X2-S13 @need-X2-N3 @POL-06 @POL-14
-    Scenario Outline: Charges are posted within their timeliness target
-      When a minute ends with <charge>
-      Then that charge is posted to the ledger within <target> of the minute's end
+    Scenario Outline: Charges are posted within their timeliness target, and never later than recovery allows
+      When the charges for the minutes of a calendar month are posted
+      Then for at least 99.99% of those minutes, <charge> is posted to the ledger within <target> of the minute's end
+      And every such charge is posted within <bound> of the minute's end: the target plus the 5-minute recovery time of rating and posting (X2-S10)
 
       Examples:
-        | charge                                                          | target                                  |
-        | a reservation's accrual for the minute                          | 2 min                                   |
-        | usage-priced traffic whose records arrive within `max_lateness` | `max_lateness` (POL-14) + 2 min         |
+        | charge                                                          | target                          | bound                  |
+        | a reservation's accrual for the minute                          | 2 min                           | 7 min                  |
+        | usage-priced traffic whose records arrive within `max_lateness` | `max_lateness` (POL-14) + 2 min | `max_lateness` + 7 min |
 
   Rule: No acknowledged fact is ever lost
 
@@ -163,13 +178,15 @@ Feature: Non-functional targets
       Then it answers correctly again within <target>
 
       Examples:
-        | capability  | scope                         | target |
-        | admission   | a node or zone                | 1 min  |
-        | billing     | a node or zone                | 5 min  |
-        | the wallet  | a node or zone                | 5 min  |
-        | admission   | a region (declared disaster)  | 1 h    |
-        | billing     | a region (declared disaster)  | 1 h    |
-        | the wallet  | a region (declared disaster)  | 1 h    |
+        | capability          | scope                         | target |
+        | admission           | a node or zone                | 1 min  |
+        | usage ingestion     | a node or zone                | 1 min  |
+        | rating and posting  | a node or zone                | 5 min  |
+        | the wallet          | a node or zone                | 5 min  |
+        | admission           | a region (declared disaster)  | 1 h    |
+        | usage ingestion     | a region (declared disaster)  | 1 h    |
+        | rating and posting  | a region (declared disaster)  | 1 h    |
+        | the wallet          | a region (declared disaster)  | 1 h    |
 
   Rule: Records are kept for the retention period
 

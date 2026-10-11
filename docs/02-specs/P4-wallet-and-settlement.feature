@@ -5,8 +5,9 @@
 # Tags: @P4-Snn is the scenario's stable ID; @need-P4-Nn is the need it serves; @POL-nn a
 # policy it depends on. Conformance (design, tests, status) is kept in conformance.md.
 #
-# Starts where P3 ends: P3 produces each charge (one per charge line, POL-11) and
-# amendment; this spec covers money entering wallets, funds and credit holds, headroom,
+# Starts where P3 ends: P3 produces each charge (one per charge line, POL-11: a
+# reservation for one minute, an account and product on one route for one minute of
+# usage-priced traffic, or one cancellation fee for one reservation) and amendment; this spec covers money entering wallets, funds and credit holds, headroom,
 # suspension, the ledger, the split and payouts. Amounts are USD unless a scenario says
 # otherwise; "micro-USD" is 10^-6 USD. At 2 micro-USD per Mbps-minute, 100 Mbps for 24 h is
 # 0.288000 USD. Prices and weights in examples are illustrations; a policy parameter's
@@ -93,6 +94,24 @@ Feature: Wallet, funds holds, ledger and supplier settlement
         | quarantine attribution                     |
         | write-off                                  |
         | posting of a charge or an amendment        |
+        | transfer failure report                    |
+        | movement for a cost Share bears            |
+        | settlement of a cancellation fee           |
+        | posting of a supplier debt                 |
+
+    @P4-S99 @need-P4-N15 @POL-29
+    Scenario: A source reference reused by a different principal is refused and moves no money
+      Given an operator submitted a price correction with source reference "C1"
+      When another operator submits a correction with source reference "C1"
+      Then the second submission is refused, as a reuse of the source reference by another principal (POL-29)
+      And no money moves for it, and the first correction is unaffected
+
+    @P4-S100 @need-P4-N15 @need-P4-N1 @POL-29
+    Scenario: A money-moving input redelivered long after the booking retention still moves nothing
+      Given "MP1 completed 5.000000 USD" for "b1" was applied 400 days ago
+      When the provider delivers it again
+      Then no money moves
+      And it is still identified by its source reference, kept for the 7-year retention of money-moving inputs, not the 24 h of booking requests (POL-29)
 
   Rule: A top-up in another currency is credited in USD at the rate that applies, rounded up to the micro
 
@@ -158,7 +177,7 @@ Feature: Wallet, funds holds, ledger and supplier settlement
       Then the ledger balance of "b1" falls by 200 micro-USD
       And the funds held still cover the next 24 h of the reservation's charges
 
-    @P4-S60 @need-P4-N3 @POL-15 @POL-08
+    @P4-S60 @need-P4-N3 @POL-15 @POL-08 @POL-07
     Scenario Outline: The hold follows every change to the reservation
       Given "b1" has <reservation>, with its full hold
       When the reservation is <change>
@@ -170,6 +189,7 @@ Feature: Wallet, funds holds, ledger and supplier settlement
         | an open-ended reservation of 100 Mbps from now                                 | decreased to 50 Mbps                                         | 0.144000 |
         | an open-ended reservation of 100 Mbps from now, increased by 50 Mbps at 3 micro-USD per Mbps-minute | decreased to 80 Mbps, removing the most recent part first   | 0.230400 |
         | a reservation of 100 Mbps for [12:00, 22:00)                                   | shortened to end at 14:00                                    | 0.024000 |
+        | an open-ended reservation of 100 Mbps from now                                 | cut to 50 Mbps when a permanent reduction's notice ends (POL-07) | 0.144000 |
 
     @P4-S11 @need-P4-N3 @POL-15 @POL-08
     Scenario: The unused hold is released when a reservation ends early
@@ -205,6 +225,13 @@ Feature: Wallet, funds holds, ledger and supplier settlement
         | 0.500000 | 0.500000 |
         | 0.100000 | 0.288000 |
 
+    @P4-S96 @need-P4-N3 @POL-15 @POL-08
+    Scenario: The fee part of a hold ends with the partner's minimum term
+      Given "b1" was confirmed an open-ended reservation of 100 Mbps over a partner leg with a minimum term of 30 days, shown at booking as a cancellation fee of 0.500000 USD, and has kept its account funded since
+      And 0.500000 USD is held for it, the fee being larger than its coverage
+      When the minimum term ends
+      Then 0.288000 USD is held for it, its coverage alone (POL-15)
+
     @P4-S12 @need-P4-N3 @POL-15
     Scenario: A booking that is not confirmed holds no funds
       When a booking by "b1" ends rejected, invalid or failed
@@ -224,7 +251,7 @@ Feature: Wallet, funds holds, ledger and supplier settlement
       Then "e1" is invoiced for the charges and amendments posted to it in that month
       And the invoice is due `invoice_terms` (POL-15: 30 days) after it is issued
 
-    @P4-S66 @need-P4-N3 @POL-15 @POL-25
+    @P4-S66 @need-P4-N3 @POL-15 @POL-25 @POL-18
     Scenario: Holds for concurrent bookings never together exceed what headroom allowed
       Given any number of bookings and changes by "b1" and its agent keys at the same time
       When every one has its outcome
@@ -265,7 +292,7 @@ Feature: Wallet, funds holds, ledger and supplier settlement
         | 10.00   | 5.00  | 1.00  | 4.00 |
         | 3.00    | 5.00  | 1.00  | 3.00 |
 
-    @P4-S68 @need-P4-N4 @POL-25
+    @P4-S68 @need-P4-N4 @POL-25 @POL-18
     Scenario Outline: A key's spending is counted over the period, each minute once
       Given account "b1" has a headroom of 10.000000 USD
       And agent key K of "b1" has a `key_spend_limit` of 1.000000 USD per `key_spend_period` (POL-25: one calendar day, UTC)
@@ -280,6 +307,16 @@ Feature: Wallet, funds holds, ledger and supplier settlement
         | 0.072000 | 0.000000 | 0.360000 | 0.640000 |
         | 0.072000 | 0.500000 | 0.360000 | 0.640000 |
         | 0.500000 | 0.000000 | 0.788000 | 0.212000 |
+        | 0.800000 | 0.000000 | 1.088000 | -0.088000 |
+
+    @P4-S98 @need-P4-N4 @POL-25 @POL-18 @POL-16
+    Scenario: A negative key headroom blocks only that key's new bookings and additions
+      Given account "b1" has a headroom of 10.000000 USD
+      And agent key K of "b1" has a `key_spend_limit` of 1.000000 USD and has spent 1.088000 USD in the current `key_spend_period`, its own open-ended reservation having kept accruing, so its key headroom is -0.088000 USD (POL-25)
+      When K books a reservation, or extends or increases one
+      Then the booking or change is rejected, stating that the key's spending limit is exceeded
+      And K's reservations are not ended, suspended or reduced, and keep accruing
+      And "b1" stays active, and its other agent keys book within their own key headroom
 
   Rule: Suspension follows a stated cause, keeps reservations for a grace period, and reverses on funds
 
@@ -344,7 +381,7 @@ Feature: Wallet, funds holds, ledger and supplier settlement
       Then "b1"'s reservations are released, and their capacity is available to other buyers
       And the buyer is told which reservations were released and why
 
-    @P4-S24 @need-P4-N5 @POL-16
+    @P4-S24 @need-P4-N5 @POL-16 @POL-18
     Scenario Outline: The buyer is warned when headroom falls below low_balance_warning, with the top-up quoted
       Given account "b1" whose reservations' charges for one coverage window are <window> USD
       When its headroom falls from above <threshold> USD to <headroom> USD
@@ -357,7 +394,7 @@ Feature: Wallet, funds holds, ledger and supplier settlement
         | 28.800000 | 7.200000  | 7.000000 | 29.000000 |
         | 0.000000  | 1.000000  | 0.500000 | 0.500000  |
 
-    @P4-S69 @need-P4-N5 @POL-16
+    @P4-S69 @need-P4-N5 @POL-16 @POL-18
     Scenario: The buyer is warned once per crossing, not repeatedly
       Given account "b1" has been warned that its headroom fell below `low_balance_warning`
       When its headroom keeps falling, without rising above `low_balance_warning` again
@@ -370,13 +407,31 @@ Feature: Wallet, funds holds, ledger and supplier settlement
       When the provider reverses a 5.000000 USD top-up that "b1" had already spent
       Then "b1"'s ledger balance is -4.700000 USD and it is suspended
       And its reservation keeps its capacity and accrues for the full `suspension_grace`
-      And Share bears what the account does not pay, up to one coverage window of charges (POL-23)
+      And beyond the reversed amount, Share bears at most one coverage window of grace charges, 0.288000 USD, if the account does not pay (POL-23)
 
-    @P4-S65 @need-P4-N5 @POL-16
+    @P4-S65 @need-P4-N5 @POL-16 @POL-18
     Scenario: A top-up racing a suspension ends in the standing the final headroom implies
       Given account "b1" is about to be suspended because its hold cannot roll forward
       When a top-up of at least the resume amount arrives at the same moment
       Then "b1" ends active, as it would had the two been applied one after the other in either order
+
+    @P4-S97 @need-P4-N5 @need-P4-N13 @POL-16 @POL-15 @POL-08 @POL-21 @POL-23
+    Scenario: At release, a shown cancellation fee is charged against what is left of the hold, and any shortfall is a negative balance
+      Given account "b1" was suspended with a ledger balance of 0.500000 USD and 0.500000 USD held for its one reservation: open-ended, 100 Mbps at 2 micro-USD per Mbps-minute, over a partner leg whose cancellation fee of 0.500000 USD was shown at booking
+      And the reservation is within the partner's minimum term
+      When `suspension_grace` passes without funds and the reservation is released
+      Then 0.288000 USD of charges were taken from the hold during the grace, leaving 0.212000 USD
+      And the fee of 0.500000 USD is charged, leaving a ledger balance of -0.288000 USD
+      And that negative balance is collected from the next top-up or written off (POL-21), at Share's cost (POL-23), Share's loss being at most the lower of the fee and the coverage
+
+    @P4-S101 @need-P4-N5 @need-P4-N3 @POL-16 @POL-15 @POL-27 @POL-18
+    Scenario: A price change whose larger hold the headroom cannot cover still takes effect, and the account is suspended as for a failed roll-forward
+      Given account "b1" has a ledger balance of 0.388000 USD and 0.288000 USD held for one open-ended reservation of 100 Mbps booked at 2 micro-USD per Mbps-minute, a headroom of 0.100000 USD (POL-18)
+      And "b1" was warned when its headroom fell below `low_balance_warning`
+      And a new price of 3 micro-USD per Mbps-minute for it was announced `price_notice` (POL-27) ago
+      When the new price takes effect, needing a hold of 0.432000 USD
+      Then the reservation accrues 300 micro-USD a minute from then
+      And "b1" is suspended, as when a hold cannot roll forward, because the 0.144000 USD more that the hold needs exceeds its headroom
 
   Rule: Network operations always knows an account's standing
 
@@ -490,6 +545,19 @@ Feature: Wallet, funds holds, ledger and supplier settlement
         | 2      | 1  | 1  | 0     |
         | 3      | 1  | 1  | 1     |
 
+    @P4-S102 @need-P4-N8 @POL-12
+    Scenario Outline: A supplier with several legs on a route is one party, its legs' weights summed, in the tie position of its first leg
+      Given a route whose legs are, in order, supplier "s"'s with weight 1, supplier "t"'s with weight 2 and supplier "s"'s with weight 1, and Share's commission with weight 1
+      When <amount> micro-USD is split among them
+      Then "s", "t" and Share's commission receive <s>, <t> and <share> micro-USD, "s" being one party of weight 2 placed at leg 1
+
+      Examples:
+        | amount | s | t | share |
+        | 1      | 1 | 0 | 0     |
+        | 2      | 1 | 1 | 0     |
+        | 3      | 1 | 1 | 1     |
+        | 4      | 2 | 1 | 1     |
+
     @P4-S74 @need-P4-N8 @POL-11 @POL-12
     Scenario: Each usage charge line is split among the parties of its own route
       Given account "a1" has a usage charge line on route "R1" and another on route "R2" for the same minute
@@ -571,11 +639,13 @@ Feature: Wallet, funds holds, ledger and supplier settlement
       And the balances of B and C do not change
       And A's statement shows the debt and its reason
 
-    @P4-S56 @need-P4-N11 @POL-17 @POL-23
-    Scenario: Excess carried despite policing is paid to the supplier by Share, not by the buyer
-      Given P3 found 1 GB of excess carried on a product without burst for buyer "b1", on supplier A's link
+    @P4-S56 @need-P4-N11 @POL-17 @POL-23 @POL-12
+    Scenario: Excess carried despite policing is paid to the route's suppliers by Share, split as the buyer's charge would have been
+      Given route "R1" with supplier A weighted 3000, supplier B 3333, supplier C 2167 and Share's commission 1500
+      And P3 found 1 GB of excess carried on "R1" for buyer "b1", on a product without burst whose `usage_price` (POL-17) is 10,000 micro-USD per GB
       When it is settled
-      Then supplier A is credited its share of 1 GB at `usage_price` (POL-17) from Share's own account, as its own movement
+      Then suppliers A, B and C are credited 3,000, 3,333 and 2,167 micro-USD from Share's own account, the Webster split of 10,000 micro-USD among the parties of "R1" (POL-12, POL-23), each as its own movement
+      And no share is posted to Share's commission
       And "b1"'s wallet is not debited for it
 
     @P4-S77 @need-P4-N11 @POL-23 @POL-07 @POL-08 @POL-28
@@ -588,9 +658,10 @@ Feature: Wallet, funds holds, ledger and supplier settlement
       Examples:
         | cost                                                                                 | payee                                   |
         | the cancellation of a booking on a partner without holds after a later step failed (POL-28) | that partner                    |
-        | the price difference of an accepted equivalent path (POL-07)                         | the suppliers of the equivalent path    |
+        | the price difference of an accepted equivalent path dearer than the original price (POL-07) | the parties of the equivalent path, split by their weights |
         | a partner fee that was not shown at booking (POL-08)                                 | that partner                            |
         | a cancellation fee on a reservation revoked under POL-07                             | that partner                            |
+        | a cancellation fee on a reservation its holder cancelled after its rate was cut under POL-07 (POL-08) | that partner                |
 
     @P4-S89 @need-P4-N11 @POL-08
     Scenario: A cancellation fee charged to a buyer goes wholly to the partner that imposed it
@@ -649,6 +720,14 @@ Feature: Wallet, funds holds, ledger and supplier settlement
       Then it is escalated to finance for reconciliation
       And the 120.00 USD is in no new payout while the escalation is open
 
+    @P4-S95 @need-P4-N12 @need-P4-N11 @POL-22 @POL-29
+    Scenario: A late confirmation of a transfer already re-instructed after its final failure becomes a duplicate-payout debt
+      Given a payout of 120.00 USD to supplier A was reported failed as final, and the 120.00 USD was re-instructed and paid in the next weekly run
+      When a confirmation of the original transfer arrives
+      Then it is escalated to finance
+      And supplier A has a supplier debt of 120.000000 USD marked "duplicate payout", netted against its next payouts and invoiced if open more than 90 days (POL-22)
+      And its earnings are unchanged, its statement shows the debt as "duplicate payout", and the debt does not count in its deviation from exact proportions
+
     @P4-S88 @need-P4-N12 @POL-22
     Scenario: A payout neither confirmed nor failed within payout_confirmation_timeout is escalated, not reissued
       Given a payout of 120.00 USD to supplier A was issued
@@ -661,7 +740,7 @@ Feature: Wallet, funds holds, ledger and supplier settlement
       When the same weekly payout run is executed more than once
       Then each supplier is paid at most once for that run
 
-    @P4-S47 @need-P4-N12 @POL-11
+    @P4-S47 @need-P4-N12 @POL-11 @POL-22
     Scenario: A payout is rounded down to the provider's minor unit and the residue carries forward
       Given supplier A is owed 120.004567 USD
       When the weekly payout runs to a provider whose minor unit is the cent
@@ -687,7 +766,7 @@ Feature: Wallet, funds holds, ledger and supplier settlement
       When 90 days pass with the debt still open
       Then supplier A is invoiced for it
 
-    @P4-S50 @need-P4-N12 @POL-20 @POL-11
+    @P4-S50 @need-P4-N12 @POL-20 @POL-11 @POL-22
     Scenario: A supplier paid in another currency is converted at the shown rate, rounded down, with the residue carried in USD
       Given supplier A is owed 120.004567 USD and is paid in KES by a provider whose minor unit is 1 KES
       And the rate shown for the payout is 129.5 KES per USD
@@ -698,7 +777,7 @@ Feature: Wallet, funds holds, ledger and supplier settlement
 
   Rule: Reversals and bad debt are borne by Share, never by suppliers
 
-    @P4-S51 @need-P4-N13 @POL-21
+    @P4-S51 @need-P4-N13 @POL-21 @POL-18 @POL-16
     Scenario: A reversal after the top-up was spent is applied at once and suspends the account if headroom goes negative
       Given account "b1" spent a top-up of 5.000000 USD
       When the provider reverses that top-up
@@ -717,22 +796,53 @@ Feature: Wallet, funds holds, ledger and supplier settlement
       When 90 days pass after the reversal without the balance being recovered
       Then the balance is written off automatically
       And the loss is borne by Share
+      And the written-off amount stays recorded as owed by "b1"
       And no supplier's balance changes
+
+    @P4-S94 @need-P4-N13 @need-P4-N5 @POL-21 @POL-15 @POL-16 @POL-18
+    Scenario Outline: After a write-off the account stays suspended until a top-up repays Share, and then resumes by the usual rule
+      Given account "<account>" had <owed> USD of <kind> written off, has no reservations, a ledger balance of 0.000000 USD and is suspended
+      When "<account>" tops up <top-up> USD
+      Then <repaid> USD of it goes to Share's own account, repaying the written-off amount (POL-21)
+      And its ledger balance is <balance> USD
+      And "<account>" is <standing>
+
+      Examples:
+        | account | owed      | kind                          | top-up    | repaid    | balance  | standing                                                                       |
+        | b1      | 4.700000  | a negative balance after a reversal | 4.000000  | 4.000000  | 0.000000 | still suspended, with 0.700000 USD still owed, and cannot book            |
+        | b1      | 4.700000  | a negative balance after a reversal | 5.700000  | 4.700000  | 1.000000 | active again, its headroom of 1.000000 USD reaching `low_balance_warning` (POL-16) |
+        | e1      | 10.000000 | an unpaid invoice             | 11.000000 | 10.000000 | 1.000000  | active again as a prepaid account, with no credit limit (POL-15)            |
 
   Rule: Credit is given only to vetted accounts, and collected by rule
 
-    @P4-S82 @need-P4-N17 @POL-15 @POL-24
+    @P4-S82 @need-P4-N17 @POL-15 @POL-24 @POL-32
     Scenario: A credit limit can be set only on an account that has passed know-your-business checks
       Given account "e2" has not passed know-your-business checks (POL-24)
-      When an operator tries to set a `credit_limit` for "e2"
+      When an operator in the finance role (POL-32) tries to set a `credit_limit` for "e2"
       Then the attempt is refused and recorded, and "e2" has no credit limit
 
-    @P4-S83 @need-P4-N17 @need-P4-N13 @POL-15 @POL-21 @POL-23
+    @P4-S83 @need-P4-N17 @need-P4-N13 @POL-15 @POL-21 @POL-23 @POL-32 @POL-16
     Scenario: An invoice unpaid 90 days after its due date is written off at Share's cost
       Given credit-limit account "e1" has an invoice unpaid since its due date, and is suspended
       When 90 days pass after the due date
-      Then the unpaid amount is written off at Share's cost
+      Then the unpaid amount is written off at Share's cost, and stays recorded as owed by "e1"
+      And "e1" loses its credit limit, and books prepaid until a finance operator sets one again (POL-32)
       And no supplier's balance changes
+
+    @P4-S92 @need-P4-N17 @need-P4-N5 @POL-15 @POL-16 @POL-18
+    Scenario: An account suspended for an overdue invoice stays suspended whatever its headroom
+      Given credit-limit account "e1" has a `credit_limit` of 5.000000 USD, a ledger balance of -1.000000 USD, a credit hold of 0.288000 USD for its one open-ended reservation and no usage exposure
+      And "e1" is suspended because an invoice of 1.000000 USD is unpaid `invoice_terms` after it was issued
+      And with its full credit hold in place its headroom is 3.712000 USD, above `low_balance_warning` (1.000000 USD)
+      When a minute's charge of "e1" is posted during the suspension
+      Then "e1" is still suspended, because the invoice is still overdue (POL-16)
+
+    @P4-S93 @need-P4-N17 @need-P4-N5 @POL-15 @POL-16 @POL-18
+    Scenario: Paying every overdue invoice resumes the account, if the headroom rule also holds
+      Given credit-limit account "e1" is suspended as in P4-S92, with one overdue invoice of 1.000000 USD
+      When "e1" pays that invoice in full within `suspension_grace`
+      Then "e1" is active again, with no request from the buyer, its ledger balance being 0.000000 USD and its headroom 4.712000 USD
+      And network operations is told to unblock its usage-priced traffic
 
   Rule: The books are reconciled with the money daily
 
@@ -744,10 +854,34 @@ Feature: Wallet, funds holds, ledger and supplier settlement
 
       Examples:
         | difference                                                                                                                              |
-        | the funds held at the payment partner differ from positive buyer balances plus supplier amounts owed and not yet paid out plus Share's own balance there |
+        | the funds held at the payment partner differ from the signed sum of buyer balances and supplier balances, plus Share's own balance there, less payouts the partner has executed that the ledger has not yet confirmed |
         | a provider transaction in the partner's report matches no ledger top-up, reversal or payout                                             |
         | a ledger top-up, reversal or payout matches no provider transaction in the partner's report                                             |
         | a provider transaction matches more than one ledger movement                                                                            |
+
+    @P4-S90 @need-P4-N14 @POL-24 @POL-21 @POL-15 @POL-22
+    Scenario Outline: Funds at the partner equal the signed balances, less payouts executed but not yet confirmed, and no alert is raised
+      Given at the end of day D the payment partner holds <partner> USD
+      And buyer balances sum to <buyers> USD, supplier balances to <suppliers> USD and Share's own balance there is <share> USD, each signed
+      And payouts the partner has executed that the ledger has not yet confirmed total <in flight> USD
+      When the reconciliation of day D runs
+      Then it finds <partner> = <buyers> + <suppliers> + <share> - <in flight>
+      And no alert is raised
+
+      Examples:
+        | partner    | buyers     | suppliers  | share     | in flight  | case                                                                                    |
+        | 4.250000   | -5.000000  | 4.250000   | 5.000000  | 0.000000   | a spent 5.000000 USD top-up reversed; Share's 0.750000 commission plus 4.250000 it added cover the 5.000000 owed |
+        | 8.500000   | -10.000000 | 8.500000   | 10.000000 | 0.000000   | a credit-limit account mid-cycle with 10.000000 USD posted; Share's 1.500000 commission plus 8.500000 it added cover it |
+        | 0.000000   | 0.000000   | 120.000000 | 0.000000  | 120.000000 | a 120.00 USD payout the partner has executed, not yet confirmed                          |
+        | 100.000000 | 50.000000  | 35.000000  | 15.000000 | 0.000000   | supplier balances of 50.000000 and -15.000000, a supplier debt that Share's balance covers |
+
+    @P4-S91 @need-P4-N14 @POL-24 @POL-21 @POL-23
+    Scenario: Share's own balance below the receivables it funds is an alert, even when the sums agree
+      Given buyer "b1" spent a 5.000000 USD top-up, leaving suppliers owed 4.250000 USD and Share's commission 0.750000 USD, and the top-up was then reversed
+      And Share has added nothing to its own balance at the partner, which holds 0.000000 USD
+      When the reconciliation of day D runs
+      Then it finds 0.000000 = -5.000000 + 4.250000 + 0.750000
+      And it raises an operational alert that Share's own balance, 0.750000 USD, does not cover the 5.000000 USD receivable it funds, so the 4.250000 USD owed to suppliers is not covered by funds at the partner
 
     @P4-S80 @need-P4-N14 @POL-24
     Scenario Outline: Provider settlement reports and bank statements are reconciled daily by the same rule

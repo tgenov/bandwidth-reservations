@@ -5,7 +5,7 @@
 | Resolves | [Gate A](02-requirements-gate-a.md) (GA-01 to GA-43: P1, P2, X1) and [gate B](02-requirements-gate-b.md) (GB-01 to GB-41: P3, P4, X2) |
 | Policy inputs | Policy register round 3 (POL-02, 06, 07, 08, 11, 12, 14, 15, 16, 17, 18, 20, 23, 24, 25, 26 amended; POL-29, POL-30 new), and the round-4 decisions below |
 | Files changed | `02-specs/glossary.md`, all six `.feature` files, all six problem statements in `01-discovery/`, `02-specs/conformance.md` (regenerated), this record |
-| Not changed | `02-specs/policy-register.md`. **The round-4 entries could not be written to it** (see "Round-4 decisions"); the specs already apply them |
+| Register | `02-specs/policy-register.md` was not edited during this revision. The round-4 decisions below, and POL-31, were written to it afterwards, with the user's approval, as "Amended (round 4)" paragraphs (see "Round-4 decisions"). *Corrected after review 03 (GA2-22): an earlier version of this line said they could not be written.* |
 | Date | 2026-10-11 |
 
 ## Conventions used in this round
@@ -17,8 +17,11 @@
   in file order.
 - **Traceability, checked mechanically.** Every scenario has exactly one ID and at least one
   `@need-` tag; every `@need-` tag names a need in a Needs table; every need is cited; and
-  every `POL-nn` named in a scenario's steps carries a matching `@POL-nn` tag. The only
-  failure left is `@POL-31` on P1-S19, which names an entry not yet in the register.
+  every `POL-nn` named in a scenario's steps carries a matching `@POL-nn` tag. At the
+  time of this revision `@POL-31` on P1-S19 named an entry not yet in the register; POL-31
+  has since been added, so the check passes. *(Corrected after review 03, GA2-22.)*
+  Review 03 found that the convention for Backgrounds was not applied mechanically
+  (GA2-17, GB2-20); see [the round-5 record](03-requirements-gate-resolution.md).
 - **Outcomes.** Only glossary outcomes are used: confirmed, rejected, invalid, failed
   (pending until then). A submission refused before it becomes a request is **not
   accepted**, a new glossary term (GA-18).
@@ -173,18 +176,11 @@ Every Examples row added or changed was recomputed. Key values:
 **Status:** written into the policy register ("Amended (round 4)" paragraphs and POL-31), with the user's approval.
 
 As the coordinator directed mid-task, each point the baseline needed a business decision
-on was decided here rather than deferred. **Writing them to
-`02-specs/policy-register.md` was blocked by the session's permission classifier**, both
-by shell and by the Edit tool. That matches the original brief's "do not edit the policy
-register". I made no further attempt. The specs, problem statements and glossary already
-apply these decisions and cite the POL entries they amend. Until the text below is pasted
-into the register, those citations point at decisions the register does not yet contain,
-and `@POL-31` names an entry that does not exist.
-
-**To paste:** each item goes as an "**Amended (round 4).**" paragraph at the end of the
-named entry (POL-31 as a new entry after POL-30). Add one Amendments-table row per item:
-`| 2026-10-11 | Round 4: <one line below> | <finding> |`. Add a POL-31 row to the
-Summary table: `| POL-31 | Reserved rate precision | Whole Mbps, at least 1 Mbps |`.
+on was decided here rather than deferred. The revision itself did not edit
+`02-specs/policy-register.md`; the decisions below were written to it afterwards, as
+"**Amended (round 4).**" paragraphs, POL-31 as a new entry, and one Amendments-table row
+each. Every citation of them in the specs now resolves. *(Corrected after review 03,
+GA2-22: this paragraph previously said the register could not be changed.)*
 
 | # | Entry | Decision (one line) | Trade-off | Finding |
 |---|---|---|---|---|
@@ -229,13 +225,12 @@ New parameters introduced: `standing_notice_time` (10 s), `affected_notice_time`
 ## Policy questions for round 4
 
 None left open. Every question this revision found was decided above (as the coordinator
-directed). The only thing outstanding is entering those decisions in the register, which
-needs someone with permission to edit it.
+directed), and the decisions are now in the register.
 
 ## Not fully resolved
 
 | Item | Why |
 |---|---|
-| GA-22, accounts per actor | POL-25 bounds requests and capacity in flight per account; the number of accounts one actor can open is left to KYC tiers, recorded as P2 open question 3 |
+| GA-22, accounts per actor | POL-25 bounds requests and capacity in flight per account; the number of accounts one actor can open was left to KYC tiers, recorded as P2 open question 3. *Since closed by POL-25 round 5 (no capacity hold before the funds hold); see the round-5 record.* |
 | GA-41, mechanical check of Background text | The check now covers every POL reference in scenario steps. Background text is covered by convention (scenarios under a policy-dependent Background carry its tag), not by the script |
 | GB-41 | The requirement (identity unique for the retention period) is stated; how it is met is left to the RFC (P3 open question 1), as gate B proposed |

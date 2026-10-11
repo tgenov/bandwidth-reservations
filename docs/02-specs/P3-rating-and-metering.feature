@@ -7,7 +7,8 @@
 #
 # This spec ends at charges and amendments. Money movements, funds holds, headroom and
 # suspension are P4. A charge is computed per charge line (POL-11): one reservation for one
-# minute, or one account and product on one route for one minute of usage-priced traffic.
+# minute; one account and product on one route for one minute of usage-priced traffic; or
+# one cancellation fee for one reservation (charged at exactly its shown amount, not split).
 # Amounts are USD; "micro-USD" is 10^-6 USD; 1 GB is 10^9 bytes; at 100 Mbps a minute
 # carries 0.75 GB. Prices in examples are illustrations, not POL defaults (POL-01 sets
 # prices per product and route). Times are HH:MM:SS in UTC; minutes are half-open.
@@ -58,53 +59,53 @@ Feature: Rating reservations and metered traffic
       When the reservation has ended
       Then it has accrued 200 micro-USD in total
 
-    @P3-S04 @need-P3-N1 @POL-08
+    @P3-S04 @need-P3-N1 @POL-08 @POL-01
     Scenario: Accrual stops at the minute a cancellation takes effect
       Given a confirmed reservation of 100 Mbps for [10:00, 12:00) on the route
       When it is cancelled at 10:29:20
       Then the cancellation takes effect at 10:30
       And the reservation accrues for each minute of [10:00, 10:30) and for no minute after
 
-    @P3-S05 @need-P3-N1 @POL-08
+    @P3-S05 @need-P3-N1 @POL-08 @POL-01
     Scenario: A rate decrease is accrued at the new rate from its effective minute
       Given a confirmed reservation of 100 Mbps for [10:00, 12:00) on the route
       When its rate is decreased to 50 Mbps with effect from 10:30
       Then each minute of [10:30, 12:00) accrues 100 micro-USD
 
-    @P3-S06 @need-P3-N1 @POL-27
+    @P3-S06 @need-P3-N1 @POL-27 @POL-01
     Scenario: A reservation keeps the price it was booked at
       Given a confirmed reservation of 100 Mbps for [10:00, 12:00) on the route
       When the route's `reservation_price` changes to 3 micro-USD per Mbps-minute from 11:00
       Then each minute of [11:00, 12:00) still accrues 200 micro-USD
 
-    @P3-S07 @need-P3-N1 @POL-27
+    @P3-S07 @need-P3-N1 @POL-27 @POL-01
     Scenario: An open-ended reservation's price changes only after price_notice, at a minute boundary
       Given a confirmed open-ended reservation of 100 Mbps on the route
       When a new `reservation_price` of 3 micro-USD per Mbps-minute is announced at 09:00:20 on day D
       Then the reservation accrues 200 micro-USD a minute until 09:01 on day D + 30 days, the first minute boundary at or after the announcement plus `price_notice` (POL-27)
       And 300 micro-USD a minute from then on
 
-    @P3-S08 @need-P3-N1 @POL-07
+    @P3-S08 @need-P3-N1 @POL-07 @POL-01
     Scenario: A revoked reservation accrues nothing after the revocation takes effect
       Given a confirmed open-ended reservation on the route is revoked under a permanent reduction (POL-07)
       When the revocation takes effect
       Then the reservation accrues for no minute from then on
 
-    @P3-S09 @need-P3-N1 @POL-16
+    @P3-S09 @need-P3-N1 @POL-16 @POL-01
     Scenario: A suspended account's reservation accrues during the grace, and not after its release
       Given a confirmed open-ended reservation of an account that is suspended (POL-16)
       When `suspension_grace` passes without funds and the reservation is released
       Then the reservation accrued for every minute of the grace
       And it accrues for no minute after its release
 
-    @P3-S10 @need-P3-N1 @POL-07
+    @P3-S10 @need-P3-N1 @POL-07 @POL-01
     Scenario: A reservation affected by an unplanned outage keeps accruing and is marked for credit
       Given a confirmed reservation on the route is flagged as affected by an unplanned outage (POL-07)
       When the minutes of the outage pass
       Then the reservation accrues for each of them
       And each of those minutes is marked as affected, for SLA credit (Problem 6)
 
-    @P3-S40 @need-P3-N1 @POL-08 @POL-27
+    @P3-S40 @need-P3-N1 @POL-08 @POL-27 @POL-01
     Scenario: An extension's added part accrues at the price in force when it was made; the existing part keeps its price
       Given a confirmed reservation of 100 Mbps for [10:00, 12:00) on the route, booked at 2 micro-USD per Mbps-minute
       And the route's `reservation_price` is now 3 micro-USD per Mbps-minute
@@ -112,21 +113,21 @@ Feature: Rating reservations and metered traffic
       Then each minute of [10:00, 12:00) accrues 200 micro-USD
       And each minute of [12:00, 13:00) accrues 300 micro-USD
 
-    @P3-S42 @need-P3-N1 @POL-30
+    @P3-S42 @need-P3-N1 @POL-30 @POL-01
     Scenario: A terminated reservation accrues nothing after its termination, and what it accrued stands
       Given a confirmed reservation of 100 Mbps for [10:00, 12:00) on the route
       When Share terminates it at 10:15:30 for a reason in POL-30
       Then it accrues for each minute of [10:00, 10:16) and for no minute after
       And no charge already accrued is refunded
 
-    @P3-S45 @need-P3-N1 @POL-08 @POL-27
+    @P3-S45 @need-P3-N1 @POL-08 @POL-27 @POL-01
     Scenario: A rate increase's added part accrues at the price in force when it was made
       Given a confirmed open-ended reservation of 100 Mbps on the route, booked at 2 micro-USD per Mbps-minute
       And the route's `reservation_price` is now 3 micro-USD per Mbps-minute
       When the reservation is increased to 150 Mbps at 10:29:20
       Then each minute from 10:30 accrues 350 micro-USD: 100 × 2 plus 50 × 3
 
-    @P3-S46 @need-P3-N1 @POL-08
+    @P3-S46 @need-P3-N1 @POL-08 @POL-01
     Scenario Outline: A decrease removes the most recently added part first
       Given a confirmed open-ended reservation of 100 Mbps booked at 2 micro-USD per Mbps-minute, later increased by 50 Mbps at 3 micro-USD per Mbps-minute
       When its rate is decreased to <rate> Mbps
@@ -137,12 +138,32 @@ Feature: Rating reservations and metered traffic
         | 100  | 200     | 100 Mbps at 2                    |
         | 80   | 160     | 80 Mbps at 2; the 3-priced part gone |
 
-    @P3-S47 @need-P3-N1 @POL-07
+    @P3-S47 @need-P3-N1 @POL-07 @POL-01
     Scenario: A planned maintenance booking accrues nothing and is excluded from rating and settlement
       Given the supplier of a link on the route has booked planned maintenance taking 2 Mbps for [10:00, 12:00) (POL-07)
       When the minutes of the maintenance pass
       Then no accrual and no charge is made for the maintenance booking
       And it appears in no supplier's settlement (P4)
+
+    @P3-S58 @need-P3-N1 @POL-01 @POL-07
+    Scenario: A reservation whose rate is cut under a permanent reduction accrues at the cut rate from the end of the notice
+      Given a confirmed open-ended reservation B of 4 Mbps on the route, to be cut to 2 Mbps when a permanent reduction's `revocation_notice` (POL-07) ends
+      When the notice ends
+      Then each minute of B before the end of the notice accrued 8 micro-USD
+      And each minute from the end of the notice accrues 4 micro-USD: 2 Mbps × 2
+
+    @P3-S59 @need-P3-N1 @POL-01 @POL-07 @POL-23
+    Scenario Outline: A reservation moved to an equivalent path accrues at the lower of its original price and the new path's price
+      Given a confirmed open-ended reservation of 100 Mbps on the route, booked at 2 micro-USD per Mbps-minute
+      And its holder accepted an equivalent path whose `reservation_price` is <path price> micro-USD per Mbps-minute (POL-07)
+      When the reservation has moved to the equivalent path
+      Then each minute from the move accrues <accrual> micro-USD, split among the equivalent path's parties (P4)
+      And Share pays <share pays> micro-USD a minute to the equivalent path's parties, from its own account (POL-23, P4)
+
+      Examples:
+        | path price | accrual | share pays |
+        | 3          | 200     | 100        |
+        | 1          | 100     | 0          |
 
   Rule: A partner cancellation fee is charged only if shown at booking, and to the party the policy names
 
@@ -179,6 +200,14 @@ Feature: Rating reservations and metered traffic
         | released at the end of `suspension_grace` (POL-16)       | charged to the account                           |
         | terminated by Share (POL-30)                             | charged to the account                           |
         | revoked under a permanent reduction (POL-07)             | not charged to the account; Share pays it (P4)   |
+        | cancelled by its account after its rate was cut under a permanent reduction (POL-07) | not charged to the account; Share pays it (P4) |
+
+    @P3-S60 @need-P3-N12 @POL-08 @POL-11
+    Scenario: A cancellation fee is a charge line of its own, charged at exactly its shown amount and once
+      Given a reservation over a partner leg with a cancellation fee of 0.500000 USD shown at booking
+      When the account cancels it within the partner's minimum term, and the cancellation is processed more than once
+      Then one charge line for the fee is charged, of exactly 500,000 micro-USD, with no rounding
+      And it is not split among the route's parties, and goes wholly to the partner (P4)
 
   Rule: Each charge line is charged exactly once
 
@@ -201,46 +230,46 @@ Feature: Rating reservations and metered traffic
       Given a best-effort product on a route with a `usage_price` (POL-01) of 10,000 micro-USD per GB
       And an account "a1" sending traffic on it
 
-    @P3-S14 @need-P3-N3
+    @P3-S14 @need-P3-N3 @POL-01
     Scenario: A record delivered twice is counted once
       Given a flow record from exporter "e1" with sequence 7 for "a1"
       When the record is delivered twice
       Then its bytes are charged once
 
-    @P3-S15 @need-P3-N3
+    @P3-S15 @need-P3-N3 @POL-01
     Scenario: Any delivery order, duplication and lateness gives the same charges as in-order delivery
       Given any set of flow records
       When they are delivered once each, in order of when the traffic happened
       And separately delivered in any order, with any of them repeated and any of them after their minute was charged
       Then both deliveries give the same total charge for every charge line
 
-    @P3-S16 @need-P3-N3
+    @P3-S16 @need-P3-N3 @POL-01
     Scenario: A repeat of a record already charged causes no amendment
       Given the minute [12:05, 12:06) has been charged, including the record from exporter "e1" with sequence 7
       When that record is delivered again
       Then no amendment is made
 
-    @P3-S17 @need-P3-N3 @need-P3-N2
+    @P3-S17 @need-P3-N3 @need-P3-N2 @POL-01
     Scenario: A record arriving while its minute is being charged is neither lost nor counted twice
       Given the minute [12:05, 12:06) is being charged
       When a record for that minute arrives during the charging
       Then the record's bytes are in that minute's total charge exactly once
 
-    @P3-S50 @need-P3-N3
+    @P3-S50 @need-P3-N3 @POL-01
     Scenario: A record from an exporter whose sequence numbers restarted is not mistaken for an earlier record
       Given the record from exporter "e1" with sequence 7 was charged
       And "e1" has since restarted its sequence numbers
       When a record for a different flow from "e1" with sequence 7 arrives
       Then it is charged as a new record
 
-    @P3-S48 @need-P3-N5 @need-P3-N2 @POL-11
+    @P3-S48 @need-P3-N5 @need-P3-N2 @POL-11 @POL-01
     Scenario: One account's traffic on two routes in the same minute gives two charge lines, each rounded once
       Given the product's `usage_price` is 10,000 micro-USD per GB on route "R1" and 13,000 micro-USD per GB on route "R2"
       When "a1" carries 150,000 bytes on "R1" and 150,000 bytes on "R2" in the minute starting 12:05
       Then "a1" is charged 1 micro-USD on "R1" (exactly 1.5) and 1 micro-USD on "R2" (exactly 1.95)
       And each charge is split by its own route's parties and weights (P4)
 
-    @P3-S49 @need-P3-N13 @POL-17
+    @P3-S49 @need-P3-N13 @POL-17 @POL-01
     Scenario: Traffic reported by several legs is billed once, at the egress count
       Given a route of three legs whose exporters report the same traffic of "a1" in the minute starting 12:05
       And the legs report 1.00 GB, 0.99 GB and 0.98 GB, the last being where the traffic leaves the route
@@ -254,7 +283,7 @@ Feature: Rating reservations and metered traffic
       Given a best-effort product on a route with a `usage_price` (POL-01) of 10,000 micro-USD per GB
       And an account "a1" sending traffic on it
 
-    @P3-S18 @need-P3-N4 @POL-13
+    @P3-S18 @need-P3-N4 @POL-13 @POL-01
     Scenario Outline: A record within one minute belongs to that minute; minutes are half-open
       Given a flow record for "a1" of a flow active from <start> to <end>
       When the record is charged
@@ -267,7 +296,7 @@ Feature: Rating reservations and metered traffic
         | 12:06:00 | 12:06:20 | 12:06:00 | 12:07:00 |
         | 12:05:10 | 12:05:10 | 12:05:00 | 12:06:00 |
 
-    @P3-S19 @need-P3-N4 @POL-13
+    @P3-S19 @need-P3-N4 @POL-13 @POL-01
     Scenario Outline: A record spanning several minutes is spread in proportion to the seconds active in each
       Given a flow record for "a1" of 3 GB for a flow active from <start> to <end>
       When the record is charged
@@ -278,7 +307,7 @@ Feature: Rating reservations and metered traffic
         | 12:05:00 | 12:08:00 | 1 GB is charged in each of the minutes starting 12:05, 12:06 and 12:07              |
         | 12:05:30 | 12:07:00 | 1 GB is charged in the minute starting 12:05 and 2 GB in the minute starting 12:06  |
 
-    @P3-S51 @need-P3-N4 @need-P3-N5 @POL-13 @POL-11
+    @P3-S51 @need-P3-N4 @need-P3-N5 @POL-13 @POL-11 @POL-01
     Scenario: A proportion that is not a whole number of bytes is priced exactly, and each minute's charge rounded once
       Given a flow record for "a1" of 3 GB for a flow active from 12:05:20 to 12:06:30
       When the record is charged
@@ -298,7 +327,7 @@ Feature: Rating reservations and metered traffic
       When a record of 1 GB for "a1" for a flow active in the minute starting 12:05 arrives
       Then it is charged 10,000 micro-USD, at the price in force in that minute
 
-    @P3-S21 @need-P3-N5 @POL-11
+    @P3-S21 @need-P3-N5 @POL-11 @POL-27
     Scenario Outline: A charge is computed exactly and rounded once, down to the micro
       Given the minute starting 12:05 carried <bytes> bytes of "a1"'s traffic
       When the minute is charged
@@ -425,7 +454,7 @@ Feature: Rating reservations and metered traffic
       And an account "a1" sending traffic on it
       And it is within `dispute_window` (POL-17) of the minutes below, unless a scenario says otherwise
 
-    @P3-S32 @need-P3-N8 @POL-11
+    @P3-S32 @need-P3-N8 @POL-11 @POL-01 @POL-17
     Scenario Outline: A late record for a charged minute adds an amendment, computed on the line's new total, and leaves the charge as it was
       Given the minute starting 12:05 carried <on time> bytes of "a1"'s traffic and was charged <original> micro-USD
       When a late record of <late> bytes for that minute arrives
@@ -437,26 +466,26 @@ Feature: Rating reservations and metered traffic
         | 1000000000 | 10000    | 1000000000 | 10000     | 20,000 new total less 10,000 charged     |
         | 75000      | 0        | 75000      | 1         | exactly 1.5 new total, rounded to 1, less 0 |
 
-    @P3-S33 @need-P3-N8
+    @P3-S33 @need-P3-N8 @POL-01 @POL-17
     Scenario: Late traffic never decreases a charge
       Given any records arriving late, repeated and out of order
       When they are charged
       Then every amendment they cause increases the charge it amends
 
-    @P3-S34 @need-P3-N8 @POL-23
+    @P3-S34 @need-P3-N8 @POL-23 @POL-01 @POL-17
     Scenario: A price correction lowering a price is an amendment, with who made it, the cause and the reason
       Given 10 GB of "a1"'s traffic in a charged minute at 10,000 micro-USD per GB, charged 100,000 micro-USD
       When an authorised operator corrects the price for that minute to 5,000 micro-USD per GB, giving the cause "Share" and a reason
       Then an amendment of minus 50,000 micro-USD is made for that minute, recording the operator, the cause and the reason
       And the original charge is still 100,000 micro-USD
 
-    @P3-S55 @need-P3-N8 @POL-23
+    @P3-S55 @need-P3-N8 @POL-23 @POL-01 @POL-17
     Scenario: A price correction raising a best-effort price is an amendment upward
       Given 10 GB of "a1"'s traffic in a charged minute at 10,000 micro-USD per GB, charged 100,000 micro-USD
       When an authorised operator corrects the price for that minute to 12,000 micro-USD per GB, giving a cause and a reason
       Then an amendment of 20,000 micro-USD is made for that minute, recording the operator, the cause and the reason
 
-    @P3-S56 @need-P3-N8 @POL-23 @POL-27
+    @P3-S56 @need-P3-N8 @POL-23 @POL-27 @POL-01 @POL-17
     Scenario Outline: A reservation price locked at booking can only be corrected downwards
       Given a reservation of 100 Mbps booked at 2 micro-USD per Mbps-minute, whose minutes were charged 200 micro-USD each
       When an authorised operator corrects its price to <price> micro-USD per Mbps-minute for those minutes, giving a cause and a reason
@@ -467,13 +496,13 @@ Feature: Rating reservations and metered traffic
         | 1     | an amendment of minus 100 micro-USD is made for each minute    |
         | 3     | the correction is refused, and no amendment is made            |
 
-    @P3-S57 @need-P3-N8 @POL-23 @POL-17
+    @P3-S57 @need-P3-N8 @POL-23 @POL-17 @POL-01
     Scenario: A price correction after dispute_window is refused
       Given a charged minute of "a1" more than `dispute_window` (POL-17) ago
       When an authorised operator tries to correct its price
       Then the correction is refused, and no amendment is made
 
-    @P3-S35 @need-P3-N8
+    @P3-S35 @need-P3-N8 @POL-01 @POL-17
     Scenario: A buyer can see, for any minute, the original charge and every amendment with its reason
       Given a minute of "a1" has an original charge and two amendments
       When "a1" asks for that minute's charges
@@ -495,7 +524,7 @@ Feature: Rating reservations and metered traffic
       And "a1"'s `usage_rate_cap` (POL-14) on it is 100 Mbps
       And records of 0.2 GB of "a1"'s usage-priced traffic have been received but not yet posted
       When finance asks for "a1"'s usage exposure
-      Then the unposted usage is 2,000 micro-USD
+      Then the unposted usage is 2,000 micro-USD, at 10,000 micro-USD per GB in those minutes
       And the lateness bound is 30,000 micro-USD: 100 Mbps for `max_lateness` (180 s) plus the 60 s enforcement target, 3 GB, at 10,000 micro-USD per GB
       And the usage exposure is 32,000 micro-USD
 

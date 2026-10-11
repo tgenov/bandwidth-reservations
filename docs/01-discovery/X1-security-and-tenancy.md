@@ -45,15 +45,15 @@ cite the need they serve with a tag `@need-X1-Nn`.
 | ID | Need | Success measure |
 |---|---|---|
 | X1-N1 | **Every operation is performed by an authenticated principal.** An unauthenticated request changes nothing and reveals nothing. | Zero operations performed without an authenticated principal. |
-| X1-N2 | **Accounts are isolated.** A principal sees and changes only its own account's reservations, booking requests, wallet, headroom, agent keys and statements; a supplier sees only its own links' schedules and its own settlements; a webhook goes only to an endpoint its own account registered and carries nothing about another account. A request for another account's data reveals nothing, not even whether it exists. | Zero cross-account reads, changes or webhooks. |
+| X1-N2 | **Accounts are isolated.** A principal sees and changes only its own account's reservations, booking requests, wallet, headroom, agent keys and statements; a supplier sees only its own links' schedules and its own settlements, and of the reservations on its links only their rate, window, endpoints and an opaque per-reservation reference, never the buyer's account identity unless the buyer consents (an account administrator's consent, per named supplier, withdrawable for the future) or a legal order requires it (a compliance disclosure, approved by a second compliance operator) (POL-33); a webhook goes only to an endpoint its own account registered and carries nothing about another account. A request for another account's data reveals nothing, not even whether it exists. | Zero cross-account reads, changes or webhooks; zero buyer identities shown to a supplier without consent or a legal order. |
 | X1-N3 | **Agent keys act only within their account and their scope** (POL-25). A key acts for one account; once its account revokes it, every new request with it is refused within 60 s and its pending requests fail ("key revoked"); every operation records the key that performed it. | Zero operations by a key outside its account, or more than 60 s after its revocation. |
 | X1-N4 | **Idempotency keys are scoped to the account** (POL-29). The same key used by two accounts gives two independent requests; a reuse by another principal of the same account is not accepted; neither another account nor another principal can learn anything about a request through its key. | Zero cross-account or cross-principal collisions or disclosures through idempotency keys. |
 | X1-N5 | **Only authentic payment notifications move money.** A notification not proven authentic by its provider's method moves no money and is recorded for investigation. | Zero money movements from unproven notifications. |
 | X1-N6 | **Buyers can verify Share's webhooks** (POL-04). Every webhook Share sends can be verified by the buyer as coming from Share and as unaltered. | Every webhook verifiable. |
-| X1-N7 | **Operator power is controlled** (POL-30, POL-23, POL-17). An operator action on an account's reservations, prices or money requires a role that permits it, a reason the policy allows, and is recorded with the operator, the role and the reason. An operator may end a reservation only by termination for a POL-30 reason. Price corrections and quarantine attributions are operator actions; write-offs are automatic, not operator actions. | Zero operator actions without a permitting role or outside the allowed reasons; every one recorded with its reason. |
+| X1-N7 | **Operator power is controlled** (POL-32, POL-30, POL-23, POL-17). Every operator action belongs to exactly one role (POL-32): support reads, and acts on an account only at its documented request; network operations records outages and restorations and terminates for network abuse; finance corrects prices, attributes quarantined traffic, sets or removes credit limits (on accounts that passed know-your-business checks) and resolves money escalations (payouts, orphan reversals); compliance terminates for fraud or a sanctions or legal order, and discloses a buyer's identity to a supplier under a legal order, each only with a second compliance operator's approval. Each action needs that role and a reason the policy allows, and is recorded with the operator (and approver), the role and the reason. An operator may end a reservation only by termination for a POL-30 reason. Write-offs are automatic, not operator actions. | Zero operator actions outside their role or the allowed reasons; zero fraud or legal-order terminations without a second compliance approval; every action recorded with its reason. |
 | X1-N8 | **Every change to money, capacity, links or keys is attributable** (POL-19). Each such change records the principal and the time; the audit record itself cannot be altered or removed and is kept for the retention period. | Every change traceable to a principal; zero altered audit records. |
 | X1-N9 | **Only an account administrator manages keys and limits** (POL-25). Only an account administrator can issue, change or revoke agent keys and set or raise their limits; an agent key cannot change any key's limits, issue keys or revoke keys; an account has at most `account_max_keys` keys. | Zero key or limit changes made by an agent key; zero accounts above `account_max_keys`. |
-| X1-N10 | **Only the link's supplier changes what it sells** (POL-07). Only the link's own supplier may book maintenance on it or announce a permanent reduction; only the supplier, or an operator whose role permits it, may record an unplanned outage or its restoration. Anyone else is refused as if the link did not exist. | Zero capacity changes or maintenance bookings by anyone else. |
+| X1-N10 | **Only the link's supplier changes what it sells** (POL-07). Only the link's own supplier may book maintenance on it or announce a permanent reduction; only the supplier, or an operator in the network operations role (POL-32), may record an unplanned outage or its restoration. Anyone else is refused as if the link did not exist. | Zero capacity changes or maintenance bookings by anyone else. |
 
 ## Constraints and assumptions
 
@@ -66,12 +66,14 @@ cite the need they serve with a tag `@need-X1-Nn`.
 | Webhooks to buyers are signed and retried for `webhook_retry`. | *Decided* (POL-04) |
 | Every reservation change is recorded with who and when, kept 7 years. | *Decided* (POL-19, POL-06) |
 | Buyer funds are held through a licensed payment partner; KYB for credit-limit accounts. | *Decided* (POL-24) |
+| Operator roles: support, network operations, finance, compliance; each action belongs to one role; four eyes on fraud and legal-order terminations; finance sets credit limits and resolves money escalations. | *Decided* (POL-32, round 5) |
+| A supplier sees a reservation's rate, window, endpoints and an opaque reference, not the buyer's identity unless the buyer consents or a legal order requires it. | *Decided* (POL-33, round 5) |
 | Rejections never disclose other buyers. | *Decided* (POL-10), owned by P1 |
 
 ## Out of scope
 
-- The list of operator roles and what each may do: a later decision (with D-24 / POL-24 on
-  the regulatory side). The need here is that roles exist and are enforced.
+- How operators are vetted and assigned to roles, and the regulatory side of roles
+  (POL-24). The roles themselves are POL-32.
 - The authentication mechanism (keys, OAuth, mutual TLS) and each payment provider's
   authenticity scheme: interface contracts.
 - Buyer KYC and supplier KYB processes (POL-24).
@@ -82,9 +84,7 @@ cite the need they serve with a tag `@need-X1-Nn`.
 
 Answered by the policy register and removed: operator power to end a reservation (POL-30);
 idempotency scope (POL-29); key management and revocation (POL-25, round 3); who may
-change a link's capacity (POL-07, rounds 3 and 4).
+change a link's capacity (POL-07, rounds 3 and 4); what a supplier may see of buyers
+(POL-33); which operator roles exist and what each may do (POL-32).
 
-1. **What a supplier may see of buyers.** POL-10 forbids disclosing buyers to other buyers.
-   May a supplier see which account holds a reservation on its link (for provisioning), or
-   only the reservation?
-2. **Roles.** Which operator roles exist, and which actions does each permit?
+None open.

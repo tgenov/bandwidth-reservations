@@ -24,24 +24,24 @@ Feature: Security, tenancy and audit
     @X1-S01 @need-X1-N1
     Scenario Outline: An unauthenticated request changes nothing and reveals nothing
       When an unauthenticated caller tries to <operation>
-      Then the request is refused as unauthenticated
+      Then <answer>
       And nothing changes and nothing about any account is revealed
 
       Examples:
-        | operation                           |
-        | book a route                        |
-        | cancel a reservation                |
-        | ask for a booking request's status  |
-        | ask for a balance                   |
-        | ask for a statement                 |
-        | issue an agent key                  |
+        | operation                           | answer                                                   |
+        | book a route                        | the submission is not accepted as unauthenticated        |
+        | ask for a booking request's status  | the submission is not accepted as unauthenticated        |
+        | cancel a reservation                | the request is refused as unauthenticated                |
+        | ask for a balance                   | the request is refused as unauthenticated                |
+        | ask for a statement                 | the request is refused as unauthenticated                |
+        | issue an agent key                  | the request is refused as unauthenticated                |
 
   Rule: A principal sees and changes only its own account's data
 
     Background:
       Given buyer accounts "b1" and "b2"
 
-    @X1-S02 @need-X1-N2
+    @X1-S02 @need-X1-N2 @POL-18
     Scenario Outline: Another account's data cannot be read, and its existence is not revealed
       When a principal of "b2" asks for <item> of "b1"
       Then the answer is the same as for <item> of an account that does not exist
@@ -76,6 +76,19 @@ Feature: Security, tenancy and audit
       When a principal of "s2" asks for the schedule of a link of "s1" or for the statement of "s1"
       Then the answer is the same as for a link or statement that does not exist
 
+    @X1-S28 @need-X1-N2 @POL-33 @POL-32
+    Scenario Outline: A supplier sees the reservations on its link, but not who holds them
+      Given buyer "b1" holds a confirmed reservation R on a link of supplier "s1"
+      When a principal of "s1" asks for the schedule of that link <when>
+      Then it shows R's rate, window and endpoints and a reference to R that is used for no other reservation
+      And it shows <identity>
+
+      Examples:
+        | when                                                   | identity                                                              |
+        | when "b1" has not consented and no legal order applies | nothing that identifies "b1" or links R to "b1"'s other reservations |
+        | after an account administrator of "b1" consented to identify "b1" to "s1" | "b1"'s account identity                            |
+        | after a compliance disclosure under a legal order that requires it (X1-S12) | "b1"'s account identity, recorded with the order |
+
     @X1-S24 @need-X1-N2 @POL-04
     Scenario: A webhook goes only to its own account's endpoint and carries nothing about another account
       Given "b1" and "b2" have each registered a webhook endpoint
@@ -89,13 +102,13 @@ Feature: Security, tenancy and audit
     Scenario: An agent key acts only for the account that issued it
       Given an agent key issued by account "b1"
       When the key tries to book or read on behalf of account "b2"
-      Then the request is refused and nothing changes
+      Then a booking submission is not accepted, a read is refused, and nothing changes
 
     @X1-S06 @need-X1-N3 @POL-25
     Scenario: A revoked agent key is refused within 60 s of its revocation
       Given an account administrator of "b1" revoked one of its agent keys at 10:00:00
       When the key is used for any operation from 10:01:00
-      Then the request is refused as unauthenticated
+      Then a booking or status submission is not accepted, and any other request is refused, as unauthenticated
 
     @X1-S07 @need-X1-N3 @need-X1-N8 @POL-25
     Scenario: An operation by an agent key records the key
@@ -104,7 +117,7 @@ Feature: Security, tenancy and audit
 
   Rule: Only an account administrator manages agent keys and their limits
 
-    @X1-S18 @need-X1-N9 @POL-25
+    @X1-S18 @need-X1-N9 @POL-25 @POL-33
     Scenario Outline: An account administrator issues, changes and revokes keys and sets their limits
       Given an account administrator of "b1"
       When the administrator <action>
@@ -116,6 +129,8 @@ Feature: Security, tenancy and audit
         | raises an agent key's `key_spend_limit`                    |
         | lowers an agent key's `key_inflight_limit`                 |
         | revokes an agent key                                       |
+        | consents to identify the account to a named supplier       |
+        | withdraws that consent                                     |
 
     @X1-S19 @need-X1-N9 @POL-25
     Scenario Outline: An agent key cannot manage keys or limits, its own or another's
@@ -131,6 +146,19 @@ Feature: Security, tenancy and audit
         | change another key's limits                    |
         | issue a new agent key                          |
         | revoke another agent key                       |
+
+    @X1-S25 @need-X1-N9 @POL-25
+    Scenario Outline: An account user who is not an account administrator cannot manage keys or limits
+      Given a user of "b1" without the account administrator right
+      When the user tries to <action>
+      Then the request is refused and nothing changes
+      And the attempt is recorded
+
+      Examples:
+        | action                                  |
+        | issue an agent key                      |
+        | raise an agent key's `key_spend_limit`  |
+        | revoke an agent key                     |
 
     @X1-S20 @need-X1-N9 @need-X1-N8 @POL-25 @POL-19
     Scenario: Every change to an agent key or its limits records who made it and when
@@ -162,7 +190,7 @@ Feature: Security, tenancy and audit
   Rule: Only a link's own supplier changes what is sold on it
 
     @X1-S22 @need-X1-N10 @POL-07
-    Scenario Outline: Nobody but the link's supplier books maintenance or announces a permanent reduction on it
+    Scenario Outline: Nobody but the link's supplier books maintenance, announces a permanent reduction or records an outage on it, network operations aside
       Given a link of supplier "s1"
       When <principal> tries to <change> on that link
       Then the request is refused as if the link did not exist
@@ -176,9 +204,9 @@ Feature: Security, tenancy and audit
         | a principal of buyer "b1" | book planned maintenance                 |
         | a principal of buyer "b1" | record an unplanned outage               |
 
-    @X1-S23 @need-X1-N10 @need-X1-N7 @POL-07
+    @X1-S23 @need-X1-N10 @need-X1-N7 @POL-07 @POL-32
     Scenario Outline: Network operations may record an outage and its restoration, but not commercial changes
-      Given an operator whose role is network operations
+      Given an operator in the network operations role (POL-32)
       When the operator tries to <change> on a link of supplier "s1", giving a reason
       Then <result>
 
@@ -206,40 +234,73 @@ Feature: Security, tenancy and audit
 
   Rule: Operator power is controlled and recorded
 
-    @X1-S12 @need-X1-N7 @need-X1-N8 @POL-30 @POL-23 @POL-17 @POL-19
-    Scenario Outline: An operator with a permitting role can act on an account, and the action is recorded with its reason
-      Given an operator whose role permits <action>
-      When the operator does it to account "b1", giving a reason
+    @X1-S12 @need-X1-N7 @need-X1-N8 @POL-30 @POL-23 @POL-17 @POL-19 @POL-32 @POL-15 @POL-21 @POL-22 @POL-33
+    Scenario Outline: An operator in the role that owns an action can take it, and the action is recorded with its reason
+      Given an operator in the <role> role (POL-32)
+      When the operator takes the action of <action> on account "b1", giving a reason
       Then the action takes effect
       And it is recorded with the operator, the role, the reason and the time
 
       Examples:
-        | action                                                                             |
-        | terminating a reservation for fraud, a sanctions or legal order, or network abuse (POL-30) |
-        | correcting a price, with its cause (POL-23)                                        |
-        | attributing quarantined traffic to the account (POL-17)                            |
+        | role               | action                                                                                                   |
+        | network operations | terminating a reservation for network abuse (POL-30)                                                     |
+        | compliance         | terminating a reservation for fraud or a sanctions or legal order (POL-30), approved by a second compliance operator |
+        | finance            | correcting a price, with its cause (POL-23)                                                              |
+        | finance            | attributing quarantined traffic to the account (POL-17)                                                  |
+        | finance            | setting or removing a `credit_limit`, set only on an account that has passed know-your-business checks (POL-15) |
+        | finance            | resolving an escalated payout to a supplier (POL-22)                                                     |
+        | finance            | resolving an escalated reversal whose payment never arrived (POL-21)                                     |
+        | compliance         | disclosing the account's identity to a supplier under a legal order that requires it (POL-33), approved by a second compliance operator |
 
-    @X1-S13 @need-X1-N7
-    Scenario: An operator without a permitting role is refused
-      Given an operator whose role does not permit correcting a price
-      When the operator tries to correct a price
+    @X1-S13 @need-X1-N7 @POL-32
+    Scenario Outline: An operator is refused any action that belongs to another role
+      Given an operator in the <role> role (POL-32)
+      When the operator tries to <action>
       Then the request is refused and nothing changes
       And the attempt is recorded
 
-    @X1-S16 @need-X1-N7 @POL-30
+      Examples:
+        | role               | action                                             |
+        | support            | correct a price                                    |
+        | network operations | set a `credit_limit`                               |
+        | finance            | terminate a reservation for network abuse          |
+        | network operations | terminate a reservation for fraud                  |
+        | compliance         | record an unplanned outage                         |
+
+    @X1-S16 @need-X1-N7 @POL-30 @POL-32
     Scenario: An operator cannot end a reservation for a reason outside POL-30
-      Given an operator whose role permits terminations
+      Given an operator in the network operations or the compliance role (POL-32)
       When the operator tries to end a reservation of "b1" for a reason that is not fraud, a sanctions or legal order, or network abuse
       Then the request is refused and the reservation is unchanged
       And the attempt is recorded
 
-    @X1-S17 @need-X1-N7 @POL-30
+    @X1-S17 @need-X1-N7 @POL-30 @POL-32
     Scenario: A termination is recorded with its reason and operator, and the holder is told where the law allows
-      Given an operator whose role permits terminations
+      Given an operator in the network operations role (POL-32)
       When the operator terminates a reservation of "b1" for network abuse
       Then the termination records the reason and the operator
       And the holder of the reservation is told, unless the law forbids it
       And its charges stop at the termination (P3)
+
+    @X1-S26 @need-X1-N7 @POL-30 @POL-32
+    Scenario: A termination for fraud or a legal order takes effect only with a second compliance operator's approval
+      Given an operator in the compliance role (POL-32)
+      When the operator terminates a reservation of "b1" for fraud, giving a reason
+      Then the termination does not take effect, and the reservation is unchanged, until a second operator in the compliance role approves it
+      And the operator who asked cannot approve it
+      And once approved it takes effect, recorded with both operators, the reason and the time
+
+    @X1-S27 @need-X1-N7 @POL-32
+    Scenario Outline: Support reads, and acts on an account only at its documented request
+      Given an operator in the support role (POL-32)
+      When the operator <action>
+      Then <result>
+
+      Examples:
+        | action                                                               | result                                                      |
+        | reads the reservations of "b1"                                       | the answer is given, and the read is recorded               |
+        | cancels a reservation of "b1" at "b1"'s documented request           | the cancellation takes effect, recorded with the request    |
+        | cancels a reservation of "b1" without a documented request from "b1" | it is refused, nothing changes, and the attempt is recorded |
 
   Rule: Every change to money, capacity, links or keys is attributable, and the record is fixed
 

@@ -70,21 +70,27 @@ states, data structures, table or topic names, HTTP paths, algorithms or error s
 behaviour per scenario. Backgrounds are per `Rule` and apply to every scenario in it.
 Where behaviour depends on a policy, the step names the parameter and the policy
 (``within `ack_budget` (POL-04)``) instead of hard-coding its value; concrete values appear
-only in examples, where they are the POL default unless the file says otherwise.
+only in examples, where they are the POL default unless the file says otherwise. An
+Examples table may end with one explanatory column (for example `case` or `why`) that no
+step uses: it documents the row, and is not part of the behaviour.
 
 **Tags.** Every scenario carries:
 
 - its stable ID, `@P1-S01` (or `@X1-S01`), unique across all specs and never reused;
 - one or more `@need-P1-N3` tags naming the need it serves (**the traceability
   convention**);
-- an `@POL-nn` tag for each policy it depends on.
+- an `@POL-nn` tag for each policy it depends on: every `POL-nn` named in its steps,
+  its Examples or its Rule's Background, and the policy that defines a glossary term its
+  steps use (for example "headroom" → POL-18, "suspended" → POL-16, "waits" → POL-05,
+  "insufficient funds" → POL-15, "counter-offer" → POL-10).
 
 No other tags. Verification status, test names and defect notes are **never** put in a
 `.feature` file.
 
 **Traceability** runs both ways and is checked mechanically: every `@need-` tag must name a
-need in a problem statement's Needs table, and every need must be cited by at least one
-scenario. Since each need carries its success measure, every success measure has a
+need in a problem statement's Needs table, every need must be cited by at least one
+scenario, and every policy a scenario depends on under the tag rule above must be tagged
+and exist in the register. Since each need carries its success measure, every success measure has a
 scenario too. The [conformance matrix](02-specs/conformance.md) carries the third link,
 scenario → design → test.
 
