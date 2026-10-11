@@ -1,118 +1,150 @@
-# P4. Wallet, ledger and supplier revenue split
+# P4. Wallet, funds holds, ledger and supplier settlement
 
 ## Context
 
-Buyers pay per use with no commitment and no upfront payment. Money enters through a
-prepaid wallet that the buyer tops up with a mobile-money or card payment (M-Pesa, Stripe,
-Adyen and similar). The payment provider tells the marketplace about each payment
-asynchronously, by calling a webhook.
+Buyers pay with no term commitment and no setup fee. Money enters through a prepaid
+wallet that the buyer tops up with a mobile-money or card payment (M-Pesa, Stripe, Adyen
+and similar), held for Share by a licensed payment partner (POL-24). The payment provider
+tells the marketplace about each payment asynchronously, by payment notification. Prices,
+wallets and the ledger are in USD; a top-up in another currency is converted at top-up at
+a rate shown to the buyer (POL-20).
 
-Usage is metered and rated into a charge for each reservation and minute (P3). Every
-charge is drawn from the buyer's wallet and owed onward to the suppliers whose links make
-up the route, with the marketplace keeping a commission. A route such as
-Nairobi → Mombasa → Marseille can cross three or more suppliers' links, so one charge has
-several payees.
+A guaranteed reservation is priced per Mbps-minute reserved (POL-01), so its charges are
+known at admission. "No upfront payment" means no pre-purchase of the whole term
+(POL-15): admission instead requires funds for a rolling **coverage window** of the
+reservation's charges. Those funds are **held** in the wallet, not charged; charges then
+accrue minute by minute against them, and the hold rolls forward. Vetted accounts may
+instead have a credit limit, settled by monthly invoice. When the hold cannot roll
+forward, the account is suspended, keeps its reservations for a grace period funded by
+the hold already taken, and resumes automatically if funds arrive (POL-16).
 
-Suppliers are promised central billing and automated payouts. That makes the marketplace
-the party that holds buyers' money, owes suppliers theirs, and has to show at any moment
-who is owed what and why.
-
-Charges are not final when first posted. Usage records arrive late (P3), so a minute
-that was already charged can grow afterwards, and a mistaken price can be corrected
-later. Every amount owed to a supplier therefore has to stay correct as charges are
-revised.
+Charges come from [P3](P3-rating-and-metering.md), one per reservation-minute and per
+account's usage-priced traffic in a minute, with amendments. Every charge is owed onward
+to the suppliers whose links make up the route, with Share keeping a commission. A route
+such as Nairobi → Mombasa → Marseille can cross three or more suppliers' links, so one
+charge has several payees. Suppliers are promised central billing and weekly automated
+payouts (POL-22), and their earnings are final once a charge is posted: Share bears buyer
+credit risk (POL-23). That makes the marketplace the party that holds buyers' money, owes
+suppliers theirs, and has to show at any moment who is owed what and why.
 
 ## Who is affected
 
 | Who | What they need |
 |---|---|
-| Buyer (people, enterprises, AI agents) | A top-up is credited exactly once and quickly; the balance they see is the balance they have |
-| Supplier | Their share of every charge, computed by a rule they can check, paid out automatically; amounts already earned are not taken back without a reason they can see |
-| Marketplace finance | Books that balance at all times, a history that cannot be rewritten, and a way to reconcile with payment providers and banks |
-| Services that consult the wallet | A balance answer they can wait on, for example before admitting a new reservation |
+| Buyer (people, enterprises, AI agents) | A top-up credited exactly once and quickly; a headline figure they can spend against; to know before they are suspended, and to be resumed without asking. |
+| Agent operator | Spending limits per agent key that the marketplace enforces. |
+| Supplier | Their share of every charge, by a published rule they can check, paid out weekly; earnings not taken back except for their own errors, with a reason they can see. |
+| Marketplace finance | Books that balance at all times, a history that cannot be rewritten, daily reconciliation with the payment partner, and known worst-case losses. |
+| Compliance | Buyer funds held through a licensed partner; records kept for the retention period. |
+| Network operations | Told reliably when an account's standing changes, so usage-priced traffic can be blocked or unblocked at the edge. |
+| Support | Explain a balance, a hold, a suspension or a reversal to a buyer. |
+| Booking (P2) | Whether the account's headroom covers a new funds hold, answered within the booking's `ack_budget`. |
 
 ## The problem
 
-1. **Payment notifications are unreliable.** The provider may deliver the same
-   notification several times, deliver notifications out of order (a reversal before the
-   payment it reverses), or deliver them late. A naive handler credits the wallet twice
-   or loses a reversal.
-2. **Webhooks come from outside.** Anything that can reach the endpoint can claim a
-   payment was made. A malformed or forged notification must not move money.
-3. **Money must be conserved.** Every movement takes money from one account and gives it
-   to others. If the record of a movement can be half-written, or can be edited
-   afterwards, the books stop adding up and nobody can say which number is right.
-4. **One charge, several payees, indivisible units.** A charge is a whole number of the
-   smallest money unit and has to be divided among suppliers and the commission in fixed
-   proportions. The parts must add up exactly to the charge, so some parties are rounded
-   up and others down.
-5. **Charges change after the fact.** When late usage raises a minute's total, the split
-   of that minute changes too. Two things can go wrong:
-   - With some rounding rules a larger total gives one party a *smaller* share, so
-     ordinary late usage would take money back from a supplier who may already have been
-     paid.
-   - If each late increment is divided on its own, the rounding of each piece adds up
-     differently depending on how the usage was chunked, so a supplier's balance depends
-     on the order and timing of record arrival rather than on the usage.
-6. **Late charges must be treated like on-time charges.** Splitting a late charge must
-   follow the same rule, the same rates and the same path as a regular charge. A second
-   code path for corrections is a second set of bugs.
-7. **Money can be owed back.** When a price was wrong and a minute is re-rated downward,
-   a supplier who has already been paid owes money back. That debt has to be recovered,
-   not lost.
+Payment notifications are delivered more than once, out of order (a reversal before the
+payment it reverses) and late. Every money movement takes money from one account and gives
+it to others, and if a movement can be half-written or edited afterwards the books stop
+adding up. A charge is a whole number of micros divided among several parties in fixed
+proportions; the parts must add up exactly, so some are rounded up and others down, and
+late traffic raises a minute's total after it was first split. Funds held for reservations
+must stay consistent with the charges accruing against them as reservations start, change
+and end. A buyer can spend a top-up that is later reversed. And a supplier's balance must
+depend only on the traffic, the prices and the weights, never on when the records arrived.
+
+## Needs
+
+Scenarios in [`02-specs/P4-wallet-and-settlement.feature`](../02-specs/P4-wallet-and-settlement.feature)
+cite the need they serve with a tag `@need-P4-Nn`.
+
+| ID | Need | Success measure |
+|---|---|---|
+| P4-N1 | **A top-up changes the wallet exactly once**, however many times and in whatever order its notifications arrive. A redelivery with different contents moves no money and is reported. A malformed notification moves no money. | Each provider transaction changes the wallet once; no malformed or conflicting notification moves money. |
+| P4-N2 | **Top-ups convert at the shown rate** (POL-20, POL-11). A top-up in another currency is credited in USD at the payment partner's rate shown to the buyer before they confirmed, converted exactly. | Every converted top-up credited at the rate shown, exactly. |
+| P4-N3 | **Funds are held for the coverage window** (POL-15). Confirming a reservation holds funds for `coverage_window` of its charges, or the whole reservation if shorter; charges accrue against the hold and the hold rolls forward; unused holds are released when a reservation ends or changes. A credit-limit account is not held but counted against its limit. | At every moment, each prepaid account's funds held equal the coverage still required by its reservations. |
+| P4-N4 | **The buyer sees available headroom, itemised** (POL-18). The headline is ledger balance minus funds held, plus any credit limit; the answer itemises the ledger balance, funds held, charges accrued but not yet posted, and an estimate of unposted usage. The ledger balance shown equals the ledger. | Every balance answer is consistent with the ledger and the holds. |
+| P4-N5 | **Suspension is predictable and reversible** (POL-16, POL-14). An account is suspended when its hold cannot roll forward, or before its charges plus exposure would exceed its credit limit. While suspended it cannot book, its reservations keep their capacity and accrue for `suspension_grace`, and its usage-priced traffic is blocked. Funds within the grace resume it automatically; after it, its reservations are released and it is told. The buyer is warned before suspension. | No suspension without the stated cause; every account resumed or released by the end of its grace. |
+| P4-N6 | **Network operations always knows an account's standing.** Each change of standing is notified at least once; repeats change nothing; the current standing can be asked for at any time. | No standing change unnotified; enforcement within the X2 target, with lateness reported. |
+| P4-N7 | **Money is conserved and history is fixed.** Every money movement sums to zero, and so does the ledger; no movement can be altered or removed by anyone, operators included; corrections are new movements; every amount carries its currency. | Ledger sums to zero at every moment; zero altered or removed movements. |
+| P4-N8 | **Each charge is split exactly and fairly** (POL-12). Shares sum exactly to the charge; no party's share falls when a minute's total grows; the split depends only on the amount and the weights; the rule is Webster with Share's commission losing every tie; the rule and tie order are published; cumulative deviation from exact proportions is reported per party per payout period. | Every split exact, monotone, deterministic and by the published rule. |
+| P4-N9 | **Late charges settle like on-time ones.** A supplier's balance depends only on the traffic, the prices and the weights, not on the order or timing in which records arrived; a late-traffic amendment never reduces any party's amount or credits the buyer. | Identical balances for any arrival order and timing. |
+| P4-N10 | **Suppliers can check what they are owed.** A supplier can see, for any period, each charge's share and the rule and weights that produced it. | Every share on a statement can be recomputed from what the statement shows. |
+| P4-N11 | **Supplier earnings are final** (POL-23, POL-22). A correction caused by Share's error comes out of Share's commission; only a supplier-caused error creates a supplier debt, netted against later payouts with its reason visible. | No supplier balance reduced except by a supplier-caused error, with its reason. |
+| P4-N12 | **Payouts are weekly, exact and once** (POL-22, POL-11, POL-20). A supplier owed at least `payout_minimum` is paid weekly in USD (or converted at the shown rate); smaller balances carry forward; a payout is complete only when the transfer is confirmed; a repeated or retried payout run pays at most once; rounding residues stay with the payee. | Zero double payouts; cumulative payouts equal cumulative earnings less residues still carried. |
+| P4-N13 | **Reversals and bad debt are handled by rule** (POL-21, POL-23). A reversal after the top-up was spent is applied at once, suspends the account if headroom goes negative, is collected from the next top-up and is written off after 90 days at Share's cost. A reversal arriving before its payment is held pending for up to 72 h, matched by provider reference. | Every reversal ends matched, collected or written off by its rule; no write-off charged to a supplier. |
+| P4-N14 | **The books reconcile with the money** (POL-24). The ledger is reconciled with the payment partner daily, and differences are reported for resolution. | Every daily reconciliation completed, with every difference reported. |
+
+Latency of crediting a top-up and of enforcement, availability and retention are owned by
+[X2](X2-non-functional-targets.md). Authenticity of payment notifications, who may see which
+balances and statements, and audit of operator actions are owned by
+[X1](X1-security-and-tenancy.md).
 
 ## Constraints and assumptions
 
+"Confirmed" means stated in a primary source: the job listing or the business statement
+made in the mock interview. "Decided" means set in the [policy register](../02-specs/policy-register.md).
+
 | Constraint or assumption | Status |
 |---|---|
-| Payment notifications are delivered at least once, possibly repeated, reordered or late | *Confirmed* (company profile: "asynchronous M-Pesa webhooks that can repeat") |
-| Each provider notification carries a transaction ID that is unique for that provider | *Assumed* |
-| The marketplace runs a double-entry ledger | *Confirmed* (company profile, Problem 4) |
-| Suppliers expect central billing and automated payouts | *Confirmed* (company profile) |
-| Several currencies are in play | *Confirmed* as a requirement (company profile); how they interact is not known |
-| A late charge is split exactly like a regular charge | *Confirmed* (business statement: late billing is no different from regular billing when splitting payouts) |
-| Each charge is divided by fixed weights per route and supplier, plus a commission | *Assumed*; how the weights are set is pricing policy |
-| Late usage can only increase a minute's charge; decreases come from price corrections | *Inferred* from P3 (duplicates are removed by record ID) |
-| Prepaid wallet; buyers do not pay upfront for a reservation | *Confirmed* (company profile: "no upfront payment") |
-| Money is never represented as a floating-point number | *Assumed* |
-
-## Success measures
-
-- A provider notification, however many times or in whatever order it is delivered,
-  changes the wallet exactly once.
-- At every moment, every recorded money movement sums to zero, and so does the whole
-  ledger.
-- No recorded movement can be changed or removed; corrections are new movements.
-- Each charge's shares add up exactly to the charge, in the smallest money unit.
-- No supplier's share of a minute goes down because that minute's usage went up.
-- A supplier's balance depends only on the usage, the rates and the weights, not on the
-  order or timing in which usage records arrived.
-- A supplier who owes money back is not paid until later earnings cover the debt.
-- A balance query returns the same number the ledger holds.
+| Payment notifications are delivered at least once, possibly repeated, reordered or late. | *Assumed* (the company profile cites an earlier listing: "asynchronous M-Pesa webhooks that can repeat") |
+| Each provider notification carries a transaction reference that is unique for that provider. | *Assumed* |
+| The marketplace keeps a double-entry ledger. | *Assumed* (secondary source: the company profile's reading of an earlier listing) |
+| Suppliers expect central billing and automated payouts. | *Confirmed* (company profile, from Share's website) |
+| Prices, wallets and the ledger are in USD; every amount is tagged with its currency so more can be added. | *Decided* (POL-20) |
+| Amounts are integers in micros; charges are rounded once, down; payout residues stay with the payee. | *Decided* (POL-11) |
+| Funds are held for `coverage_window` (24 h) at admission; vetted accounts may have a `credit_limit` instead. | *Decided* (POL-15) |
+| Suspension keeps reservations for `suspension_grace` (equal to `coverage_window`), then releases them; resumption is automatic. | *Decided* (POL-16) |
+| The split is Webster (Sainte-Laguë), Share's commission losing ties; the rule is published. | *Decided* (POL-12) |
+| Each charge is divided by fixed weights per route and party; how the weights are set is pricing policy. | *Assumed* |
+| Late traffic can only increase a minute's charge; decreases come only from price corrections. | *Inferred* from P3 (duplicates are removed by record ID) |
+| Share bears buyer credit risk; supplier earnings are final once a charge is posted. | *Decided* (POL-23) |
+| Buyer funds are held through a licensed payment partner, reconciled daily. | *Decided* (POL-24), pending legal confirmation per market |
+| Money is never represented as a floating-point number. | *Assumed* |
 
 ## Out of scope
 
-- Ingesting, deduplicating and rating usage records, choosing the rate by usage time,
-  and the exposure bound that decides when a buyer is suspended. These are P3; this
-  problem starts from a charge total for a reservation and minute.
+- Rating: turning reservations, records and prices into charges and amendments
+  ([P3](P3-rating-and-metering.md)). This problem starts from a charge.
 - How split weights are chosen (by link price, distance or contract). Pricing policy.
-- Moving money to suppliers' bank or mobile-money accounts (treasury), and supplier KYC
-  and onboarding.
-- Subscription lifecycle and renewals.
-- Spending limits and quotes for AI-agent buyers.
+- Moving money to suppliers' bank or mobile-money accounts (treasury), and supplier
+  onboarding and KYB. This problem issues payouts and records their confirmation.
+- Buyer KYC tiers: they follow the payment partner's (POL-24).
+- **Withdrawal of unused balance** (POL-21: later). Requirement recorded for when it is
+  brought in: on request, to the original payment method, net of provider fees.
+- **SLA credits** (POL-21: later, with Problem 6). Requirement recorded: paid into the wallet
+  as service credit, not withdrawable.
+- Subscription lifecycle and renewals as a separate product: under POL-08 a renewal is an
+  extension ([P2](P2-route-reservation.md)).
+- Acting on the network to block traffic: network operations acts on the standing this
+  problem announces.
 
 ## Open questions
 
-1. Which currencies, and does a wallet hold one currency or several? Are suppliers paid in
-   the buyer's currency, their own, or a settlement currency, and who carries the FX risk
-   between a charge and a payout?
-2. What is the smallest unit for each currency, and how is the internal unit converted at
-   the provider boundary (M-Pesa amounts are whole shillings)?
-3. How are payment notifications authenticated for each provider?
-4. If a provider redelivers a notification with different contents under the same
-   transaction ID, what should happen?
-5. How often do payouts run, is there a minimum payout, and how long may a supplier's
-   debt from a clawback stay open?
-6. How is the ledger reconciled against provider settlement reports and bank statements,
-   and who resolves mismatches?
-7. When a suspended buyer tops up, is service resumed automatically? (Business policy.)
+Answered by the policy register and removed: currencies and FX risk (POL-20); smallest unit
+and conversion (POL-11); payout frequency, minimum and clawback (POL-22); resumption after
+top-up (POL-16); bad debt (POL-23); regulation (POL-24, pending legal confirmation).
+
+1. **Authentication per provider.** How each payment provider proves a notification is
+   authentic (signature scheme, mutual TLS, callback verification) is for the interface
+   contract; X1 requires only that unproven notifications move no money.
+2. **Zero-amount notifications.** Do any providers send zero-amount notifications (for
+   example verification pings)? The spec rejects any amount that is not positive.
+3. **Warning threshold.** POL-16 sets suspension but no warning before it. At what headroom,
+   or how long before the hold can no longer roll forward, is the buyer warned, and is the
+   threshold set by the business or by the buyer?
+4. **Spending limit per agent key.** POL-25 enforces "a spending limit per key per period
+   ... at admission as part of headroom". Is spending measured as funds held by the key's
+   bookings, as charges accrued in the period, or both, and what is the period?
+5. **Exposure for prepaid accounts.** POL-14 bounds exposure under a credit limit, and POL-17
+   says out-of-reservation traffic counts toward exposure. Neither POL-15 nor POL-16 says how
+   exposure from usage-priced traffic enters a prepaid account's headroom or triggers its
+   suspension.
+6. **An orphan reversal.** POL-21 holds a reversal that arrives before its payment for up to
+   72 h, "then applied". If the payment never arrives, applying the reversal debits money
+   that was never credited. Is that intended?
+7. **Share-error corrections larger than the commission.** POL-23 takes such corrections out
+   of Share's commission. If the correction exceeds the commission on that charge, does
+   Share's commission account go negative, or is the remainder borne elsewhere?
+8. **Reconciliation with providers other than the partner.** POL-24 reconciles daily with the
+   payment partner. Are provider settlement reports (M-Pesa, Stripe) and bank statements
+   also reconciled, and who resolves mismatches?

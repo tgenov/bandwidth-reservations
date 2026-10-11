@@ -81,13 +81,13 @@ to Share's business, not just engineering details.
 
 ## Likely technical problems for the rebuild (ranked)
 
-| # | Problem | Evidence | Why it's hard | Status in this repo |
+| # | Problem | Evidence | Why it's hard | Requirements in this repo |
 |---|---|---|---|---|
-| 1 | Capacity admission without overselling | Spec: path, performance, duration; "trading depends on low latency" | Partial capacity that changes over time; hot routes; tight latency | Built: [P1](P1-link-admission.md) |
-| 2 | Reserving a whole path across several providers' links, all or nothing | Spec: "the path, the performance" | Routing under latency and bandwidth limits; atomic reservation across links owned by different providers | Built: [P2](P2-route-reservation.md) |
-| 3 | Usage metering and pay-per-use billing | No commits, wallet; 45 TB/day today, ×50 | sFlow/gNMI telemetry arrives late, duplicated or out of order, but bills must be exact and reproducible | Built: [P3](P3-usage-metering.md) |
-| 4 | Payments, revenue splitting, reconciliation | Earlier listing | Asynchronous M-Pesa webhooks that can repeat; double-entry ledger; several currencies; idempotency | Partly built: [P4](P4-wallet-and-settlement.md) (no payouts or treasury) |
+| 1 | Capacity admission without overselling | Spec: path, performance, duration; "trading depends on low latency" | Partial capacity that changes over time; hot routes; tight latency | [P1](P1-link-admission.md) |
+| 2 | Reserving a whole path across several providers' links, all or nothing | Spec: "the path, the performance" | Routing under latency and bandwidth limits; atomic reservation across links owned by different providers | [P2](P2-route-reservation.md) |
+| 3 | Usage metering and pay-per-use billing | No commits, wallet; 45 TB/day today, ×50 | sFlow/gNMI telemetry arrives late, duplicated or out of order, but bills must be exact and reproducible | [P3](P3-rating-and-metering.md), re-scoped by POL-01: reservations are priced per Mbps-minute; metering bills best-effort traffic and burst and supplies SLA evidence |
+| 4 | Payments, revenue splitting, reconciliation | Earlier listing | Asynchronous M-Pesa webhooks that can repeat; double-entry ledger; several currencies; idempotency | [P4](P4-wallet-and-settlement.md), with funds holds (POL-15) and payouts (POL-22); treasury out of scope |
 | 5 | Provisioning as a long-running workflow | Nautobot, OcNOS, partner APIs | Steps fail partway; compensation; keeping what was sold consistent with what's configured | Later |
-| 6 | SLA enforcement | SLA-backed service; failure to deliver killed the 2000-era exchanges | Measuring delivered performance per service; automatic credits | Later (builds on #3) |
+| 6 | SLA enforcement | SLA-backed service; failure to deliver killed the 2000-era exchanges | Measuring delivered performance per service; automatic credits | Later (builds on #3); P3 keeps the evidence |
 | 7 | Supplier integration layer | Partner business/operations system sync | Different APIs and reliability per partner; outbox/inbox; retries | Fold into #4 |
-| 8 | AI agents as API clients | Spec: "AI agents" as buyers | Many fast, repetitive calls: idempotency keys, quotes that expire, spending limits | Fold into #2 and #4 |
+| 8 | AI agents as API clients | Spec: "AI agents" as buyers | Many fast, repetitive calls: idempotency keys, quotes that expire, spending limits | Limits in [P2](P2-route-reservation.md) and [P4](P4-wallet-and-settlement.md) (POL-25); key scoping in [X1](X1-security-and-tenancy.md); quotes out of scope |
