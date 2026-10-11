@@ -28,7 +28,7 @@
   all 101 previous scenarios.
 - New [glossary](../02-specs/glossary.md); README conventions rewritten.
 
-Scenario counts: P1 36, P2 53, P3 41, P4 54, X1 15, X2 13 (212 in total; previously 101). These include the propagation of the policy amendments (last section).
+Scenario counts: P1 36, P2 54, P3 41, P4 56, X1 15, X2 14 (216 in total; previously 101). These include the propagation of the policy amendments (last section).
 
 ## Findings
 
@@ -43,7 +43,7 @@ Scenario counts: P1 36, P2 53, P3 41, P4 54, X1 15, X2 13 (212 in total; previou
 | R-07 | POL-05 applied: one schedule owner per link; every booking is a route of ≥1 leg; capacity in flight counts against the link; P1's "never holds capacity" restated as "holds nothing once it has its outcome", with capacity back by the deadline. Single-link versus in-flight route outcome per amended POL-05: wait within the deadline, pending after `ack_budget`, immediate rejection with `retry_after` only with `wait = false`. | P1-N3, P1-N7; P1-S07 to S12, S34; P2-S14 |
 | R-08 | Buyer-visible outcomes defined (pending, confirmed, rejected, invalid, failed) in the glossary. Confirmed is never reported before every leg is secured (P2-S03, P2-S29); it is never withdrawn except under POL-07/POL-16 (P2-S05); outcomes never change (P2-S10). "Commit point" removed. | Glossary; P2 |
 | R-09 | Split into "at least one wins" (P2-S15) and "a waiting request is rejected for no fit only if it did not fit on committed capacity" (P2-S17). Per amended POL-05, contended requests wait and are confirmed if the capacity in flight is released (P2-S20), or rejected with a counter-offer if it is confirmed (P2-S52); `wait = false` gives immediate rejection with `retry_after` (P2-S18). | P2-N4 |
-| R-10 | POL-06 targets turned into X2 needs, each with a measurement method, and scenarios for availability (per region), load, latency, charge timeliness (X2-S13), RPO and RTO per failure scope (X2-S09, S10, S12) and retention. Old P1-S09's test-rig numbers replaced by the design load. | X2 statement and feature |
+| R-10 | POL-06 targets turned into X2 needs, each with a measurement method, and scenarios for availability (per region), load, latency, charge timeliness (X2-S13), RPO 0 for every failure scope with two-region durability before acknowledgement (X2-S09, S12, S14), RTO per failure scope (X2-S10) and retention. Old P1-S09's test-rig numbers replaced by the design load. | X2 statement and feature |
 | R-11 | POL-07 applied: new sales stop at reduced capacity; unplanned outage keeps reservations, flagged and announced; planned maintenance booked ahead on free capacity only; permanent reduction offers an equivalent path on the POL-07 terms (accepted or declined), otherwise revokes newest first with notice; accrual and SLA marking in P3. "Capacity is fixed" removed from P1 constraints. | P1-N8; P1-S24 to S32, S35, S36; P3-S08, S10 |
 | R-12 | POL-08 applied: cancel, shorten, extend, increase, decrease, no change to part of a route, partner fees shown at booking; accrual follows changes, the added part of an extension at the current price; holds released; authorisation of changes in X1. | P2-S43 to S50; P3-S04, S05, S11, S40; P4-S11; X1-S03 |
 | R-13 | "Horizon" replaced by **selling horizon** (`selling_horizon`, POL-09) in glossary and specs; open-ended reservations are carried forward as the horizon rolls. The one-day Background removed. | P1-N6; P1-S19 to S23 |
@@ -124,23 +124,16 @@ amended policy register (see its Amendments table). Each was propagated as follo
 Also from the amended POL-06: charge timeliness, new X2-S13 (tagged to P3-N2 as well); P3
 and X2 open questions on it removed.
 
-## New ambiguities found while propagating (not resolved here)
+## Ambiguities found while propagating, and their resolution
 
-1. **Excess carried despite policing (POL-17).** "Only traffic carried is billed" and "the
-   excess is dropped" do not say what happens when records show excess on a product without
-   burst was in fact carried, because policing failed. Is it billed, and at what price? The
-   spec keeps the records and reports the failure (P3-S41), without a billing rule. (P3 open
-   question 4.)
-2. **An agent key's headroom (POL-18 versus POL-25).** The key's limit is enforced "as part of
-   headroom", but POL-18 defines headroom per account. Is a key's remaining spending limit
-   shown as that key's headroom, and must a key's booking also stay within the account's
-   `low_balance_warning` logic? The spec only refuses bookings that exceed either. (P4 open
-   question 4.)
-3. **`account_inflight_limit` for a new account.** The default is "10 × the account's largest
-   confirmed reservation". An account with no confirmed reservation has a limit of zero and
-   could never book. Is a floor intended?
-4. **Regional RPO versus "never lost".** On regional loss, POL-06 allows up to 1 min of
-   acknowledged facts to be lost. That includes posted money movements, accepted usage
-   records and payment notifications already answered to the provider, so the provider will
-   not redeliver them. Is that loss intended for money as well as reservations, and how is it
-   reconciled (POL-24)?
+The four questions raised while propagating were settled in the policy register (the last
+three rows of its Amendments table) and propagated as follows.
+
+| # | Question | Amended policy | Propagated to |
+|---|---|---|---|
+| 1 | Excess carried despite policing on a product without burst | POL-17: not billed to the buyer; Share pays the supplier at `usage_price`; incident raised | P3-S41 rewritten; new P4-S56; P3-N6, P4-N11, P3 constraints; P3 open question 4 removed |
+| 2 | An agent key's headroom | POL-25: key headroom = min(account headroom, `key_spend_limit` − key spending), shown to the key | New P4-S55; P2-S39 restated on key headroom; P2-N8, P4-N4; glossary "Key headroom"; P4 open question 4 removed |
+| 3 | `account_inflight_limit` for a new account | POL-25: never below `account_inflight_floor` (1,000 Mbps) | New P2-S54; P2-N8; glossary "Capacity hold"; P2 open question 3 removed |
+| 4 | Regional loss of acknowledged money | POL-06: RPO 0 on region loss too; acknowledged only once durable in two regions | X2-S12 rewritten (RPO 0); new X2-S14; X2-N4; X2 open question 3 removed |
+
+No new ambiguities were found in this pass.

@@ -96,7 +96,7 @@ Feature: Non-functional targets
         | a reservation's accrual for the minute  | 2 min                                   |
         | usage-priced traffic                    | `max_lateness` (POL-14) + 2 min         |
 
-  Rule: No acknowledged fact is lost beyond its recovery point
+  Rule: No acknowledged fact is ever lost
 
     @X2-S09 @need-X2-N4 @POL-06
     Scenario Outline: An acknowledged fact survives the loss of a node or a zone
@@ -112,10 +112,22 @@ Feature: Non-functional targets
         | an accepted usage record      |
 
     @X2-S12 @need-X2-N4 @POL-06
-    Scenario: On the loss of a region, at most the last minute of acknowledged facts can be lost
-      Given confirmed reservations, money movements, payment events and accepted usage records acknowledged in a region
-      When the whole region fails and service is recovered elsewhere
-      Then every fact acknowledged more than 1 min before the failure is present and unchanged
+    Scenario: No acknowledged fact is lost on the loss of a region
+      Given confirmed reservations, money movements, payment events and accepted usage records have been acknowledged
+      When a whole region fails and service is recovered elsewhere
+      Then every acknowledged fact is present and unchanged
+
+    @X2-S14 @need-X2-N4 @POL-06
+    Scenario Outline: A fact is acknowledged only once it is durable in two regions
+      When <fact> is recorded
+      Then it is acknowledged to <party> only after it is durable in two regions
+
+      Examples:
+        | fact                       | party                       |
+        | a confirmed reservation    | the buyer                   |
+        | a payment notification     | the payment provider        |
+        | a posted money movement    | the service that posted it  |
+        | an accepted usage record   | its sender                  |
 
   Rule: Each capability recovers within its target
 

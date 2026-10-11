@@ -246,11 +246,12 @@ Feature: Rating reservations and metered traffic
       And the records for that minute are kept
 
     @P3-S41 @need-P3-N6 @need-P3-N7 @POL-17
-    Scenario: Records showing traffic carried above the reserved rate on a product without burst are kept and reported
+    Scenario: Excess carried despite policing on a product without burst is not billed to the buyer, and raises an incident
       Given the product does not permit burst
       When records show "a1" carrying more than 100 Mbps for 60 s in one minute
       Then the records are kept
-      And the excess is reported to network operations as traffic that should have been policed
+      And no charge for the excess is made to "a1"
+      And the policing failure is raised as an incident to network operations
 
     @P3-S25 @need-P3-N6 @POL-17
     Scenario: Attributable traffic outside an active reservation is billed at usage_price and counts toward usage exposure

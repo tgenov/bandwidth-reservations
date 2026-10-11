@@ -24,6 +24,7 @@ as *replaces …*.
 | **Buyer** | A person, an enterprise or an AI agent acting for a buyer account. *Replaces "client" and "customer" where the person or agent is meant.* |
 | **Agent key** | A credential an account issues to an AI agent or other automated client. It acts only for that account, and carries its own `key_spend_limit` per `key_spend_period`, `key_inflight_limit` and `key_rate_limit` (POL-25). |
 | **Key spending** | Funds held plus charges accrued by the bookings an agent key made in the current `key_spend_period` (POL-25). |
+| **Key headroom** | The headroom shown to and enforced for an agent key: the lower of the account's headroom and `key_spend_limit` less key spending (POL-25). |
 | **Agent operator** | The person at a buyer account who issues agent keys and sets their limits. |
 | **Principal** | Whoever performs an operation, once authenticated: an account user, an agent key, a supplier user, an operator or an internal service. |
 | **Operator** | A member of Share's staff acting under a role (support, network operations, finance). |
@@ -49,7 +50,7 @@ as *replaces …*.
 | **Peak** | The highest committed rate, or committed rate plus capacity held, at any minute of a window. |
 | **Booking request** | A buyer's request to create or change a reservation. It carries an idempotency key and a deadline, and ends with exactly one outcome. |
 | **Outcome** | What a booking request ends as: **confirmed** (every leg secured; the reservation exists), **rejected** (it does not fit, or funds or limits do not allow it; the rejection is a counter-offer), **invalid** (the request itself is malformed; it is neither confirmed nor rejected), or **failed** (it could not be completed for another reason, such as its deadline passing; it holds nothing). Until it has an outcome, a request is **pending**. *Replaces "admitted", "allowed", "refused", "fails as an invalid window".* |
-| **Capacity hold** | Capacity set aside on a link for a pending booking request. It counts against the link's capacity, and lasts no longer than the request's deadline. **Capacity in flight** is the Mbps in requests not yet decided, limited per key and per account by `key_inflight_limit` and `account_inflight_limit` (POL-25). *Replaces "hold" where it meant capacity.* |
+| **Capacity hold** | Capacity set aside on a link for a pending booking request. It counts against the link's capacity, and lasts no longer than the request's deadline. **Capacity in flight** is the Mbps in requests not yet decided, limited per key and per account by `key_inflight_limit` and `account_inflight_limit`, the latter never below `account_inflight_floor` (POL-25). *Replaces "hold" where it meant capacity.* |
 | **Funds hold** | Money in a wallet set aside, not charged, to cover a reservation's charges for the coverage window (POL-15). It reduces headroom, not the ledger balance. |
 | **Coverage window** | The period of future charges that a funds hold covers: `coverage_window` (POL-15), or the whole reservation if shorter. The hold rolls forward as charges accrue. |
 | **Deadline** | The time by which a booking request must have its outcome. Chosen per request, within `route_deadline_max` (POL-26). A request still pending after its deadline plus `commit_margin` raises an operational alert. |

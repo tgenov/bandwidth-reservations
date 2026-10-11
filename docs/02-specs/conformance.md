@@ -99,6 +99,7 @@ such tests belong in the test plan, not in the scenario.
 | P2-S38 | A booking the account cannot fund is rejected, stating the top-up needed | TBD | — | not assessed |
 | P2-S39 | A booking beyond an agent key's spending limit is rejected | TBD | — | not assessed |
 | P2-S40 | A booking beyond a limit on capacity in flight is rejected | TBD | — | not assessed |
+| P2-S54 | A new account can have capacity in flight up to account_inflight_floor | TBD | — | not assessed |
 | P2-S41 | Requests from an agent key above its rate limit are refused | TBD | — | not assessed |
 | P2-S42 | A suspended account cannot book | TBD | — | not assessed |
 | P2-S43 | A cancellation takes effect at the next minute boundary on every leg | TBD | — | not assessed |
@@ -136,7 +137,7 @@ such tests belong in the test plan, not in the scenario.
 | P3-S22 | Traffic within the reserved rate is covered by the reservation's accrual | TBD | — | not assessed |
 | P3-S23 | Permitted burst is billed at usage_price for the excess only | TBD | — | not assessed |
 | P3-S24 | Traffic above the reserved rate on a product without burst is dropped and not billed | TBD | — | not assessed |
-| P3-S41 | Records showing traffic carried above the reserved rate on a product without burst are kept and reported | TBD | — | not assessed |
+| P3-S41 | Excess carried despite policing on a product without burst is not billed to the buyer, and raises an incident | TBD | — | not assessed |
 | P3-S25 | Attributable traffic outside an active reservation is billed at usage_price and counts toward usage exposure | TBD | — | not assessed |
 | P3-S26 | Traffic that cannot be attributed is quarantined, not billed, and reported | TBD | — | not assessed |
 | P3-S27 | Quarantined traffic is charged, and its supplier paid, only if attributed within dispute_window | TBD | — | not assessed |
@@ -169,6 +170,7 @@ such tests belong in the test plan, not in the scenario.
 | P4-S15 | The headline figure is available headroom, net of funds held and usage exposure | TBD | — | not assessed |
 | P4-S16 | The answer itemises balance, holds, accrued charges and estimated unposted usage | TBD | — | not assessed |
 | P4-S17 | The ledger balance shown equals the ledger | TBD | `billing/test/kafka.e2e.test.ts` › "request-reply: @MessagePattern answers a wallet balance query over Kafka" *(prior evidence, to be re-validated)* | not assessed |
+| P4-S55 | An agent key sees its own headroom, the lower of the account's headroom and its remaining spending limit | TBD | — | not assessed |
 | P4-S18 | An account is suspended when its headroom would fall below zero | TBD | — | not assessed |
 | P4-S19 | Suspension comes before any account can owe more than its headroom allows | TBD | — | not assessed |
 | P4-S20 | A suspended account's reservations keep their capacity during the grace | TBD | — | not assessed |
@@ -194,6 +196,7 @@ such tests belong in the test plan, not in the scenario.
 | P4-S40 | A supplier's statement shows each share and the rule and weights that produced it | TBD | — | not assessed |
 | P4-S41 | A correction caused by Share's error is borne by Share in full | TBD | — | not assessed |
 | P4-S42 | A supplier-caused error creates a supplier debt, with its reason visible | TBD | — | not assessed |
+| P4-S56 | Excess carried despite policing is paid to the supplier by Share, not by the buyer | TBD | — | not assessed |
 | P4-S43 | A supplier owed at least the minimum is paid at the weekly payout | TBD | — | not assessed |
 | P4-S44 | A balance below the minimum carries forward | TBD | — | not assessed |
 | P4-S45 | A payout is complete only when the transfer is confirmed | TBD | — | not assessed |
@@ -231,7 +234,8 @@ such tests belong in the test plan, not in the scenario.
 | X2-S08 | Suspension is enforced within 60 s of the decision | TBD | — | not assessed |
 | X2-S13 | Charges are posted within their timeliness target | TBD | — | not assessed |
 | X2-S09 | An acknowledged fact survives the loss of a node or a zone | TBD | — | not assessed |
-| X2-S12 | On the loss of a region, at most the last minute of acknowledged facts can be lost | TBD | — | not assessed |
+| X2-S12 | No acknowledged fact is lost on the loss of a region | TBD | — | not assessed |
+| X2-S14 | A fact is acknowledged only once it is durable in two regions | TBD | — | not assessed |
 | X2-S10 | Recovery time per capability and failure scope | TBD | — | not assessed |
 | X2-S11 | Records can be retrieved up to the end of the retention period | TBD | — | not assessed |
 

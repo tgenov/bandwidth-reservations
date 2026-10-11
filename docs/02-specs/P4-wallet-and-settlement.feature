@@ -158,6 +158,18 @@ Feature: Wallet, funds holds, ledger and supplier settlement
       When "b1" asks for its balance
       Then the ledger balance shown equals the sum of "b1"'s ledger entries at that moment
 
+    @P4-S55 @need-P4-N4 @POL-25 @POL-18
+    Scenario Outline: An agent key sees its own headroom, the lower of the account's headroom and its remaining spending limit
+      Given account "b1" has an available headroom of <account> USD
+      And an agent key of "b1" with a `key_spend_limit` of <limit> USD has spent <spent> USD in the current `key_spend_period` (POL-25)
+      When the key asks for its balance
+      Then the headline figure is <key> USD of headroom for that key
+
+      Examples:
+        | account | limit | spent | key |
+        | 10.00   | 5.00  | 1.00  | 4.00 |
+        | 3.00    | 5.00  | 1.00  | 3.00 |
+
   Rule: Suspension follows a stated cause, keeps reservations for a grace period, and reverses on funds
 
     Background:
@@ -343,6 +355,13 @@ Feature: Wallet, funds holds, ledger and supplier settlement
       When a correction caused by supplier A's error reduces that charge
       Then supplier A owes the reduction of its share as a supplier debt
       And its statement shows the debt and its reason
+
+    @P4-S56 @need-P4-N11 @POL-17
+    Scenario: Excess carried despite policing is paid to the supplier by Share, not by the buyer
+      Given P3 found 1 GB of excess carried on a product without burst for buyer "b1", on supplier A's link
+      When it is settled
+      Then supplier A is credited its share of 1 GB at `usage_price` (POL-17) from Share's own account
+      And "b1"'s wallet is not debited for it
 
   Rule: Payouts are weekly, exact and made once
 

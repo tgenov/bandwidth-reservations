@@ -316,7 +316,7 @@ Feature: Booking, changing and ending route reservations, all or nothing
 
     @P2-S39 @need-P2-N8 @POL-25
     Scenario: A booking beyond an agent key's spending limit is rejected
-      Given an agent key whose funds held plus charges accrued by its bookings in the current `key_spend_period` would exceed its `key_spend_limit` (POL-25) with a new booking
+      Given an agent key whose key headroom (POL-25) is less than the funds hold a new booking needs, because of its `key_spend_limit`
       When the key makes the booking
       Then the booking is rejected stating that the key's spending limit would be exceeded
 
@@ -330,6 +330,12 @@ Feature: Booking, changing and ending route reservations, all or nothing
         | holder    | limit                    |
         | agent key | `key_inflight_limit`     |
         | account   | `account_inflight_limit` |
+
+    @P2-S54 @need-P2-N8 @POL-25
+    Scenario: A new account can have capacity in flight up to account_inflight_floor
+      Given an account with no confirmed reservation
+      When it books 800 Mbps, within `account_inflight_floor` (POL-25 default 1,000 Mbps)
+      Then the booking is not rejected for the account's limit on capacity in flight
 
     @P2-S41 @need-P2-N8 @POL-25
     Scenario: Requests from an agent key above its rate limit are refused
