@@ -170,6 +170,8 @@ Every Examples row added or changed was recomputed. Key values:
 
 ## Round-4 decisions
 
+**Status:** written into the policy register ("Amended (round 4)" paragraphs and POL-31), with the user's approval.
+
 As the coordinator directed mid-task, each point the baseline needed a business decision
 on was decided here rather than deferred. **Writing them to
 `02-specs/policy-register.md` was blocked by the session's permission classifier**, both
@@ -234,7 +236,6 @@ needs someone with permission to edit it.
 
 | Item | Why |
 |---|---|
-| Round-4 decisions not in the policy register | The edit was blocked by the permission classifier. The specs apply the decisions; the register must be updated (paste-ready table above) before the baseline is self-consistent. `@POL-31` on P1-S19 fails the tag check until then |
 | GA-22, accounts per actor | POL-25 bounds requests and capacity in flight per account; the number of accounts one actor can open is left to KYC tiers, recorded as P2 open question 3 |
 | GA-41, mechanical check of Background text | The check now covers every POL reference in scenario steps. Background text is covered by convention (scenarios under a policy-dependent Background carry its tag), not by the script |
 | GB-41 | The requirement (identity unique for the retention period) is stated; how it is met is left to the RFC (P3 open question 1), as gate B proposed |

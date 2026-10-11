@@ -62,6 +62,7 @@ finding).
 | POL-28 | Partners without holds | Booked last; at most one per route; Share bears the cancellation cost |
 | POL-29 | Idempotency | Per account; a different principal is refused; 24 h for bookings, 7 years for money |
 | POL-30 | Termination by Share | Only for fraud, legal order or network abuse, recorded |
+| POL-31 | Reserved rate precision | Whole Mbps, at least 1 Mbps |
 
 ---
 
@@ -211,6 +212,10 @@ markets; legal must confirm it per market (POL-24).
 - X2's 200 ms target for a single-link booking is to an answer, final or `pending`
   (POL-04); a final answer is expected within it when no capacity is in flight.
 
+**Amended (round 4).**
+- An available minute: each capability is probed at least every 10 s from at least two locations outside the region (≥ 12 probes a minute). A probe succeeds if it gets a correct answer within the operation's latency value, as a per-probe limit. A minute is available if ≥ 90% of its probes succeed. Planned maintenance is not excluded; payouts are probed through their interfaces *Trade-off:* Honest to buyers and easy to audit; forces maintenance without downtime. (GB-23)
+- The 60 s from suspension to enforcement is split: `standing_notice_time` = 10 s for the marketplace to deliver the standing change, the remaining 50 s for network operations *Trade-off:* Each side owns a target it alone controls; the 60 s in the exposure bound is unchanged. (GB-39)
+
 ## POL-07. Loss of supply: never revoke silently
 
 *Answers D-07 (R-11).*
@@ -254,6 +259,13 @@ one.
 | `offer_window` | 7 days |
 | `maintenance_notice` | 14 calendar days (replaces 10 business days) |
 
+**Amended (round 4).**
+- On an unplanned outage every reservation on the link is affected *Trade-off:* The network cannot choose whose packets drop; "newest first" stays for permanent reductions, where Share does choose. (GA-33)
+- The supplier, or an operator in network operations, may record an unplanned outage and its restoration; only the supplier books maintenance or announces a permanent reduction *Trade-off:* Sales stop as soon as Share's monitoring sees a fault; commercial changes stay the supplier's. (GA-15)
+- "Just enough" is in Mbps: the newest part is reduced in rate only as far as needed (revoked if it reaches 0), and its holder may then cancel without any fee *Trade-off:* Keeps the most capacity sold and the most of each guarantee, and the buyer can walk away. (GA-08)
+- `affected_notice_time` = 60 s, to tell holders and network operations of affected reservations, and again on restoration *Trade-off:* Matches the enforcement target; gives "at once" a number. (GA-33)
+- An accepted equivalent path takes over when the notice ends; the buyer may ask to move earlier, from a minute boundary it chooses *Trade-off:* Continuity by default, with no forced early migration. (GA-08)
+
 ## POL-08. Changing a reservation
 
 *Answers D-08 (R-12).*
@@ -289,6 +301,11 @@ modifications as safe as new bookings.
   when revoked (POL-07), Share pays it.
 - A buyer may withdraw a pending request: it fails as "withdrawn" and releases what it
   holds; a final-only partner leg already booked is cancelled at Share's cost (POL-28).
+
+**Amended (round 4).**
+- A cancellation takes effect at the next boundary after it is made; an earlier change still pending fails "reservation ended". Arrival order applies only among changes that do not end the reservation *Trade-off:* The buyer's right to stop paying at the next minute is absolute; the pending change loses nothing it had. (GA-12)
+- On a POL-30 termination the buyer pays any shown cancellation fee, as on a POL-16 release *Trade-off:* Both follow from the buyer's own conduct. (GB-10)
+- A cancellation fee goes wholly to the partner that imposed it: not split, no commission *Trade-off:* The fee compensates the partner's commitment; Share should not profit from a cancellation. (GB-10)
 
 ## POL-09. Selling horizon
 
@@ -364,6 +381,9 @@ quota-capped methods add complexity without benefit.
 commission loses to every supplier. The split is per route: a usage charge line is
 always for one route (POL-11).
 
+**Amended (round 4).**
+- After a correction borne by Share or by a supplier at fault, each later amendment to that line is split on its own; every other amendment is split as the split of the new total less the shares posted *Trade-off:* Keeps every share of a late-traffic increase non-negative, for a small reported deviation. (GB-04)
+
 ## POL-13. Flows that span several minutes
 
 *Answers D-13 (R-19).*
@@ -404,6 +424,10 @@ a per-account, per-product rate policed at the edge for traffic with no reserved
 |---|---|
 | `usage_rate_cap` | Set at onboarding per account and product; 100 Mbps by default |
 
+**Amended (round 4).**
+- `usage_rate_cap` bounds all of an account's usage-priced traffic on a product (burst plus traffic with no reserved rate); one lateness bound per account and product *Trade-off:* One number bounds Share's risk per account; more burst means a higher cap agreed at onboarding. (GB-05)
+- The lateness bound uses the product's highest `usage_price` on any route *Trade-off:* Conservative, by at most the price spread between routes. (GB-05)
+
 ## POL-15. Funds at admission
 
 *Answers D-15 (R-21).*
@@ -434,6 +458,9 @@ no-upfront promise while bounding Share's risk to one window.
 | Parameter | Default |
 |---|---|
 | `invoice_terms` | 30 days |
+
+**Amended (round 4).**
+- An unpaid invoice is written off 90 days after its due date, at Share's cost. The account stays suspended, and later reservations need prepayment until the debt is paid *Trade-off:* Gives the 90 days a defined start; Share bears its credit risk (POL-23). (GB-06)
 
 ## POL-16. Suspension and resumption
 
@@ -466,6 +493,10 @@ resumption suits self-serve and agent buyers.
   for the full `suspension_grace`; Share bears up to one coverage window (POL-23).
 - `low_balance_warning` = max(a quarter of one coverage window's charges, 1 USD), so an
   account without reservations is still warned.
+
+**Amended (round 4).**
+- A suspended account resumes when, with every full coverage hold restored, its headroom is at least `low_balance_warning`. The quoted resume amount achieves that *Trade-off:* Resuming costs at least 1 USD more, but the account is not suspended again at the next minute, as it would be at exactly zero. (GB-21)
+- A warning is sent once per crossing below `low_balance_warning` and quotes the top-up that brings headroom to `low_balance_warning` plus one coverage window's charges *Trade-off:* About one more window of runway, without repeated alerts; the round-3 resume amount would be zero for an active account. (GB-37)
 
 ## POL-17. Traffic that does not match a reservation
 
@@ -517,6 +548,9 @@ accrued but not yet posted, and an estimate of unposted usage.
 **Amended (round 3).** Charges accrued but not yet posted stay within funds held until posted; they
 are itemised for information, not deducted twice. Usage exposure is itemised in its two
 parts (unposted usage; the lateness bound).
+
+**Amended (round 4).**
+- Unposted usage = usage-priced traffic in records received but not yet posted, at each minute's price *Trade-off:* Exact and reproducible; the unseen part is bounded by POL-14. (GB-05)
 
 ## POL-19. History
 
@@ -578,6 +612,9 @@ currency so more can be added.
 and are a reason for suppliers to list. Under POL-23, supplier debt arises only from
 supplier-caused errors.
 
+**Amended (round 4).**
+- An amount in an instructed payout is in no other payout until it is confirmed or finally failed. After a final failure, it goes into the next run under a new reference. A confirmation after a reported failure is escalated, and the amount is not re-paid while that is open (a duplicate is recovered as a debt marked "duplicate payout", not an earnings reduction). No answer within `payout_confirmation_timeout` (7 days) is escalated, never re-instructed *Trade-off:* A supplier may wait an extra week after a failure, but is never paid twice and never loses earnings. Resolves the conflict between POL-29's "never instructed again" and a failed transfer still being owed. (GB-15)
+
 ## POL-23. Bad debt
 
 *Answers D-23 (R-34).*
@@ -601,6 +638,9 @@ collects. Under POL-15, the risk is bounded by one coverage window per buyer.
   difference, an unshown partner fee, carried excess) is paid from Share's own account to
   the supplier concerned, as its own ledger movement.
 
+**Amended (round 4).**
+- A downward correction with cause "other" is borne by Share *Trade-off:* Supplier earnings stay final; the cost is bounded by `dispute_window`. (GB-12)
+
 ## POL-24. Regulation
 
 *Answers D-24 (R-37).*
@@ -618,6 +658,10 @@ positive buyer balances plus supplier amounts owed and not yet paid out; and (2)
 provider transaction in the partner's report matches exactly one ledger top-up, reversal
 or payout, and the reverse. Provider settlement reports and bank statements are
 reconciled daily under the same rule. Any difference is an operational alert.
+
+**Amended (round 4).**
+- The invariant includes Share's own balance at the partner: funds held = positive buyer balances + supplier amounts owed and not paid out + Share's own balance there (commission less costs, write-offs and FX round-ups). That balance is never allowed below zero *Trade-off:* Every micro at the partner is accounted for, at the cost of Share pre-funding its own losses. Without this, the round-3 invariant cannot hold once commission and FX round-ups exist. (GB-19)
+- Day D is reconciled by 12:00 UTC on D + 1; one not completed by then is an operational alert *Trade-off:* Defines "a missed reconciliation". (GB-19)
 
 ## POL-25. Controls for AI agents
 
@@ -663,6 +707,9 @@ without a human in the loop.
 - Concurrent bookings by one account or key are checked against headroom and limits as
   if applied one at a time: their combined effect never exceeds either.
 
+**Amended (round 4).**
+- Key spending is cumulative over the period: charges accrued in the period by the key's reservations (covered by a hold or not), plus funds currently held for their future charges, each minute counted once. Replaces round 3 *Trade-off:* The limit bounds a day's spending, as an agent operator expects. Under round 3, short bookings made one after another escaped it entirely. (GA-21, GB-22)
+
 ## POL-26. Route deadline
 
 *Answers D-26 (R-42).*
@@ -684,6 +731,9 @@ alert: by design it cannot happen.
 inside the deadline: a request does not begin committing later than deadline −
 `commit_margin`. A request still pending at its deadline is an operational alert.
 (Replaces "deadline plus `commit_margin`".)
+
+**Amended (round 4).**
+- `commit_margin` applies only to requests with a partner leg. `route_deadline_min` = 1 s, so a deadline must be ≥ 1 s, or ≥ 11 s with a partner leg; shorter, zero or negative is invalid *Trade-off:* Fast single-link agents keep short deadlines; nobody can choose a deadline that could never be met. (GA-36)
 
 ## POL-27. Price changes
 
@@ -743,6 +793,19 @@ abuse of the network (for example attack traffic). Notice is given where the law
 charges stop at termination; charges already accrued are not refunded. Each termination
 records the reason and the operator.
 
+
+## POL-31. Reserved rate precision
+
+*Answers GA-36 (requirements gate A), decided in round 4.*
+
+**Decision.** A reserved rate is a whole number of Mbps, at least `rate_min` = 1 Mbps; zero, negative and fractional rates are invalid
+
+| Parameter | Default |
+|---|---|
+| `rate_min` | 1 Mbps |
+
+**Why.** Simple to sell, price and check; demand below 1 Mbps is served by best-effort products.
+
 ---
 
 ## Amendments
@@ -764,3 +827,27 @@ records the reason and the operator.
 | 2026-10-11 | POL-25: key headroom defined; `account_inflight_floor` = 1,000 Mbps | A new account could never book |
 | 2026-10-11 | POL-06: RPO 0 on region loss too; acknowledge only when durable in two regions | Money acknowledged to a payment provider is not redelivered, so it cannot be lost |
 | 2026-10-11 | Round 3 (requirements gate A and B): amendments to POL-02, 06, 07, 08, 11, 12, 14, 15, 16, 17, 18, 20, 23, 24, 25, 26; new POL-29 (idempotency) and POL-30 (termination by Share). Each amendment is in its entry, marked "Amended (round 3)" | 34 policy questions from the gate reviews |
+| 2026-10-11 | Round 4 (POL-06): An available minute: each capability is probed at least every 10 s from at least two locations outside the region (≥ 12 probes a minute) | GB-23 |
+| 2026-10-11 | Round 4 (POL-06): The 60 s from suspension to enforcement is split: `standing_notice_time` = 10 s for the marketplace to deliver the standing change, the remaining 50 s for network operations | GB-39 |
+| 2026-10-11 | Round 4 (POL-07): On an unplanned outage every reservation on the link is affected | GA-33 |
+| 2026-10-11 | Round 4 (POL-07): The supplier, or an operator in network operations, may record an unplanned outage and its restoration; only the supplier books maintenance or announces a permanent reduction | GA-15 |
+| 2026-10-11 | Round 4 (POL-07): "Just enough" is in Mbps: the newest part is reduced in rate only as far as needed (revoked if it reaches 0), and its holder may then cancel without any fee | GA-08 |
+| 2026-10-11 | Round 4 (POL-07): `affected_notice_time` = 60 s, to tell holders and network operations of affected reservations, and again on restoration | GA-33 |
+| 2026-10-11 | Round 4 (POL-07): An accepted equivalent path takes over when the notice ends; the buyer may ask to move earlier, from a minute boundary it chooses | GA-08 |
+| 2026-10-11 | Round 4 (POL-08): A cancellation takes effect at the next boundary after it is made; an earlier change still pending fails "reservation ended" | GA-12 |
+| 2026-10-11 | Round 4 (POL-08): On a POL-30 termination the buyer pays any shown cancellation fee, as on a POL-16 release | GB-10 |
+| 2026-10-11 | Round 4 (POL-08): A cancellation fee goes wholly to the partner that imposed it: not split, no commission | GB-10 |
+| 2026-10-11 | Round 4 (POL-12): After a correction borne by Share or by a supplier at fault, each later amendment to that line is split on its own; every other amendment is split as the split of the new total less the shares posted | GB-04 |
+| 2026-10-11 | Round 4 (POL-14): `usage_rate_cap` bounds all of an account's usage-priced traffic on a product (burst plus traffic with no reserved rate); one lateness bound per account and product | GB-05 |
+| 2026-10-11 | Round 4 (POL-14): The lateness bound uses the product's highest `usage_price` on any route | GB-05 |
+| 2026-10-11 | Round 4 (POL-15): An unpaid invoice is written off 90 days after its due date, at Share's cost | GB-06 |
+| 2026-10-11 | Round 4 (POL-16): A suspended account resumes when, with every full coverage hold restored, its headroom is at least `low_balance_warning` | GB-21 |
+| 2026-10-11 | Round 4 (POL-16): A warning is sent once per crossing below `low_balance_warning` and quotes the top-up that brings headroom to `low_balance_warning` plus one coverage window's charges | GB-37 |
+| 2026-10-11 | Round 4 (POL-18): Unposted usage = usage-priced traffic in records received but not yet posted, at each minute's price | GB-05 |
+| 2026-10-11 | Round 4 (POL-22): An amount in an instructed payout is in no other payout until it is confirmed or finally failed | GB-15 |
+| 2026-10-11 | Round 4 (POL-23): A downward correction with cause "other" is borne by Share | GB-12 |
+| 2026-10-11 | Round 4 (POL-24): The invariant includes Share's own balance at the partner: funds held = positive buyer balances + supplier amounts owed and not paid out + Share's own balance there (commission less costs, write-offs and FX round-ups) | GB-19 |
+| 2026-10-11 | Round 4 (POL-24): Day D is reconciled by 12:00 UTC on D + 1; one not completed by then is an operational alert | GB-19 |
+| 2026-10-11 | Round 4 (POL-25): Key spending is cumulative over the period: charges accrued in the period by the key's reservations (covered by a hold or not), plus funds currently held for their future charges, each minute counted once | GA-21, GB-22 |
+| 2026-10-11 | Round 4 (POL-26): `commit_margin` applies only to requests with a partner leg | GA-36 |
+| 2026-10-11 | Round 4 (POL-31): A reserved rate is a whole number of Mbps, at least `rate_min` = 1 Mbps; zero, negative and fractional rates are invalid | GA-36 |
