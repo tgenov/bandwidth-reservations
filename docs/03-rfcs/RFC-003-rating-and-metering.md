@@ -354,7 +354,9 @@ owner builds the batch's transaction:
    deadline is fixed at the put and no caller acts at expiry. A kept answer names the
    bucket the item is in; for a repeated `record_id` (a resend after a crash, possibly in a
    later hour) that is the first put's bucket, and the entry records the bucket the store
-   names, never one computed locally (F3-20).
+   names, never one computed locally (F3-20). (Interface point for RFC-005 C12: the kept
+   answer names the payload bucket the item is filed in, the first put's for a repeated
+   `record_id`.)
 3. **Commit.** The slot's batch transaction commits once every put of the batch is answered,
    or once `pd_put_timeout` (500 ms, est.) has passed. Its `batch` entry holds, for that
    data set, the identity, the keyed digest, the reason, the `record_id`, the bucket and
@@ -852,9 +854,10 @@ Derived state per account (in the lease holder's memory and the standby's):
   for each part its rate over effective intervals and its price over minutes (§5.2), its
   end, end cause and fees shown;
 - the **accrual watermark** per reservation: lines emitted through minute `m`, and its
-  **closure hold** (the least `T_eff` of the open reductions whose affected set contains
-  it, if any; §5.6);
-- per Share link the reservations of the account use, the schedule feed's **closed time**;
+  **closure holds** (§5.6: `T_eff` of each open reduction on its links whose affected set is
+  not yet complete, and of each whose affected set contains it until final and applied);
+- per Share link the reservations of the account use, its latest `CLOSED(t, feed_seq)`
+  and its open reductions with the chunks of their affected sets received;
 - for each **open usage minute** (not yet closed), an ELA per reservation (egress bytes of
   the reservation class) and per (product, route) (attachment and best-effort classes);
 - for each **closed usage line** of the last `amendment_hot_window` (1 h, est.), its ELA
@@ -1069,14 +1072,13 @@ of the path's price) restates it to `C`:
 
 | Change | Amendment emitted | What settlement posts (RFC-004) |
 |---|---|---|
-| `C > E` | `C − E`, with the trigger's reason | The increment, split and paid as the original (M12 or M13) |
+| `C > E` | `C − E`, with the trigger's reason | M23: each supplier paid up to its share of `C` less what it already holds (RFC-004) |
 | `C < E`, the trigger a **superseding record from a supplier's exporter** that lowered it (cause: that supplier) | `C − E`, reason "superseding record", cause the supplier | Only that supplier's own reduction, as supplier debt: its share of `E` less its share of `C` (POL-22; P4-S116 second row: excess 10,000 → 5,000, A owes 3,000 − 1,500 = 1,500); every other party keeps what it was paid |
 | `C < E`, any other cause (Share's exporter, a price correction whatever its cause, a reversal, other) | `C − E`, with its reason and cause | **Nothing**: a cost Share has paid is final (P4-S116 first row) |
 
-In every case `E` becomes `C`, so a later rise (new traffic) pays only the new value above
-`C`; what the other parties kept from a reduction is not re-paid and not reclaimed. The
-cost line's source reference carries an amendment sequence (§5.8), which settlement's
-M12 and M13 references must carry too (interface point for RFC-004).
+In every case `E` becomes `C`. A later rise pays a party only above what it already holds,
+so no party is paid twice (RFC-004 M23). The cost line's source reference carries an
+amendment sequence (§5.8), as RFC-004's M12, M13 (sequence 0) and M23 references carry it.
 
 #### 5.6 Closure: when a line is first emitted
 
@@ -1088,27 +1090,37 @@ both and never neither (P3-S17); no lock is needed (Competition: D26). Closure d
 what is original and what is amendment; it is never a condition of correctness.
 
 **Reservation minute `m`** closes **per reservation** `r` (RFC-000 §4.5 and §8 as
-revision 4.2 states them; AI-17-3) when `m + 60 s` is at or before
+revision 4.2 states them; AI-17-3; RFC-001 revision 4 §11.1) when `m + 60 s` is at or
+before
 
 `closure(r) = min( lifecycle closed time of the account's partition,
-                   schedule-feed closed time of every Share link of r's route,
-                   T_eff of every open reduction whose affected set contains r )`
+                   CLOSED(t) of every Share link of r's route,
+                   hold_1(r), hold_2(r) )`
 
 and rating has applied every event before those markers. The lifecycle feed's closed time
 is the changefeed's **resolved timestamp** (AI3-2): every entry not yet seen has a commit
 timestamp after it, and every reservation fact takes effect at or after the minute
 containing its commit timestamp (confirmations from `floor_min`, every change and end from
 a later boundary, a cause known in advance recorded before its minute), so no fact can
-still affect `m`. The one exception is a **POL-07 cut**, effective at its `T_eff` but
-decided by the link at or after it: the link's entry at `T_eff` fixes the reduction's
-**affected set** and publishes it on the schedule feed, so rating waits for each link's
-closed time (it has then seen every affected set fixed up to it), and holds each
-reservation in an open affected set at `T_eff` until the link's **final step** for that
-reduction (the target rate, or no cut) has been applied in the reservation's lifecycle
-(the lifecycle feed's **cut** event for that (link, reduction) with a target rate, or
-`none` when the final step leaves it uncut). Other
-reservations of the account close as usual; the held one's lines from `T_eff` are emitted
-when its hold is released, in minute order, in later reservation batches (§5.8).
+still affect `m`. A link's closed time is the `t` of its latest `CLOSED(t, feed_seq)`
+marker, applied once rating holds every event of the link up to that `feed_seq`.
+
+The one exception is a **POL-07 cut**, effective at its `T_eff` but decided by the link at
+or after it. For each **open reduction** `R` of a link, known from its
+`CAPACITY_CHANGED(reduction announced, R, T_eff)` event, rating applies RFC-001's two holds:
+
+| Hold | Applies to | From | Until |
+|---|---|---|---|
+| `hold_1` = `T_eff` | **Every** reservation on the link | The announcement | Rating holds every chunk `i of n` of `REDUCTION_EFFECTIVE(R, T_eff, q, chunk i of n, reservations)`, which fix the affected set `A_R` |
+| `hold_2` = `T_eff` | Each reservation of `A_R` | All chunks held | `REDUCTION_FINAL(R)` is held **and** the reservation's cut (target rate or `none`) for `R` is applied in its lifecycle (the lifecycle feed's **cut** event; `CUT_DECIDED` on the schedule feed names the same decision and is used only to check it) |
+
+So no reservation closes past `T_eff` before the affected set is known, and no affected
+reservation closes past it before its cut is final and applied; the other reservations of
+the account and the link close as usual once `hold_1` is lifted. A late extension chunk
+(after `REDUCTION_SET_EXTENDED`) re-imposes `hold_2` on the reservations it adds; those
+cannot have closed past `T_eff`, since the extension precedes the link's next `CLOSED`
+marker past it. The held reservations' lines from `T_eff` are emitted when their hold is
+released, in minute order, in later reservation batches (§5.8).
 
 The closed times are the database's, not the owners': they advance while an account owner
 or a link schedule owner fails over, and stall only while a range moves its lease
@@ -1199,7 +1211,7 @@ Every line has a deterministic **source reference** (POL-29):
 | Reservation | (reservation ID, minute, amendment sequence) |
 | Usage | (account, product, route, minute, amendment sequence) |
 | Fee | (reservation ID, fee ID); for a POL-28 residue, (request ID, partner link, fee ID) |
-| Cost | (cost kind, its key, minute, amendment sequence); the same form for every amendment of a cost line (RFC-004's M12 and M13 references must carry the amendment sequence) |
+| Cost | (cost kind, its key, minute, amendment sequence); the same form for every amendment of a cost line, as RFC-004's M12, M13 (sequence 0) and M23 references carry it |
 
 Rating commits the line to `rating_log` **before** emitting it, then emits it, as an
 outbox row in the same transaction as the `emitted` entry, in one of **two batch streams**
@@ -1545,7 +1557,7 @@ Schemas and wire formats belong to the delivery phase.
 |---|---|---|
 | **Reservation lifecycle feed** | RFC-002 | Per reservation: route, product, legs, window, each part's rate over its effective intervals and its locked price (with the time it was locked), the deciding entry's commit timestamp, every change's effective minute, shortens with the new end, the end, its effective minute and its **end cause**, including "ended at its window's end" (§5.4), each fee shown at booking with its kind (plain, or minimum-term with the term's end) and, for a minimum-term fee, whether the offer showed it due at the window's end (P3-S74), using RFC-002 §13.1's events: **confirmed**, **part added**, **rate decreased**, **cut** (link, reduction, target rate or none, `T_eff`: `none` is the reduction's final step leaving the reservation uncut), **shortened** (with the fee due), **moved** (the path's catalogue route ID, shown price, minute; AI-19-2), **price step** (price version, minute, recorded at the announcement), **ended** (cause, minute, fee due and payer), **partner leg affected**, partner-leg affected status, whether the account is a probe account. **Effective-time closure**: the changefeed's resolved timestamp, every entry's effective time at or after its commit timestamp except a cut's `T_eff`, causes known in advance recorded before their minute (RFC-000 §4.5 and §8, revision 4.2; AI3-2, A-3, AI-17-3). **Residue events** (POL-28; AI3-4) |
 | **Usage-applied acknowledgement** | RFC-002 (emitted by the account owner) | Through which rating position the account owner has applied unposted usage, with the applying entry's commit timestamp (AI3-3) |
-| **Link schedule feed** | RFC-001 | Affected flags per reservation, leg and minute, as a projection of the link log; each reduction's **affected set**, fixed by the link's entry at `T_eff`, and its **final step**; per-link `feed_seq` and **closed time** (RFC-000 §8 revision 4.2; AI-17-2, AI-17-3), which bounds reservation closure (§5.6). Maintenance bookings are not reservations |
+| **Link schedule feed** | RFC-001 | Affected flags per reservation, leg and minute, as a projection of the link log; `CAPACITY_CHANGED(reduction announced, R, T_eff)`, `REDUCTION_EFFECTIVE` (the affected set in chunks `i of n`, extension chunks after `REDUCTION_SET_EXTENDED`), `CUT_DECIDED` and `REDUCTION_FINAL`; per-link `feed_seq` and `CLOSED(t, feed_seq)` markers (RFC-000 §8 revision 4.2; RFC-001 revision 4 §11.1; AI-17-2, AI-17-3), which bound reservation closure with the two holds of §5.6. Maintenance bookings are not reservations |
 | **Equivalent-path source** | Routing (out of scope), through RFC-002 | Every offered path is a catalogue route with split weights (AI-19-2); the catalogue registers it before it is offered (§6.1) |
 | **Posting acknowledgement** | RFC-004 (settlement) | Per line: posted, with the ledger position, or excluded and why (AI3-3) |
 | **Ledger movement feed** | RFC-004 | For the account owner's exact pairing (§5.9): per movement, the usage batch it posted and whether it posted it whole (AI3-10; "whole" over usage batches only, AI-19-1). For the cold re-rate (§5.10): per line its postings, amendment sequences and modes |
@@ -1607,7 +1619,7 @@ Each cites the scenario it serves (docs/README.md conventions).
 | Attribution and reversal: attribute quarantined traffic, reverse it, try to attribute it again, and repeat each command with its source reference; once at the window's boundary | P3-S27, P3-S65, P3-S70 |
 | Prices: an open-ended change with a part added after the announcement; a `usage_price` version for each kind of traffic with too little notice, refused at approval; a price and a weight approved by the requester, refused | P3-S64, P3-S69, X1-S31 |
 | Fees: shortens into and past a minimum term, then a cancellation, one fee line at most; a shorten of a reservation with a plain cancellation fee, none; a 10-day and a 30-day window ending on a 30-day minimum term, the first charged at its end, the second not; a 10-day window extended to 40 days, none; a 10-day window shortened to 5 days, charged once at the shorten | P3-S63, P3-S74, P3-S60 |
-| Cost-line amendments: carried excess lowered by a superseding record from a Share exporter (nothing posted), from supplier A's exporter (A's own reduction only, 1,500), and by a `usage_price` correction (nothing posted); then new excess traffic (the increment paid) | P3-S41, P3-S66 (P4-S116 by RFC-004) |
+| Cost-line amendments: carried excess lowered by a superseding record from a Share exporter (nothing posted), from supplier A's exporter (A's own reduction only, 1,500), and by a `usage_price` correction (nothing posted); then new excess back to 10,000: nothing to B and C, A repaid its 1,500 (M23) | P3-S41, P3-S66 (P4-S116 by RFC-004) |
 | Moves: a reservation moved to a dearer path at 2.7 then its buyer's price corrected to 1.0; the buyer's line 4 → 3, the difference stays 4; its lines and the difference carry the path's route and weights; a reservation correction to 1.8 after a move to a path at 1.5 refused, and applied as `min` if it races the move | P3-S59, P3-S56 (P4-S110, P4-S115 by RFC-004) |
 | Throughput: 600,000 records/s for 1 h with 1 M reservation lines/s on the database and Kafka at 2 + 2 + 1; transaction rates against §1.2; every X2-S13 and X2-S22 target met | X2-S04 |
 
@@ -1684,14 +1696,14 @@ Each cites the scenario it serves (docs/README.md conventions).
 | R3-10 | **Storage**: about 2 to 3 PB per copy of compressed raw records over 7 years (est.) | Two copies only (sealed segments); columnar compression; RFC-006 confirms |
 | R3-11 | **Exact `bigint` floors** on lines with many denominators cost CPU | Computed only on close, change and publication, and cached per line; measured on the load test |
 | R3-12 | **Database transaction rate**: about 24,000 transactions/s from these components (est.), beside admission's and the ledger's | Slot batch transactions (AI3-11); the R1 spike and RFC-006's re-costing include it (RFC-000 §5.5 item 7) |
-| R3-13 | **Usage margin.** The usage line's design point is about 256 s against 300 s; a regional failover or a slow Kafka hop consumes the margin | Measured; `usage_close_margin` can shrink toward `attribution_lag_max`; failover minutes in a declared disaster are outside the measure |
+| R3-13 | **Usage margin.** The usage line's design point is about 258 s against 300 s; a regional failover or a slow Kafka hop consumes the margin | Measured; `usage_close_margin` can shrink toward `attribution_lag_max`; failover minutes in a declared disaster are outside the measure |
 | R3-14 | **Kafka consumer lag** on the attribution path turns into attribution-lag breaches | Consumer lag alerted per partition; hot standbys consume the same partitions; breaches are reported, never silent |
 | R3-15 | **Payload expiry depends on the store's keys.** A day expiry key that leaked into a backup would let a payload outlive `dispute_window` + 7 days | RFC-000 §8 (revision 4.2) and RFC-005 hold expiry keys only in the HSMs, never escrowed or backed up; the test of §9 restores a backup past the expiry |
 | R3-16 | **A misbehaving exporter's non-conforming flood** | RFC-005's caps (10 puts/s per exporter, 1,000/s overall): beyond them only the digest is kept and the supplier is alerted; a batch waits at most `pd_put_timeout` |
 | R3-17 | **A larger lateness bound** (430 s, was 370 s) deducts 60 s more of `usage_rate_cap` from every account's headroom (7,500 micro-USD at P3-S37's price) | Accepted by the requirements (Q-1 as decided in v1.8); finance can lower `usage_rate_cap` per account and product |
 | R3-18 | **Closure held by an open reduction**: a reservation in a POL-07 cut's affected set accrues no posted line from `T_eff` until the link's final step is applied | RFC-001's final step is normally seconds after `T_eff`; a hold older than 60 s is alerted; held minutes past the 2 min target count against X2-S13 and are visible |
 | R3-19 | **ELA size**: 450 B a line assumes about 50 denominators | Measured (§9); `amendment_hot_window` shrinks if larger; the worst case per line is about 1 MB |
-| R3-20 | **A cost-line correction reversed by a later one** pays the increment again, while what suppliers kept from the first is not reclaimed | Share's own error, bounded by the line and by `dispute_window`; corrections are reviewed by finance and their cause recorded |
+| R3-20 | **A cost-line correction reversed by a later one** | None: RFC-004's M23 pays each party only up to its share of the new total less what it holds, so a reduction that was not reclaimed is never re-paid |
 
 ## Requirements issues
 
@@ -1955,3 +1967,7 @@ What changed from revision 3, and why. Driven by [review 19](../reviews/19-rfc-0
 | New | RQ3-17 (whether a non-conforming payload must be kept); AI3-14 (`put_payload` scope and arguments in RFC-000 §8) | Requirements issues, Architecture issues |
 | Reconcile with RFC-002 revision 4 (B-AI-11, RB-19, §13.1) | Every price version published at least 1 min before it takes effect, refused otherwise; the account owner's 60 s catalogue freshness gate noted. Lifecycle events named as RFC-002 §13.1 lists them (cut with target or none, moved with route ID, price step, shortened and ended with fee due and payer); rating charges the feed's fee decision and checks it against §5.4 | §5.2, §5.4, §5.6, §6.2, §7 |
 | Reconcile with RFC-004 revision 4 (§B10, posting port) | Usage batches within 5,000 lines; settlement refuses a larger one whole, which rating treats as a defect, re-composing within the limit; cost lines with amendment sequence and cause and moved reservations' path route as already specified | §5.8 |
+| V-1 (review 24) | Cost-line rise aligned with RFC-004's M23 (each party paid only up to its share of the new total less what it holds); stale interface sentence dropped; R3-20 restated (none: M23 never re-pays); cost-line test updated | §5.5, §5.8, §9, R3-20 |
+| V-2 (review 24) | The kept answer naming the bucket marked as an interface point for RFC-005 C12 (completes F3-20) | §3.3 |
+| V-3 (review 24) | R3-13 design point 258 s | Risks |
+| RFC-001 revision 4 (§11.1 schedule feed) | Closure uses per-link `CLOSED(t, feed_seq)`, and the two holds per open reduction: every reservation on the link held at `T_eff` until every `REDUCTION_EFFECTIVE` chunk is held; the affected set held until `REDUCTION_FINAL` and its cut is applied; `CUT_DECIDED` as a check | §5.6 |
