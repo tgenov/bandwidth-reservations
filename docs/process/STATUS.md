@@ -1,44 +1,41 @@
 # Pipeline status (resume point)
 
-Checkpoint updated 2026-10-12 (C3 round 2, step 4). Read this, `pipeline.md` and `slices.json`, then follow
+Checkpoint updated 2026-10-13 (C4 complete). Read this, `pipeline.md` and `slices.json`, then follow
 **Next steps**. Use the `design-pipeline` skill and the agents in `.claude/agents/`.
 
 ## Where things stand
 
 | Item | State |
 |---|---|
-| Branch / worktree | `docs-restructure` in `~/Code/bandwidth-reservations-docs` (not merged to `main`) |
-| Requirements | **`requirements-v1.9`** (tag): 468 scenarios, 67 needs, 33 policies. Records: `docs/reviews/22-…` (v1.8), `28-…` (v1.9) |
-| C1 Requirements | Done (v1.9) |
-| C2 RFC-000 | **Accepted, revision 4.3** (errata from reviews 16–27 and slice rev 3/4 issues). Risks R23 (thin X2-S15 margin), R24, R25 |
-| Next review number | **29** (28 is used) |
+| Branch / worktree | `docs-restructure` in `~/Code/bandwidth-reservations-docs`. `main` is fast-forwarded to it after each batch. |
+| Requirements | **`requirements-v1.10`** (tag): 473 scenarios. Records: `docs/reviews/22-…` (v1.8), `28-…` (v1.9), `35-…` (v1.10). |
+| C2 RFC-000 | **Accepted, revision 4.4.** |
+| C3 slice RFCs | All accepted. RFC-001 rev 5, RFC-002 rev 5, RFC-003 rev 5 (+ erratum 5.1), RFC-004 rev 5 (+ erratum 5.1), RFC-005 rev 5, RFC-006 rev 6. All are pinned to v1.9. |
+| C4 contracts | **Done.** C01 … C12 are frozen in `docs/04-delivery/contracts/`, with tags `contract-C01-v1` … `contract-C12-v1`. Reviews 36 … 63. |
+| Next review number | **64** |
 
-### Slices (C3 = RFC accepted)
+The old `docs/04-delivery/contracts.md` and `plan.md` are marked superseded.
 
-| Slice | RFC | Reviews | State | Round-2 step 4 action (in flight) |
-|---|---|---|---|---|
-| S-LINK | RFC-001 | 17 REJECT → 26 ACCEPT WITH CHANGES | rev 4 | revise → rev 5 per 26; then `fix-verifier` |
-| S-ACCT + S-MONEY | RFC-002, RFC-004 | 18 → fix-verify 23 (RFC-002 ACCEPT; RFC-004 V-1..5 applied) | rev 4 | RFC-002 → rev 5 (JI-1..7 from 26, RFC-001/006 interfaces); RFC-004 → rev 5 rebase; then joint `fix-verifier` |
-| S-RATE | RFC-003 | 19 → 24 | **C3 at rev 4** (tag `rfc-s-rate-accepted`) | reopened: rebase → rev 5 on v1.9 / 4.3; then `fix-verifier` |
-| S-SEC | RFC-005 | 16 → 21 → 25 | **C3 at rev 4** (tag `rfc-s-sec-accepted`) | reopened: rebase → rev 5; then `fix-verifier` |
-| S-PLAT | RFC-006 | 20 REJECT → 27 REJECT (3 Blockers) | rev 4 | revise → rev 5 per 27; then **full re-review** (focus sre) |
+### Open after C4 (do these before C5)
 
-Orchestrator decisions (binding, beyond the reviewers'): unposted-usage publish 2 s;
-lateness bound includes admission RTO (430 s); per-slot unavailability counts measured
-slot-minutes (≥3 probes, ≥2 locations, all failed within `slot_probe_limit` 1 s);
-placement owns the slot map; identity freshness is a slot-level in-memory watermark;
-buyer pays a shown minimum-term fee; maintenance never affects buyers.
+1. **Consistency check C09 against C07** on the payout-destination query (C16): the "not found" case after a restore, and the R36-31 conflicts.
+2. **Upstream batch.** Contract reviews 37 … 63 raised requirements issues (RQ-…) and architecture issues (AI-…, A-…). Earlier items are also open: RQ4-14 is done in v1.10, while RQ-1/RQ-2 (C12), RQ-40-1…5, RQ-41-x, RQ-44-1, RQ-46-1, RQ-48-1, RQ-57-x and others are not. Decide each item. Then run one `req-amender` (→ v1.11) and one `rfc-author` (RFC-000 errata → rev 4.5) in parallel.
+3. **RFC errata pass.** Run one `rfc-author` per slice, in parallel. Each one rebases the slice onto v1.10 (or v1.11) and RFC-000 4.5, and applies the "Errata owed" / "Consumer obligations" lists of every frozen contract that names that RFC. Today, coverage shows P1-S84, P4-S117, P4-S118, X1-S46 and X2-S33 as uncited. After the pass, run `fix-verifier` per slice, then set Status "Accepted, revision n+1".
+4. **Plain-language pass.** Rewrite the frozen contracts in ASD-STE100 Simplified Technical English. Do not change their meaning. Most text is from before the style rule.
+5. **C5.** Run `plan-author` per slice, then `rfc-reviewer` in plan mode.
 
-## Next steps
+### Orchestrator decisions in force (beyond the reviews)
 
-1. **In flight:** 6 × `rfc-author` to rev 5 (above). When done: coverage clean; commit.
-2. `fix-verifier`: S-LINK (vs 26), S-ACCT+S-MONEY joint (vs 23 + 26 JI items), S-RATE, S-SEC.
-   Full `rfc-reviewer` (focus sre) for S-PLAT. Numbers from 29.
-3. Apply small residual defects; set "Accepted, revision n"; tag (for re-accepted slices,
-   use `rfc-<slice>-accepted-r5`).
-4. Batch further upstream issues only if blocking.
-5. **C4**: `contract-author` per RFC-000 §8 contract once provider and consumers are at
-   C3; `rfc-reviewer` mode contract. **C5**: `plan-author` per slice. **C6**: implement.
+- The unposted-usage publish interval is 2 s. The lateness bound includes the admission RTO (430 s).
+- The per-slot unavailability rule counts measured slot-minutes only, with `slot_probe_limit` = 1 s.
+- Placement's slot map is the only source of probe designation.
+- `iam_fresh` is a slot-level watermark in owner memory. It counts only applied, gap-free resolved timestamps.
+- A shown minimum-term fee is paid by the buyer. Maintenance never makes a buyer affected.
+- C4-1 … C4-7 (cut-target delivery and revisions, leg-change ordering, payout destination).
+- Each (reservation, leg) has one outstanding leg command, in the order of its deciding entry.
+- A cut-target revision rule is shared by C02, C03 and C04. These contracts also share the "ended part" definition.
+- A quote is a stateless owner-signed token. A fee-bearing partner route needs a quote.
+- `abandon` of a parked line is Share-paid.
 
 ## Standing decisions to remember
 

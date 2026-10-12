@@ -1,5 +1,7 @@
 # Interfaces and contracts between components
 
+> **Superseded.** This is a pre-baseline draft, kept for history only. It is not an authority. Its contract IDs do not match the C4 IDs. Use the frozen C4 contracts in [`contracts/`](contracts/) (C01 … C12, tags `contract-C01-v1` … `contract-C12-v1`).
+
 Every interface that crosses a component boundary, as built in the prototype or as
 proposed to close a gap. The [delivery plan](plan.md) says which increment introduces
 each one. The RFCs say why each design was chosen; this document says exactly what goes

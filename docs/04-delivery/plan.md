@@ -1,5 +1,7 @@
 # Delivery plan and decomposition
 
+> **Superseded.** This is a pre-baseline draft, kept for history only. It is not an authority. Its contract IDs do not match the C4 IDs. Use the C5 slice plans in `plan/` (not yet written).
+
 This plan breaks RFC-001 to RFC-004 into components and increments. Each increment is tied
 to the spec scenarios it delivers and to the contracts in [contracts.md](contracts.md)
 (C01–C33) that it adds or changes. Increments I1–I3 are the prototype that exists. I4
