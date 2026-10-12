@@ -3,10 +3,10 @@
 | | |
 |---|---|
 | Contract ID | C08 |
-| Version | 1.1-draft (revised per [review 46](../../reviews/46-contract-C08-review.md)) |
-| Status | **Draft, for fix verification of review 46.** Mismatches M1 … M6 and gaps G1 … G4 settled by the orchestrator (see "Settled"); review 46's findings applied (see "Review 46 resolution"); the RFC errata they imply are listed under "Consumer obligations" |
+| Version | 1 |
+| Status | **Frozen.** Frozen at C4 on fix verification 56 ([review 56](../../reviews/56-contract-C08-fix-verification.md)); errata owed listed below ("Consumer obligations"). History: 1.0-draft, 1.1-draft (review 46), 1 (V56-1 … V56-7 applied; see "Fix verification 56 resolution") |
 | Provider | Identity and access, with the operator console, audit and webhook signing (RFC-005 revision 5: §2, §3.1–§3.3, §3.6, §3.7 erasure requests, §3.8, §4, §6, §7, §8.3, §9, §10, §11 C1–C6, C8, C10, C14, C15); the **key service** (RFC-005 §10) for the key-certification stream (§N). Integrity stop: semantics RFC-005, honoured by RFC-006's owner runtime and placement |
-| Consumers | **Edge gateway** (RFC-005 specifies it: C1 issuer, C14, erasure intake and recovery objection). **Account owner** (RFC-002 rev. 5 booking module; RFC-004 rev. 5 Part A funds module): C1, C2, C3 push and catch-up, envelope, operator check, target summary, read grant (status replicas), audit field set. **Link schedule owner and link registry** (RFC-001 rev. 5): C1, C2, envelope, operator check, target summary, read grant, audit field set. **Catalogue, rating, metering ingestion, attribution** (RFC-003 rev. 5 + erratum 5.1): C1, envelope, operator check, target summary, read grant, audit field set. **Payments, payouts, ledger, reconciliation, reporting** (RFC-004 rev. 5 + erratum 5.1): C1, envelope, operator check, target summary, read grant, audit field set, supplier visibility (reporting). **RFC-006 rev. 6**: owner runtime and placement (integrity stop and resume, restore role, `chain`, audit changefeed, placement's target summaries), notifier (endpoint feed and query, signed webhook, supplier visibility for supplier notices), history and retention (audit changefeed, sealed segments), provisioning feed (supplier visibility), status replicas (read grants). **Operator console** (RFC-005): envelope issuer, `cancel`, `open_requests`, target-summary relay. **Buyers and suppliers**: signed webhook receivers |
+| Consumers | **Edge gateway** (RFC-005 specifies it: C1 issuer, C14, erasure intake and recovery objection). **Account owner** (RFC-002 rev. 5 booking module; RFC-004 rev. 5 Part A funds module): C1, C2, C3 push and catch-up, envelope, operator check, target summary, read grant (status replicas), audit field set. **Link schedule owner and link registry** (RFC-001 rev. 5): C1, C2, envelope, operator check, target summary, read grant, audit field set. **Catalogue, rating, metering ingestion, attribution** (RFC-003 rev. 5 + erratum 5.1): C1, envelope, operator check, target summary, read grant, audit field set. **Payments, payouts, ledger, reconciliation, reporting** (RFC-004 rev. 5 + erratum 5.1): C1, envelope, operator check, target summary, read grant, audit field set, supplier visibility (reporting). **RFC-006 rev. 6**: owner runtime and placement (integrity stop and resume, restore role, `chain`, audit changefeed, placement's target summaries), notifier (endpoint feed and query, signed webhook), history and retention (audit changefeed, sealed segments), provisioning feed (supplier visibility), status replicas (read grants). **Operator console** (RFC-005): envelope issuer, `cancel`, `open_requests`, target-summary relay. **Buyers and suppliers**: signed webhook receivers |
 | Transport | In-process library: principal context, `decide`, reference functions. gRPC metadata over mTLS: principal context. **Kafka event** (from identity's transactional outbox through the changefeed relay, RFC-000 §5.5): identity status push, endpoint feed, policy feed; audit changefeed `cdc.audit.<kind>` (CDC projection). **gRPC query**: `catch_up`, `visibility`, `target_summary`, `open_requests`, `get_endpoint`, `get_policy`. **gRPC server stream**: `edge_stream`; `cert_stream` (key service). **gRPC command**: `operator_check`, `cancel`, `record_erasure_request`, `object_to_recovery`, every operator command carrying an envelope, `integrity_stop`, `integrity_resume`, `integrity_report`, `audit_append`. **Outbound HTTPS POST**: signed webhook. **No database read across owners** (RFC-000 A1): nobody reads identity's tables; the restore role's row-level-security predicate over audit's `integrity_stops` is a database-enforced policy, not an owner read |
 | Pinned to | `requirements-v1.10`; RFC-000 revision 4.4 (§8 rows: principal and authorisation context; identity status push and catch-up; identity edge stream; supplier visibility; operator check; target summary; read grant; erasure-request intake and recovery objection; operator action envelope; audit record; integrity stop; webhook endpoints and signing secrets; signed webhook; "Revision 4.4 errata" AI-R5-7); RFC-005 revision 5; RFC-001 revision 5; RFC-002 revision 5; RFC-003 revision 5 with erratum 5.1; RFC-004 revision 5 with erratum 5.1; RFC-006 revision 6 |
 
@@ -141,6 +141,7 @@ type SignedKeyRecord = {
   status: "active" | "revoked";
   limits: KeyLimits;
   version: number;                   // strictly increasing per key
+  committed_at: EpochMicros;         // signed; the certificate's not_after is checked against it (V56-3)
   probe: boolean;
   signature: Ed25519Signature;       // over JCS, domain "share-key-record-v1"
 };
@@ -243,6 +244,7 @@ type CredentialRecord = {            // every record identity-signed, domain "sh
   identity_slot: IdentitySlot;
   epoch: string;                     // the lease epoch that committed it; its certificate signs it
   position: string;                  // int64, commit order within the slot
+  committed_at: EpochMicros;         // signed; the certificate's not_after is checked against it (V56-3)
   version: number;                   // per record key; the edge applies only higher versions
   body:
     | { kind: "agent_key" | "supplier_key"; key_id: KeyId; verifier_sha256: Bytes; tenant: Tenant;
@@ -442,6 +444,7 @@ type CancelRequest = {
 };
 type CancelAnswer =
   | { kind: "receipt"; action_id: ActionId; digest: Bytes; cancelled_at: EpochMicros;
+      slot: IdentitySlot;                          // the operator partition's identity slot; signed (V56-2)
       signature: Ed25519Signature }                // identity-signed, domain "share-cancel-receipt-v1"
   | { kind: "too_late" }                           // "already applied or applying"; no receipt
   | { kind: "refused"; check: "assertion" | "not_requester" | "digest_conflict" }
@@ -572,7 +575,8 @@ type AuditFields = {
 // `source` is NOT a payload field: audit sets it from the caller's mTLS workload identity (R46-11).
 type AuditAppend = { source_ref: string; record: AuditFields & { event: string } };
 type AuditAppendAnswer = { kind: "appended"; source: string; position: { partition: string; seq: string } }
-                       | { kind: "refused"; reason: "caller_not_allowed" | "source_ref_conflict" }   // conflict paged to security
+                       | { kind: "refused"; reason: "caller_not_allowed" | "source_ref_conflict"    // conflict paged to security
+                                                 | "read_limit" }   // session-summary append past operator_read_limit (V56-4)
                        | { kind: "temporarily_unavailable" };
 
 // Audit changefeed per log table: topic "cdc.audit.<kind>", key = partition, consumed by audit only.
@@ -664,8 +668,28 @@ CREATE POLICY restore_only_stopped ON <kind>_head FOR ALL TO restore_role
 
 -- restore_role: SELECT, INSERT, UPDATE, DELETE on <kind>_log and <kind>_head only, granted only inside a
 -- break-glass session (two approvers, break_glass_ttl 4 h) while audit has an open, acknowledged stop;
--- holds no application key; revoked at the session's end. Every other role's policies are unchanged
--- (application roles: insert-only on logs; the truncation role: its watermark policy, RFC-006 §13.2).
+-- holds no application key; revoked at the session's end.
+
+-- V56-1: with FORCE, permissive policies combine by OR. This RESTRICTIVE policy applies to the restore
+-- role in addition to every permissive policy. Thus no other policy can widen the restore role.
+CREATE POLICY restore_confined ON <kind>_log AS RESTRICTIVE FOR ALL TO restore_role
+  USING      (EXISTS (SELECT 1 FROM audit.integrity_stops s
+                      WHERE s.owner_kind = '<kind>' AND s.partition = <kind>_log.partition
+                        AND s.acknowledged_at IS NOT NULL AND s.closed_at IS NULL))
+  WITH CHECK (EXISTS (SELECT 1 FROM audit.integrity_stops s
+                      WHERE s.owner_kind = '<kind>' AND s.partition = <kind>_log.partition
+                        AND s.acknowledged_at IS NOT NULL AND s.closed_at IS NULL));
+CREATE POLICY restore_confined ON <kind>_head AS RESTRICTIVE FOR ALL TO restore_role
+  USING      (EXISTS (SELECT 1 FROM audit.integrity_stops s
+                      WHERE s.owner_kind = '<kind>' AND s.partition = <kind>_head.partition
+                        AND s.acknowledged_at IS NOT NULL AND s.closed_at IS NULL))
+  WITH CHECK (EXISTS (SELECT 1 FROM audit.integrity_stops s
+                      WHERE s.owner_kind = '<kind>' AND s.partition = <kind>_head.partition
+                        AND s.acknowledged_at IS NOT NULL AND s.closed_at IS NULL));
+
+-- Every other policy on these tables names its role: TO <owner_role> for the runtime's SELECT and
+-- INSERT, and for the head UPDATE; FOR DELETE TO truncator for the watermark policy (RFC-006 §13.2).
+-- No policy on these tables is TO PUBLIC.
 ```
 
 ### §L. Webhook endpoints and signing secrets (RFC-005 C8, §8.3)
@@ -739,6 +763,7 @@ type PolicyBundle = {
   allowlist: { receiver: string; command: string; callers: string[] /* workload identities */ }[];
   limits: { operator_read_limit_per_h: number; breadth_alert_targets_per_h: number };
   committed_at: EpochMicros;
+  slot: IdentitySlot;                // the policy partition's identity slot; in the signed bytes (V56-2)
   signature: Ed25519Signature;       // identity record-signing key of the policy partition's slot,
                                      // domain "share-policy-v1"; matrix_digest = SHA-256(JCS(bundle without signature))
 };
@@ -812,13 +837,16 @@ type CertStreamMessage =
 - **`catch_up(account_slot, since?)`**: identity answers by a consistent read at the present
   timestamp; `read_timestamp` = that read's timestamp. Preconditions: caller is the account
   owner's workload. **`since` is defined** (R46-07): a **new lease holder** (`iam_fresh`
-  unset) calls **without** `since` and always receives a `snapshot`, before deciding
-  anything (about 6 accounts a slot, est., so the answer is small); a **running holder**
+  unset) calls **without** `since` at once on acquisition and receives a `snapshot` (about
+  6 accounts a slot, est., so the answer is small). The snapshot is not a precondition
+  (V56-7, C05 S-2 and H4). Until a catch-up or snapshot entry commits, or every partition
+  has reported, the holder confirms nothing; a **running holder**
   with `iam_fresh` set calls with `since = iam_fresh` (inclusive) and receives every push
   event of the slot's accounts with `committed_at ≥ since`, when `now − iam_fresh > 20 s`,
   every 5 s until fresh. Every event at or below `iam_fresh` is already applied (applied-only
   rule), so nothing between the two paths is skipped. The answer is applied in one entry
-  (none if no status change) and sets `iam_fresh` to `read_timestamp`.
+  (none if no status change). When that entry commits (at once if it has no change), the
+  booking module sets `iam_fresh` to `read_timestamp`.
 - **Snapshot** (S-G1, and every new holder): the current status of every key and the KYB
   status of every account of the slot from one consistent read, with its `position`
   (= `read_timestamp`); also answered when `since` is older than the 7-day retention. The
@@ -853,8 +881,15 @@ type CertStreamMessage =
   a record of an epoch older than one it has applied at a lower position.
 - **Certificates** (R46-04): every signature (records, heartbeats, snapshots, key records in
   contexts, target summaries, cancel receipts, policy bundles) verifies only under a
-  certificate from the key-certification stream (§N) that is within `not_before …
-  not_after`, not revoked, and whose `slot` equals the signed object's slot. A receiver
+  certificate from the key-certification stream (§N) that is not revoked, whose `slot`
+  equals the signed object's slot, and whose `purpose` and `owner_kind` match the object
+  (V56-2): `identity_record` with `identity` for key records, edge records, heartbeats,
+  edge snapshots, policy bundles and cancel receipts; `owner_summary` with the summary's
+  `owner_kind` for target summaries; `placement_summary` for placement's summaries. The
+  validity window applies as follows (V56-3). For credential records and key records, check
+  `not_before ≤ committed_at ≤ not_after` (the key could sign at that time). For
+  heartbeats, snapshots, summaries, receipts and policy bundles, check `not_before ≤ now ≤
+  not_after`. Check revocation now for all objects. A receiver
   refuses objects under a revoked certificate as soon as it applies the revocation, and
   refuses **every** object under any certificate once its last cert-stream heartbeat is
   older than `edge_staleness_max` (30 s), so a revocation takes effect everywhere within
@@ -937,8 +972,10 @@ set-scoped action, with its counts of members applied and refused, not one per m
 - **`operator_check`**, answered by identity in its operator partition at the present
   timestamp. It first **verifies every assertion** (the §E check 2 rules against its own
   key, origin and `rpIdHash`, challenge = the request's `digest`); for an `invalid`
-  assertion it consumes nothing and answers `assertion` = `invalid`. On the first call for
-  an `action_id` or `grant_id` it binds that identifier to its `digest`; a later call with
+  assertion it consumes nothing and answers `assertion` = `invalid`. It binds an
+  `action_id` or `grant_id` to its `digest` only on a call whose every assertion is `valid`
+  (V56-5). A call with any invalid assertion binds nothing and consumes nothing. After the
+  binding, a later call with
   another digest under the same identifier answers `digest_conflict`. With `consume: true`
   and every assertion valid it consumes each `(credential_id, counter)` under the
   `action_id` or `grant_id` (a conditional entry on the digest's state: open → consumed);
@@ -973,10 +1010,13 @@ unsigned, and is accepted only from the console's workload (S-G3), with these
 **compensating controls** (review 46 D3): `action_id` and `action_type` are mandatory; the
 owner refuses `target_kind_mismatch` when the target kind is not one of the action type's
 `target_kinds` in its policy bundle, and `role_mismatch` when `role` is not the action's
-role; summaries under session authority count against `operator_read_limit` per operator,
-and the owner raises the breadth alert past `breadth_alert_targets_per_h` (§N); and the
-owner **appends the request to audit** (§J append: operator, role, session, `action_id`,
-`action_type`, target, time) **before answering**; no audit append, no answer.
+role; and the owner **appends the request to audit** (§J append: operator, role, session, `action_id`,
+`action_type`, target, time) **before answering**; no audit append, no answer. **Audit
+counts** these appends (V56-4), because every session summary passes through audit. Audit
+counts the `console_session` summary appends per operator and per console workload per
+hour. Past `operator_read_limit`, audit refuses the append with `read_limit`. The owner
+then answers `refused read_limit`: no append, no answer. Audit raises the breadth alert
+past `breadth_alert_targets_per_h` distinct targets per operator, and in total.
 Exploratory reads need a read grant, which is the alternative authority (then §H
 applies). `not_found` for an unknown target.
 Owners that serve it: every owner that accepts operator actions (account owner, link
@@ -1181,7 +1221,7 @@ producer per kind for `cdc.audit.<kind>` and audit as its only consumer.
 | `approval_expiry` | 72 h (`not_after` = request time + 72 h; owners refuse `not_after` beyond own ts + 72 h + ε); consumed pairs kept until max(`not_after`, consumption + 72 h) | Owners (check 5); identity |
 | ε in check 5 | `max_offset`, 100 ms | Owners |
 | `read_grant_ttl`; `operator_check_cache` | 1 h (also the upper bound on a grant's `not_after`); 60 s | Readers |
-| `operator_read_limit`; breadth alert | 200 reads or session summaries per operator per hour; alert past 20 distinct targets per operator per hour (both est., confirm at C5; carried in the policy bundle) | Readers; summary-serving owners |
+| `operator_read_limit`; breadth alert | 200 reads or session summaries per operator per hour; alert past 20 distinct targets per operator per hour (both est., confirm at C5; carried in the policy bundle) | Audit (session summaries); readers (grants) |
 | Certificate validity; cert-stream staleness | `not_after` = `not_before` + 24 h (est.); refuse everything once the last cert heartbeat (1 s) is older than 30 s | Key service; every receiver |
 | Heartbeat lease margin | `sent_at` < lease expiry − `max_offset` (100 ms) | Identity |
 | `recovery_hold` | 24 h | Identity |
@@ -1192,7 +1232,7 @@ producer per kind for `cdc.audit.<kind>` and audit as its only consumer.
 | Audit changefeed resolved; stall alarm; job watch | 10 s; 2 min; 10 s | RFC-006 relay; audit |
 | `operator_check` per-call deadline | 500 ms (est.; confirm at C5); a miss is `temporarily_unavailable` → refuse the command or read (S4) | Owners, readers |
 | `cancel` per-call deadline | 2 s (est.; confirm at C5); a miss shows no receipt, the signing client tells the operator to raise it | Signing client via console |
-| `visibility` per-call deadline | 300 ms (est.; confirm at C5); a miss → every identity hidden in that view | Reporting, notifier, provisioning feed |
+| `visibility` per-call deadline | 300 ms (est.; confirm at C5); a miss → every identity hidden in that view | Reporting, provisioning feed |
 | `catch_up` per-call deadline | 2 s (est.; confirm at C5); a miss → retry at `iam_pull_period`; the 45 s gate keeps the slot safe | Account owner |
 | `target_summary` per-call deadline | 2 s (est.; confirm at C5); a miss → the signing client shows nothing and nothing is signed | Console relay, signing client |
 | `record_erasure_request`, `object_to_recovery` per-call deadline | 2 s (est.; confirm at C5); a miss → the user retries with the same idempotency key | Edge |
@@ -1261,10 +1301,10 @@ same test.
 | P-09 | Audit: an UPDATE or DELETE above the watermark through break-glass is detected from the changefeed before the next checkpoint; a query over the range answers "record altered or missing"; an `integrity_stop` is sent with a fresh `detection_ref` (DT-9, DT-31) | X1-S15 |
 | P-10 | Audit sends `integrity_resume` only when the restored head equals the first-seen head; with a row lost, no resume is sent; its `integrity_stops` row is closed before the resume | X1-S15 |
 | P-11 | Signing library: a delivery of 100 notices of one tenant verifies at a receiver double with the given secret; a body mixing tenants is refused by the library; both signatures present during overlap, one after rotate now | X1-S11, X1-S24 |
-| P-12 | `operator_check` with an assertion whose signature is wrong consumes nothing and answers `invalid`; the pair stays usable by the real action; a credential of operator A named under operator B answers `credential_status` = `unknown`; a second call with another digest under the same `action_id` answers `digest_conflict` (R46-01) | X1-S26, X1-S32 |
+| P-12 | `operator_check` with an assertion whose signature is wrong consumes nothing and answers `invalid`; the pair stays usable by the real action; a credential of operator A named under operator B answers `credential_status` = `unknown`; a second call with another digest under the same `action_id` answers `digest_conflict` (R46-01); an invalid call under a pending `action_id` with another digest leaves the real check unaffected (V56-5) | X1-S26, X1-S32 |
 | P-13 | `cancel` by a different operator (another person, the approver included) with a valid own assertion → `not_requester`, no receipt; by the requester's person → receipt (R46-06) | X1-S32 |
 | P-14 | Heartbeat fencing: holder paused past its lease expiry, successor commits a revocation at `t`; edges still connected to the old holder get no heartbeat with `sent_at` past its lease and refuse the credential by `t` + 31 s; a heartbeat with lower `sent_at` or older epoch is rejected and alerted (R46-03) | X1-S06, X1-S41 |
-| P-15 | Certificates: a record signed under a revoked certificate is refused by every edge and owner within 31 s of the revocation; with the cert stream silent for 30 s every receiver refuses; a certificate past `not_after`, or whose slot differs from the record's, is refused (R46-04) | X1-S06 |
+| P-15 | Certificates: a record signed under a revoked certificate is refused by every edge and owner within 31 s of the revocation; with the cert stream silent for 30 s every receiver refuses; a certificate past `not_after`, or whose slot differs from the record's, is refused (R46-04); a record signed under a valid `owner_summary` certificate of the same slot is refused (V56-2); a record of epoch e−1 is still accepted 25 h after a takeover, and after its certificate is revoked it is refused within 31 s (V56-3) | X1-S06 |
 | P-16 | `catch_up` without `since` returns a snapshot of every account of the slot at its `position`; with `since` older than 7 days, a snapshot too (S-G1, R46-07) | X1-S06, P2-S72 |
 | P-17 | `audit_append` naming another source in its payload is recorded under the caller's mTLS identity; a pre-claimed `source_ref` of another source does not block it; a same-source same-key different record is refused and pages security (R46-11) | X1-S15 |
 | P-18 | Policy: a bundle at version n+1 reaches every receiver; a context with version n+1 at a receiver still at n answers "temporarily unavailable" until `get_policy` applies it (R46-05) | X1-S12, X1-S13 |
@@ -1274,15 +1314,15 @@ same test.
 | # | Side | Test | Scenarios |
 |---|---|---|---|
 | C-01 | Every owner | Contexts: expired, from a non-allowlisted peer, tenant ≠ partition, forged or lower-version key record → no effect (`not_found` or ignored), recorded where §A says; principal fields copied into `audit` (DT-4, DT-25) | X1-S02 … S05, X1-S07 |
-| C-02 | Account owner (RFC-002/004) | Two events of one account at one `committed_at` (one identity batch) → both applied; a new holder calls `catch_up` without `since` and applies the snapshot before deciding, and `iam_fresh` is set only when that entry commits (or every partition has reported); an applied key absent from the snapshot is revoked and its undecided requests fail "key revoked"; a resolved marker does not advance `iam_fresh` while any earlier event on its partition is unapplied (gap); a catch-up whose F4 has not committed does not advance it; the gate compares µs with HLC by `t × 10³ ≤ wallNanos` (R46-07, R46-08, V53-3); push event replayed and duplicated by catch-up → one F4; heartbeat-only traffic → no entry, `iam_fresh` advances; after takeover no confirm until a catch-up has committed or every partition has reported; with push and catch-up both silent, no confirm after `iam_fresh` + 45 s; revocation ends undecided requests "key revoked" and leaves decided ones (DT-1, DT-2) | X1-S06, P2-S72, P2-S103 |
+| C-02 | Account owner (RFC-002/004) | Two events of one account at one `committed_at` (one identity batch) → both applied; a new holder calls `catch_up` without `since` and asks for the snapshot at once; it confirms nothing until a catch-up or snapshot entry commits or every partition has reported, and `iam_fresh` is set when that entry commits (V56-7); an applied key absent from the snapshot is revoked and its undecided requests fail "key revoked"; a resolved marker does not advance `iam_fresh` while any earlier event on its partition is unapplied (gap); a catch-up whose F4 has not committed does not advance it; the gate compares µs with HLC by `t × 10³ ≤ wallNanos` (R46-07, R46-08, V53-3); push event replayed and duplicated by catch-up → one F4; heartbeat-only traffic → no entry, `iam_fresh` advances; after takeover no confirm until a catch-up has committed or every partition has reported; with push and catch-up both silent, no confirm after `iam_fresh` + 45 s; revocation ends undecided requests "key revoked" and leaves decided ones (DT-1, DT-2) | X1-S06, P2-S72, P2-S103 |
 | C-03 | Account owner | Credit limit refused `kyb_not_vetted` until a `kyb_status passed` is applied | P4-S82 |
 | C-04 | Every owner that accepts operator actions | Check 2 verified with identity's returned key only (an envelope carrying another key changes nothing); an expired or misrouted envelope is refused before `operator_check` and consumes nothing (R46-13); `not_after` beyond own ts + 72 h + ε refused (D5); a target outside the partition → `out_of_scope`; a repeated refused `action_id` gets the recorded refusal (R46-17); the DT-8 matrix: missing, reused, same-person, other-role assertion; wrong challenge, origin, `rpIdHash`, no UV; after `not_after − ε`; cancelled; stale `target_version`; a field changed after signing → refused with the named check; a four-eyes action with interleaved read grants (higher counters) → applied | X1-S12, X1-S13, X1-S26, X1-S31, X1-S32 |
 | C-05 | Account owner | Set-scoped credit limit: one `action_id`, applied once per member, `member` ≠ partition → `out_of_scope`; a non-probe account → `out_of_scope` before `kyb_not_vetted`; a refused member not re-applied under the same `action_id` (DT-32; membership by own F9, even with placement past v, S-M1) | X2-S24 |
 | C-06 | Account owner | `withhold_notice` accepted only on an approved compliance termination with `order_ref`; network-abuse termination proceeds with the withhold refused and recorded (DT-19) | X1-S17, X1-S36 |
-| C-07 | Every owner with operator actions; placement; identity | `target_summary` signature verifies under the certified summary key; its `target_version` is the one check 6 compares; under `console_session`: missing `action_id` or `action_type` refused, target kind not matching the action → `target_kind_mismatch`, past `operator_read_limit` → `read_limit` and breadth alert, and **with the audit append failing, no answer** (D3) | X1-S31, X1-S32 |
+| C-07 | Every owner with operator actions; placement; identity | `target_summary` signature verifies under the certified summary key; its `target_version` is the one check 6 compares; under `console_session`: missing `action_id` or `action_type` refused, target kind not matching the action → `target_kind_mismatch`, past `operator_read_limit` → `read_limit` and breadth alert, and **with the audit append failing, no answer** (D3); the `read_limit` refusal comes from audit's count of session-summary appends per operator and per console workload (V56-4) | X1-S31, X1-S32 |
 | C-08 | Every reader (reporting, status replicas, link owner, catalogue, audit query, store) | No grant, expired grant, out-of-target read → refused and recorded; with a grant the reader's audit append commits before the answer (DT-24) | X1-S13, X1-S27, X1-S31 |
 | C-09 | Reporting, provisioning feed | `visibility` unavailable → every identity hidden; no reuse of an answer across views; `registry_timestamp` recorded | X1-S28, X1-S30 |
-| C-10 | Owner runtime and database (RFC-006) | `integrity_stop` → `Stopped` under every holder across a takeover and a move until `integrity_resume`; with partition P1 of kind k stopped and acknowledged, a restore-role write to P2 of kind k (log and head) is refused; before `acknowledged_at`, a write to P1 is refused too; the policies hold for the table owner (FORCE) (R46-02, R46-18; DT-45, RFC-005 DT-31) | X1-S15 |
+| C-10 | Owner runtime and database (RFC-006) | `integrity_stop` → `Stopped` under every holder across a takeover and a move until `integrity_resume`; with partition P1 of kind k stopped and acknowledged, a restore-role write to P2 of kind k (log and head) is refused; before `acknowledged_at`, a write to P1 is refused too; the policies hold for the table owner (FORCE) (R46-02, R46-18; DT-45, RFC-005 DT-31); the restore role cannot delete a row at or below the watermark in an unstopped partition, even with the truncation policy present (V56-1) | X1-S15 |
 | C-11 | Owner runtime | Every committed log row's `chain` matches the golden recomputation; a head `chain` mismatch holds the partition locally and sends `integrity_report`; audit's stop follows with a `detection_ref`, and only `integrity_resume` lifts the hold (R46-12) | X1-S15 |
 | C-12 | Notifier (RFC-006) | Endpoint chosen from the event's clear partition only; deliveries ≤ 100 notices, one tenant; fresh timestamp per attempt; a pinned-address connection whose certificate does not match the URL's host is refused (R46-23); the overlap's previous secret signs until the new secret's `active_from` + 24 h; DNS-rebinding to a private address refused at delivery; down endpoint: first attempt within `affected_notice_time` (DT-10, DT-23) | X1-S11, X1-S24, P1-S75, P2-S09 |
 | C-13 | Edge (RFC-005 §2.2) | Unauthenticated answers identical in bytes and timing class (DT-23, DT-3); stale slot → "temporarily unavailable"; erasure and objection forwarded with the user's token only | X1-S01 … S04 |
@@ -1301,7 +1341,7 @@ erratum listed under "Consumer obligations".
 | S-M4 | `webhook-id` across retries | Reused for every attempt of one fixed notice set; a regrouped retry is a new delivery with a new `webhook-id`; receivers deduplicate per `event_id`; a single-notice delivery's `webhook-id` = its `event_id` (kept, D4) | RFC-005 §8.3 "a retry carries the same notices under the same `webhook-id`" → as settled |
 | S-M5 | Two `integrity_stops` stores | Audit's table is authoritative and the restore role's row-level-security predicate; placement's projection is what the runtime honours; audit **closes** its row before sending `integrity_resume` | RFC-005 §9.3 and RFC-006 §12.2, §14.3 state the ordering |
 | S-M6 | Where `iam_fresh` lives | The booking module's, in owner memory: `max(min over the identity-push partitions feeding the slot of the latest resolved timestamp applied, last catch-up read timestamp)`; unset after takeover. **Amended by review 46 (R46-07) and fix verification 53 (V53-3)**: as C05 S-2: `R_applied(p)` gap-free, a catch-up counts once its F4 commits, after acquisition set only by a committed catch-up or once every partition has reported | RFC-005 C3 and §3.3 ("F4 keeps" / "funds module keeps") → booking module; RFC-004 §A2, F4, JR-11 state that F4 neither holds nor advances it (R46-08) |
-| S-G1 | `catch_up` with `since` older than retention | Answer a current-state `snapshot` of the slot's accounts with its `position`. **Amended by review 46 (R46-07)**: a new lease holder always asks for the snapshot (no `since`); a running holder uses `since = iam_fresh` | RFC-005 C3 adds the snapshot answer and the `since` rule; RFC-004 F4 applies the snapshot (R46-08); RFC-002 §5.6 takes it before deciding |
+| S-G1 | `catch_up` with `since` older than retention | Answer a current-state `snapshot` of the slot's accounts with its `position`. **Amended by review 46 (R46-07)**: a new lease holder always asks for the snapshot (no `since`); a running holder uses `since = iam_fresh` | RFC-005 C3 adds the snapshot answer and the `since` rule; RFC-004 F4 applies the snapshot (R46-08); RFC-002 §5.6 asks for it at once on acquisition; it is not a precondition (V56-7) |
 | S-G2 | Owners' summary, check and reader duties | Listed per RFC under "Consumer obligations" | As listed there |
 | S-G3 | Authority of a target-summary request | The operator's console session (principal and role), unsigned, audited by the owner. **Amended by review 46 D3**: purpose-bound (mandatory `action_id` and `action_type`, target kind must match), counted against `operator_read_limit`, breadth-alerted, audited before answering | RFC-002 §13.1 "read grant or envelope request" → "console session, purpose-bound, audited"; RFC-005 §7.3, §7.6 state it; every summary-serving owner (Consumer obligations) |
 | S-G4 | Per-call deadlines | Set in "Timeouts and deadlines", marked (est.), confirmed at C5 | — |
@@ -1312,8 +1352,8 @@ Each owner's duties under this contract, per RFC; where the RFC does not yet say
 line is an **erratum** for that RFC (S-G2, the settled points and review 46). Duties common
 to every owner that serves target summaries (review 46 D3, R46-10): accept only from the
 console's workload; under `console_session` require `action_id` and `action_type`, refuse a
-target kind or role that does not match the action, count against `operator_read_limit`,
-raise the breadth alert, and **append the request to audit before answering**. Duties
+target kind or role that does not match the action, and **append the request to audit
+before answering**; on audit's `read_limit` refusal, answer `refused read_limit`. Duties
 common to every owner that applies envelopes: run the checks in §E's order, verify check 2
 only under identity's returned key, enforce the `not_after` upper bound, refuse targets
 outside the partition, record refusals by `audit_append` (R46-17). Every receiver applies
@@ -1322,11 +1362,11 @@ the policy feed and the key-certification stream (§N).
 | RFC | Component | Target summary (§G) | Operator check and envelope (§E, §F) | Read grant (§H) | Other | Erratum needed |
 |---|---|---|---|---|---|---|
 | RFC-001 rev. 5 | Link schedule owner; link registry | Serve for `link` targets (schedule, capacity, registration state; `target_version` = the link log's last sequence), with the common summary duties, **audit append before answering** | Verify envelopes for `record_outage`, `record_restoration`, `register_link`, `retire_link`; call `operator_check` at apply | Reader for `read_link_schedule`: verify, check every 60 s, audit append before answering | C1 receiver checks (key record names the partition's tenant: the supplier); `audit` field set; `Stopped` and the local hold from the runtime | **Yes**: summary serving with audit-before-answer, `operator_check` at apply, read-grant reader duties, policy feed and cert stream (§11.1 names only principal, envelope, audit record) |
-| RFC-002 rev. 5 | Account owner (booking); status replicas | Serve for `account` and `reservation` (stated, §13.1), with the common summary duties, **audit append before answering** | Verify for `act_at_documented_request`, `terminate_network_abuse`, `terminate_compliance`, `set_credit_limit`/`remove_credit_limit` incl. set-scoped (stated) | Status replicas as readers (stated, §8.2) | Own `iam_fresh` with the applied-only rule (S-M6); new holder takes the snapshot before deciding, running holder `since = iam_fresh` (S-G1, R46-07) | **Yes**: S-M1 (drop the version-v membership test), S-G3 with D3 (summary authority, purpose binding, audit-before-answer), R46-07 (`since`, applied-only rule), check order and key source (R46-01, R46-13) |
+| RFC-002 rev. 5 | Account owner (booking); status replicas | Serve for `account` and `reservation` (stated, §13.1), with the common summary duties, **audit append before answering** | Verify for `act_at_documented_request`, `terminate_network_abuse`, `terminate_compliance`, `set_credit_limit`/`remove_credit_limit` incl. set-scoped (stated) | Status replicas as readers (stated, §8.2) | Own `iam_fresh` with the applied-only rule (S-M6); new holder asks for the snapshot at once and confirms nothing until a catch-up or snapshot entry commits or every partition has reported, running holder `since = iam_fresh` (S-G1, R46-07, V56-7) | **Yes**: S-M1 (drop the version-v membership test), S-G3 with D3 (summary authority, purpose binding, audit-before-answer), R46-07 (`since`, applied-only rule), check order and key source (R46-01, R46-13) |
 | RFC-003 rev. 5 + 5.1 | Catalogue; rating; attribution and quarantine | Serve for `product_route`, `account_product`, `supplier_terms`, `partner`, `charge`, `quarantine_item` (R46-09), with the common summary duties, **audit append before answering** | Verify for `set_price`, `set_split_weight` (four eyes), `record_partner_terms`, `correct_price`, `set_usage_rate_cap`, `attribute_quarantine`, `reverse_attribution`; call `operator_check` at apply | Catalogue as reader (preparatory reads); evidence reads via C09 | `audit` field set; `Stopped` | **Yes**: summary serving with audit-before-answer and the new target kinds, `operator_check` at apply, read-grant duties (§8 names only the envelope) |
 | RFC-004 rev. 5 + 5.1 | Funds module (Part A); payments; payouts; reporting | Payouts (`payout`), payments (`reversal`) serve summaries with the common duties, **audit append before answering**; account summaries are RFC-002's | Verify for `set_credit_limit` (with RFC-002), `resolve_payout_escalation`, `resolve_reversal_escalation`; call `operator_check` at apply | Reporting as reader for `read_account`; reporting calls `visibility` per supplier view, hides all on failure, records `registry_timestamp` | F4: apply push events only for actual changes, dedupe by `source` then version, **apply the S-G1 snapshot** | **Yes**: S-M1 (§A3, F5, §B12); **F4 drops "skips any event at or below `id_ts`"** in favour of `source` and version, and applies the snapshot (R46-08, S-G1; consistent with C05 review 45 M3); **§A2, F4, JR-11: F4 neither holds nor advances `iam_fresh`** (S-M6); summary serving with audit-before-answer and `operator_check` for payouts and payments; reporting's read-grant and `visibility` duties |
-| RFC-006 rev. 6 | Owner runtime; placement; notifier; provisioning feed; history | Placement serves `probeSetSummary(v)` and the region-disaster target (stated), with the common summary duties, **audit append before answering** | Placement verifies `declare_region_disaster`/`end_region_disaster` (four eyes) and **calls `operator_check` at apply** (R46-27) | — | Runtime: `chain`, audit changefeed, `integrity_stop`/`resume` → `Stopped` (stated); **on a head-chain mismatch, local hold and `integrity_report` to audit, no stop of its own** (R46-12); database: the forced RLS policies of §K and `acknowledged_at`. Notifier: endpoint feed, the **delivery worker** holds secrets and computes the HMAC per attempt, one tenant per delivery, new `webhook-id` on regroup, SNI and hostname verification on the pinned address; **no `visibility` call** (R46-22). Provisioning feed calls `visibility`, hides on failure | **Yes**: S-M2 (§7.1), S-M3 with R46-19 and R46-21 (§15 "signed by RFC-005's signing service" and "RFC-005 signs the delivery"; §7.1 "through RFC-005's signing service"), S-M4 (§15), S-M5 (§12.2, §14.3 ordering), R46-12 (§12.2 report path), R46-02 and R46-18 (§13.2 DDL), placement's `operator_check` |
-| RFC-005 rev. 5 (provider) | Identity, console, audit, edge, key service | Identity serves summaries for `registry_entry`, `data_subject`, `erasure_request`, `exporter_credential`, `exporters_period` (R46-27), with the common duties, **audit append before answering** | Identity verifies envelopes for `disclose_identity`, `end_disclosure`, `issue_share_exporter_credential`, `revoke_share_exporter_credential`, `record_non_user_erasure_request`, `refuse_erasure_request`, `open_legal_requirement_erasure`, `erase`, calling its own `operator_check` at apply | Audit query service and personal-data store as readers (stated) | `operator_check` returns keys and verifies before consuming (R46-01); `cancel` carries the signed action (R46-06); heartbeat fencing (R46-03); key-certification stream (R46-04); policy feed (R46-05); `audit_append` source from mTLS (R46-11); `integrity_report` intake (R46-12) | **Yes**: S-M4 (§8.3), S-M5 (§9.3), S-M6 (C3, §3.3), S-G1 and R46-07 (C3 snapshot and `since`), S-G3 with D3 (§7.3, §7.6), R46-01, R46-03 … R46-06, R46-11, R46-12 (C4, C5, C14, C15, §10); grant digest v2 (§7.6); key release to the notifier's delivery worker (§8.3, §10) |
+| RFC-006 rev. 6 | Owner runtime; placement; notifier; provisioning feed; history | Placement serves `probeSetSummary(v)` and the region-disaster target (stated), with the common summary duties, **audit append before answering** | Placement verifies `declare_region_disaster`/`end_region_disaster` (four eyes) and **calls `operator_check` at apply** (R46-27) | — | Runtime: `chain`, audit changefeed, `integrity_stop`/`resume` → `Stopped` (stated); **on a head-chain mismatch, local hold and `integrity_report` to audit, no stop of its own** (R46-12); database: the forced RLS policies of §K and `acknowledged_at`. Notifier: endpoint feed, the **delivery worker** holds secrets and computes the HMAC per attempt, one tenant per delivery, new `webhook-id` on regroup, SNI and hostname verification on the pinned address; **no `visibility` call** (R46-22). Provisioning feed calls `visibility`, hides on failure | **Yes**: S-M2 (§7.1), S-M3 with R46-19 and R46-21 (§15 "signed by RFC-005's signing service" and "RFC-005 signs the delivery"; §7.1 "through RFC-005's signing service"), S-M4 (§15), S-M5 (§12.2, §14.3 ordering), R46-12 (§12.2 report path), R46-02, R46-18 and V56-1 (§13.2 DDL: the restrictive `restore_confined` policies; every other policy names its role, none `TO PUBLIC`, the truncation policy `FOR DELETE TO truncator`), placement's `operator_check` |
+| RFC-005 rev. 5 (provider) | Identity, console, audit, edge, key service | Identity serves summaries for `registry_entry`, `data_subject`, `erasure_request`, `exporter_credential`, `exporters_period` (R46-27), with the common duties, **audit append before answering** | Identity verifies envelopes for `disclose_identity`, `end_disclosure`, `issue_share_exporter_credential`, `revoke_share_exporter_credential`, `record_non_user_erasure_request`, `refuse_erasure_request`, `open_legal_requirement_erasure`, `erase`, calling its own `operator_check` at apply | Audit query service and personal-data store as readers (stated) | `operator_check` returns keys and verifies before consuming (R46-01); `cancel` carries the signed action (R46-06); heartbeat fencing (R46-03); key-certification stream (R46-04); policy feed (R46-05); `audit_append` source from mTLS (R46-11); `integrity_report` intake (R46-12) | **Yes**: S-M4 (§8.3), S-M5 (§9.3), S-M6 (C3, §3.3), S-G1 and R46-07 (C3 snapshot and `since`), S-G3 with D3 (§7.3, §7.6), R46-01, R46-03 … R46-06, R46-11, R46-12 (C4, C5, C14, C15, §10); grant digest v2 (§7.6); key release to the notifier's delivery worker (§8.3, §10); V56-2 and V56-3 (§10, C14: certificate purpose and owner kind checked; `committed_at` in signed records; `slot` in policy bundles and receipts); V56-4 (C5: audit counts session-summary appends); V56-5 (C15: bind only on valid assertions) |
 
 Raised upstream by review 46, not decided here: **AR46-2** (RFC-000 §8 row for the policy
 and key-certification feed, owner RFC-005), **AR46-1** (§8 "Signed webhook" consumers:
@@ -1367,3 +1407,18 @@ specifies §N now so both sides can build; the RFC-000 row only names it.
 | R46-28 | Minor | Tests added: P-12 … P-18; C-02, C-04, C-07, C-10, C-11, C-12 extended | Conformance tests |
 | V53-3 (C05 fix verification 53, binding) | — | §B matches C05: `iam_fresh` counts only gap-free applied resolved timestamps and committed catch-ups; after acquisition set only by a committed catch-up or once every partition has reported; the snapshot revokes applied keys absent from it; µs → HLC rule stated | Schema units, §B; S-M6; C-02 |
 | RQ46-1, AR46-1, AR46-2 | — | Recorded as raised upstream; §N specified here meanwhile | Consumer obligations (last paragraph) |
+
+## Fix verification 56 resolution
+
+Every fix that review 56 proposes is applied as proposed. V56-7 takes the first option
+(binding decision).
+
+| Finding | Change in version 1 | Where |
+|---|---|---|
+| V56-1 | Restrictive `restore_confined` policies on `<kind>_log` and `<kind>_head`. Every other policy names its role. No policy is `TO PUBLIC`. RFC-006 §13.2 erratum added | §K DDL; C-10; Consumer obligations (RFC-006) |
+| V56-2 | Receivers check the certificate's `purpose` and `owner_kind` against the object. `PolicyBundle` and the cancel receipt carry a signed `slot` | §C, §F, §N; P-15 |
+| V56-3 | `CredentialRecord` and `SignedKeyRecord` carry a signed `committed_at`. For these records, `not_after` is checked against `committed_at`. For other objects, validity is checked now. Revocation is checked now for all | Common types, §A, §C; P-15 |
+| V56-4 | Audit counts session-summary appends per operator and per console workload. Audit refuses past `operator_read_limit` with `read_limit` and raises the breadth alert. Owners answer `refused read_limit` | §G, §J; Timeouts; Consumer obligations; C-07 |
+| V56-5 | Identity binds an identifier to its digest only on a call with all assertions valid | §F; P-12 |
+| V56-6 | The notifier is removed from the header's `visibility` consumers and from the Timeouts row | Header; Timeouts |
+| V56-7 | First option. `iam_fresh` is set when the catch-up entry commits. A new holder asks for the snapshot at once, but the snapshot is not a precondition. The holder may confirm when every partition has reported. This agrees with C05 S-2 and H4. C05 already has the µs → HLC rule, so no C05 erratum is added for it | §B; C-02; S-G1; Consumer obligations (RFC-002) |
