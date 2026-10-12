@@ -1,0 +1,6 @@
+# Known false positives of the glossary-term rule (a different sense of the word). One problem line per row.
+P1-S56: term wait(s|ing) needs POL-05
+P4-S107: term /\bcancellation fee\b/ needs POL-08
+X1-S28: term /\bterminat(e|ed|es|ion)\b/ needs POL-30
+X1-S31: term /\bcancellation fee\b/ needs POL-08
+X2-S23: term /\bsuspended\b/ needs POL-16

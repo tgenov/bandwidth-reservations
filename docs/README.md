@@ -130,3 +130,11 @@ each tied to the scenarios it delivers. `contracts.md` defines every interface b
 components: endpoints, message schemas and topics, shared tables, and in-process
 interfaces, with ownership, delivery semantics and idempotency for each. Wire formats
 (number syntax, field names, status codes) belong there, not in the specs.
+
+## Process
+
+The pipeline, its checkpoints (C0–C6) and dependency graph are in
+[`process/pipeline.md`](process/pipeline.md); slices are defined in
+[`process/slices.json`](process/slices.json). The local harness: purpose-built agents in
+`.claude/agents/`, the orchestrator skill in `.claude/skills/design-pipeline/`, and the
+mechanical checks `tools/check_specs.py` and `tools/impact.py` (diff, coverage).
