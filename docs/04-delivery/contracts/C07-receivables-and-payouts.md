@@ -4,8 +4,8 @@
 |---|---|
 | Contract ID | C07 |
 | Name | receivables-and-payouts |
-| Version | 1 |
-| Status | **Frozen.** Frozen at C4 on [fix verification 49](../../reviews/49-contract-C07-fix-verification.md) (D49-1 … D49-5 applied); errata owed listed below. Revised per [review 37](../../reviews/37-contract-C07-review.md) (REJECT: R37-01 … R37-30), every proposed fix and decision D-37-1 … D-37-6 applied by the orchestrator's binding decision; see "Review 37 resolution". Every mismatch is settled (see "Settled"); none is open. Errata owed by the source RFCs and by other contracts are listed under "Errata owed" |
+| Version | 1.1 |
+| Status | **Frozen.** Frozen at C4 on [fix verification 49](../../reviews/49-contract-C07-fix-verification.md) (D49-1 … D49-5 applied); errata owed listed below. v1.1: errata from review 64 (clarifications; no interface removed). Revised per [review 37](../../reviews/37-contract-C07-review.md) (REJECT: R37-01 … R37-30), every proposed fix and decision D-37-1 … D-37-6 applied by the orchestrator's binding decision; see "Review 37 resolution". Every mismatch is settled (see "Settled"); none is open. Errata owed by the source RFCs and by other contracts are listed under "Errata owed" |
 | Provider | RFC-004 (receivables, payments, payouts, reconciliation; Part A semantics of the credit-limit command). RFC-005 (identity and access) for operation 5, the payout-destination query (RFC-000 §8 lists it as C16 of RFC-005) |
 | Consumers | RFC-002 (account owner: applies the invoice-status feed and the credit-limit command). RFC-005 (operator console: sends the credit-limit command; edge payment ingress and the authenticity verifier, RFC-005 C7, in front of operations 3 and 4). RFC-004 payouts (reads operation 5). External: payment providers, payout providers, the payment partner, banks |
 | Transport | Op 1: Kafka event (receivables' outbox and changefeed relay, [C01](C01-platform.md) §3.5). Op 2: HTTP (gRPC), synchronous command. Op 3, op 4: HTTP, external API (inbound notifications and reports; outbound instructions). Op 5: HTTP (gRPC), synchronous query. No cross-owner database read |
@@ -505,8 +505,11 @@ PayoutDestinationVersion(req: { supplier: SupplierId; instruction_ref: Instructi
   → { details: DestinationDetails }
 // Errors: NOT_FOUND{reason: "unknown_supplier" | "no_destination" | "version_gone"};
 //         UNAVAILABLE ("temporarily unavailable": store unavailable, identity Moving or Stopped,
-//                      or a call deadline exceeded); PERMISSION_DENIED (caller, or destination_ref
-//                      not of `supplier`)
+//                      a call deadline exceeded, the store's refused(read_limit) or the HSM
+//                      budget answer); PERMISSION_DENIED (caller, or destination_ref not of
+//                      `supplier`); INTERNAL (any other store refusal; alerted) (E9)
+// version_gone: identity's history has the version, but the store answers not_found
+// (erased by a covering erasure, or lost in a restore). Both forms use it (E1, D-64-1).
 
 type DestinationDetails =        // personal data; every field marked (share.sensitive) so gRPC
                                  // logging and tracing interceptors redact it; never stored by payouts
@@ -517,11 +520,17 @@ type DestinationDetails =        // personal data; every field marked (share.sen
 ### Semantics
 
 - **Version in force at `at`** (settled S3): identity resolves it from the destination's
-  **version history** in its own log and projection, each version with its commit
-  timestamp `c`: the version with the greatest `c ≤ at`. It is **not** a consistent
-  (`AS OF SYSTEM TIME`) read at `at`, so a call hours or days after the cut answers the
-  same version. Details are a personal-data-store item keyed by (`destination_ref`,
-  version), read by identity (`get`, purpose "payout destination") for this request only.
+  **version history** in its own log, each version with its commit timestamp `c`: the
+  version with the greatest `c ≤ at`. It is **not** a consistent (`AS OF SYSTEM TIME`) read
+  at `at`, so a call hours or days after the cut answers the same version. Details are a
+  personal-data-store item keyed by subject = `supplier`, item =
+  `"<destination_ref>/<version>"` (C09) (E16). Identity reads the item (`get`, purpose
+  "payout destination") for this request only.
+- **Version minting** (E4, R64-02, D-64-2): a `version` is minted by identity uniquely for
+  each change command (never reused, even after a put whose commit failed); versions are
+  ordered by their commit timestamp `c`, not by the version string. For example, identity
+  derives the version from (supplier, command idempotency key). Thus a command that
+  stops after its put does not block a later command.
 - **When a change applies** (settled S2; POL-22, P4-S118; R37-21): **a payout run starts at
   its cut `T_w`**. A change committed at `c` applies to runs with `T_w ≥ c`. A run already
   started (`T_w < c`) keeps the destination it resolved for every one of its instructions,
@@ -538,28 +547,36 @@ type DestinationDetails =        // personal data; every field marked (share.sen
   never sees it. After the hold ends without objection the administrator's change is an
   ordinary change and applies from the next run. The change command and the notice to
   every supplier administrator are identity's (RFC-005 §3.2, C16 command), not part of this
-  contract.
+  contract. Identity checks authorisation and the hold before the details are put, and
+  again in the commit transaction; a refused change puts nothing (E12). An item with no
+  committed version is never read.
 - **Authorisation** (R37-20): only payouts' service principal may call either form;
   `PayoutDestinationVersion` carries `supplier` and `instruction_ref`, and identity checks
-  that `destination_ref` belongs to `supplier`, else `PERMISSION_DENIED`.
-- **Payouts' use** (RFC-004 §B7.1; R37-19, D-37-4):
+  that `destination_ref` belongs to `supplier`, else `PERMISSION_DENIED`. Identity records
+  `instruction_ref` with its own audit of the read; it does not verify it (E18).
+- **Payouts' use** (RFC-004 §B7.1; R37-19, D-37-4, D-64-1):
 
   | Answer | Payouts does |
   |---|---|
   | Destination | Records `destination_ref` and version on the instruction, never the details |
-  | `UNAVAILABLE` | The run waits for that supplier and retries |
+  | `UNAVAILABLE` | The run waits for that supplier and retries with backoff (D-64-3) |
+  | `INTERNAL` | Alerted; the run waits for that supplier |
   | `NOT_FOUND{no_destination}` | No lot is created and the amount carries forward; every supplier administrator is told at each run; escalated to finance only after 4 consecutive runs |
   | `NOT_FOUND{unknown_supplier}` | Escalated to finance; nothing instructed |
-  | `NOT_FOUND{version_gone}` on a resend | The resend is not sent; the instruction is escalated; the destination is never re-resolved for it |
+  | `NOT_FOUND{version_gone}` on `PayoutDestinationAt` (the version in force at `at` exists in identity's history, but the store answers `not_found`, for example lost in a restore) | No lot is created, the amount carries forward, escalated to finance at once; identity tells every supplier administrator to enter the destination again (an ordinary change, applied from the first run with `T_w ≥ c`) (E1, D-64-1) |
+  | `NOT_FOUND{version_gone}` on a resend | Payouts does not send the resend. It creates no new lot. It escalates the instruction to finance at once, and does not re-resolve the destination for it. Identity tells every supplier administrator to enter the destination again (D-64-1) |
 
 - Payouts is a reader of the store only through identity; it never calls the store.
 - Precondition: `at` is a past commit timestamp (a cut is taken below the closed
-  timestamp). Identity, the single writer of the history, answers from its own state.
+  timestamp). Identity answers from the history rows that each change's own transaction
+  wrote, in a serializable read whose timestamp is above `at` (it waits until that is
+  true), never from a projection that is updated later (E6).
 
 ### Delivery and idempotency
 
-Read-only; any number of retries; same request, same answer (until a store item is
-erased after its retention, then `NOT_FOUND{version_gone}`). Each version's store item is
+Read-only; any number of retries; same request, same answer (until the item is erased by
+a covering erasure (C09, RQ-36-2) or lost in a restore (C09 restore step 7), then
+`NOT_FOUND{version_gone}`) (E10). Each version's store item is
 kept while any instruction may reference it (until the supplier's last payout under it is
 final and reconciled, then as long as payout records need it).
 
@@ -590,12 +607,12 @@ final and reconciled, then as long as payout records need it).
 | Op 4a resend | Provider's certified idempotency retention, ≥ 8 days | Past it: status query or escalation, never a resend |
 | Op 4a/4b | `payout_confirmation_timeout` 7 days | Escalated, never re-instructed |
 | Op 4c | Inputs by about 06:00 UTC on D + 1 (assumed, RFC-004 R4-B3); incomplete run at 12:00 UTC on D + 1 | Alert to finance (P4-S81); `settlement_lag_max` 7 days for `Pnr` items |
-| Op 5 call | Per-call deadline 2 s (contract choice) | Treated as `UNAVAILABLE`: the run waits and retries |
+| Op 5 call | Per-call deadline 2 s (contract choice) | Treated as `UNAVAILABLE`: the run waits and retries. The run has no overall deadline for a supplier that is waiting (C09) (E8) |
 | Op 5 no destination | 4 runs | Then escalated |
 
 ## Versioning and compatibility
 
-- Contract version 1 (frozen); JSON events carry `schema` (`invoice-status/1`); gRPC packages are
+- Contract version 1.1 (frozen; 1.1 adds clarifications and the `INTERNAL` error, and removes no interface); JSON events carry `schema` (`invoice-status/1`); gRPC packages are
   versioned `v1`; HTTP paths `/v1/`.
 - Compatible changes: adding optional fields; consumers ignore unknown fields.
 - **Coordinated minor version, consumer first** (R37-23): adding an event `type`, a refusal
@@ -637,7 +654,7 @@ final and reconciled, then as long as payout records need it).
 | P4b | Final failure, then the next run → one instruction of 120.00 USD with lot L only (P4-S86) | 4 |
 | P4c | A lot of 120.000000 re-instructed at ρ′ = 129.53: `K′` 15,543 KES, M15 debits 119.995367, residue 0.004633 stays payable | 4 |
 | P5 | Partner report same (source, id, version) twice → `duplicate`; changed content → `409`; new version → new run version; every `PartnerTxn.kind` matches its movement kind | 4 |
-| P6 | Destination history: versions at c1 < c2; `at` in [c1, c2) → v1, `at = c2` → v2; the same call repeated days later answers the same; `PayoutDestinationVersion` returns the recorded details only for the owning supplier and payouts' principal; unknown supplier, no destination, erased version → the three `NOT_FOUND` reasons; store down → `UNAVAILABLE`; no details in any log or trace | 5 |
+| P6 | Destination history: versions at c1 < c2; `at` in [c1, c2) → v1, `at = c2` → v2; the same call repeated days later answers the same; `PayoutDestinationVersion` returns the recorded details only for the owning supplier and payouts' principal; unknown supplier → `unknown_supplier`; no destination → `no_destination`; erased or restore-lost version → `version_gone` on both forms; payouts escalates at once on the at-cut form (no lot) and on a resend (not sent) (E2); store `read_limit` → `UNAVAILABLE`, other store refusal → `INTERNAL`; store down → `UNAVAILABLE`; no details in any log or trace | 5 |
 | P7 | X1-S46: a held administrator's change is refused, no version created, op 5 unchanged; after the hold, the change applies from the next run | 5 |
 
 **Consumer side.**
@@ -652,7 +669,7 @@ final and reconciled, then as long as payout records need it).
 | K3 | Set-scoped: `member` ≠ receiving account, or applied F9 not designated → `out_of_scope` even without KYB (order); a probe account designated at a slot-map version later than the envelope's v is accepted (v not checked), and the applied F5 records v and the designating version; member without KYB → `kyb_not_vetted`, not retried under the action; two deliveries to one member apply once | 2 |
 | K4 | Console: crash mid-fan-out resumes from its record; every member answered exactly once in the action's outcome; `Moved` re-routes, `Moving` and `Stopped` retried, never recorded as answers | 2 |
 | K4b | Doubling to `2n`: the action over the pending version's `probeAccountSet(v)` → every new probe account `applied` → the slots are published; the audit check flags an injected member outside the set | 2 |
-| K5 | Payouts against an op 5 stub: change committed before the cut → new destination; after the cut → old for this run, new for the next; final failure then re-pay in the next run → that run's destination (P4-S118 rows 1–3); `UNAVAILABLE` → run waits for that supplier; `no_destination` → carried forward, escalated at the 4th run; `unknown_supplier` → escalated; `version_gone` on resend → escalated, not re-resolved | 5, 4 |
+| K5 | Payouts against an op 5 stub: change committed before the cut → new destination; after the cut → old for this run, new for the next; final failure then re-pay in the next run → that run's destination (P4-S118 rows 1–3); `UNAVAILABLE` → run waits for that supplier; `no_destination` → carried forward, escalated at the 4th run; `unknown_supplier` → escalated; `version_gone` at the cut → no lot, carried forward, escalated at once; `version_gone` on resend → not sent, escalated at once, not re-resolved | 5, 4 |
 | K6 | Payment and payout providers (partner certification): redeliver until a 2xx/4xx; honour `Idempotency-Key` on instructions for at least 8 days; treat `422` as final | 3, 4 |
 
 ## Settled
@@ -694,6 +711,7 @@ is frozen.
 | RFC-004, RFC-002, RFC-005 | `temporarily_unavailable{identity_stale}` for a stale `iam_fresh` on a KYB-gated set: not recorded, never final, the console retries under the same `action_id`. Owed by RFC-004 §A4 F5 and §B12 credit-limit row, RFC-002 §7.3, and RFC-005 §7.3/§7.4 console fan-out | C05 review 45 M5, m7; D49-5 |
 | RFC-004 | §B6: partner transaction kinds and per-kind references; per-provider `Pnr` exposure alert | R37-10, R37-28 |
 | RFC-004 | §B7.1: "re-instruction" means a resend of the same instruction; resends bounded by the provider's idempotency retention; transfer reports keyed by (`instruction_ref`, `provider_ref`); `no_destination` carried forward, escalated after 4 runs | F6, R37-05, R37-06, R37-19 |
+| RFC-004 | §B7.1: `version_gone` on the at-cut form or on a resend: no lot (or no resend), the amount carries forward, escalated to finance at once; `INTERNAL` alerted, the run waits | R64-01, R64-05, D-64-1 |
 | RFC-004 | §B7.2: "instruct the FailedFinal lots plus a new lot of `pay − Σ FailedFinal`", not "`round_down(pay)` plus every FailedFinal lot"; publishes `payout_schedule` | R37-02, R37-21 |
 | RFC-004 | §B7.5: M15 debits `P` in total, apportioned over lots; `Σ lots − P` stays payable | R37-07 |
 | RFC-004 | §B12 consumed C16 row: drop "a consistent read at `at`" | S3 |
@@ -703,9 +721,11 @@ is frozen.
 | RFC-002 | §2.3 F9 payload: the designating slot-map version (also C01 §10.3) | S1, R37-13 |
 | RFC-005 | §7.4 check 6 and C4: "has not applied this `action_id`" is not a refusal; a repeat answers the first recorded outcome after checks 1–2 and before checks 3–6; a different requester principal is a `conflict` | R37-01, D49-1, D49-5 |
 | RFC-005 | §7.3: the console fans out only to `probeAccountSet(v)`, v possibly the pending version; DT-32b: audit compares applied set-scoped F5s with the signed set's digest; console warning above `credit_limit_warn_above` | R37-11, R37-27, R37-29 |
-| RFC-005 | C16: refused, not held, under a recovery hold (as rev. 5 already says); `PayoutDestinationVersion` with `supplier` and `instruction_ref`, payouts' principal only, ownership check; sensitive-field redaction; the three `NOT_FOUND` reasons; the notice's run from `payout_schedule` | S2, R37-19, R37-20, R37-21 |
+| RFC-005 | C16: refused, not held, under a recovery hold (as rev. 5 already says); `PayoutDestinationVersion` with `supplier` and `instruction_ref`, payouts' principal only, ownership check; sensitive-field redaction; the three `NOT_FOUND` reasons; the notice's run from `payout_schedule`; cite X1-S46 (C16 command) | S2, R37-19, R37-20, R37-21, A-64-2 |
+| RFC-005 | C16 command: "identity checks authorisation and the hold, mints a version unique to the command, puts the details, then commits the version and checks again in that transaction"; C16 query: history read serializable above `at`; `version_gone` on both forms with the re-entry request; store refusals mapped (`read_limit` → `UNAVAILABLE`, other → `INTERNAL`) | R64-01, R64-02, R64-03, R64-05, R64-07, A-64-3 |
 | RFC-006 | Probe designation (F9 source) carries the designating slot-map version; `probeAccountSet(v)` and `probeSetSummary(v)` served for the pending, unpublished version | S1, R37-11 |
 | RFC-000 | §8 payout-destination row, revision 4.4 errata C4-5 row ("§8 reading meanwhile: held"), interface-points RFC-005 row ("held, not refused") and the Revision 4.4 requirements paragraph (1): "refused during the recovery hold, the attempt recorded; a change after the hold applies from the next run"; close C4-5 as settled | S2, AI-37-1 |
+| RFC-000 | §8 payout-destination row signature: "`payout_destination(supplier, at)` and `payout_destination(supplier, instruction_ref, destination_ref, version)`, payouts' principal only; errors `NOT_FOUND{unknown_supplier \| no_destination \| version_gone}`, `UNAVAILABLE`, `PERMISSION_DENIED`; a lost or erased version is `version_gone`, escalated to finance at once" | A-64-1 |
 | RFC-000 | §8 operator envelope and credit-limit rows, §4.4: a repeat of a recorded `action_id` with the same digest answers the recorded outcome before the operator check, `not_after` and target-version checks | R37-01, AI-37-2 |
 | RFC-000 | §8 invoice-status row: the ledger position is that of the account's last applied movement | R37-04, AI-37-3 |
 | C08 | §E check 6 and the envelope idempotency row: deduplication before checks 3–6 | R37-01 |
@@ -749,3 +769,25 @@ is frozen.
 | R37-30 | `final?` required iff `failed` |
 | Fix verification 49, D49-1 … D49-5 | Step 2 compares the requester principal (`conflict`) and answers the first F5's answer, a `conflict` never replacing it; step 1 refuses `member` ≠ `account` as `out_of_scope`, not recorded; transfer reports keyed (`instruction_ref`, `provider_ref`, `outcome`, `final`); errata rows for RFC-005 C4, RFC-004 §B4.2 and the `identity_stale` answer |
 | C05 review 45 M5 (orchestrator, binding) | Op 2 answer `temporarily_unavailable{identity_stale}` when `iam_fresh` is stale for a KYB-gated set: nothing appended, console retries under the same `action_id`; mapping to C08; K2c |
+
+## Review 64 errata
+
+[Review 64](../../reviews/64-contracts-C07-C09-C16-review.md) found no defect that removes an
+interface. Version 1.1 applies the C07 errata as the review gives them. The C09 errata (E3,
+E5, E7, E11, E13, E14, E15, E17, E19) are C09's.
+
+| Erratum | Finding | Change in version 1.1 |
+|---|---|---|
+| E1 | R64-01, D-64-1 | Op 5 "Payouts' use": a new row for `NOT_FOUND{version_gone}` on `PayoutDestinationAt`. No lot is created. The amount carries forward. Payouts escalates to finance at once. Identity tells every supplier administrator to enter the destination again. The resend row also escalates at once and asks for the destination again |
+| E2 | R64-01 | Test P6: an erased or restore-lost version answers `version_gone` on both forms. Test K5 also |
+| E4 | R64-02, D-64-2 | Op 5 "Version minting": identity mints a version that is unique to each change command and never reused. The commit timestamp `c` orders the versions |
+| E6 | R64-03 | Op 5 precondition: identity reads the history rows that the change's own transaction wrote, in a serializable read above `at`. It does not read a projection. "Version in force" no longer says "and projection" |
+| E8 | R64-04 | Timeouts, "Op 5 call": the run has no overall deadline for a supplier that is waiting |
+| E9 | R64-05, D-64-3 | Op 5 errors: `read_limit` and the HSM budget answer give `UNAVAILABLE`. Any other store refusal gives `INTERNAL`, which is alerted. The run waits for that supplier |
+| E10 | R64-06 | Op 5 "Delivery and idempotency": a covering erasure or a restore loss causes `version_gone`. No retention erase occurs |
+| E12 | R64-07 | Op 5 "Recovery hold": identity checks authorisation and the hold before the put and again at commit. A refused change puts nothing |
+| E16 | R64-10 | Op 5 "Version in force": the store key is subject = `supplier`, item = `"<destination_ref>/<version>"` (C09) |
+| E18 | R64-11 | Op 5 "Authorisation": identity records `instruction_ref` in its own audit of the read. It does not verify it |
+| A-64-1 | Architecture | "Errata owed": RFC-000 §8 payout-destination row gets the full signature and the errors |
+| A-64-2 | R64-13 | "Errata owed": the RFC-005 row cites X1-S46 (C16 command). The RFC-004 P4-S118 citation stays owed (R37-13) |
+| A-64-3 | R64-02, R64-07 | "Errata owed": a new RFC-005 row gives the order of the C16 command (checks, mint, put, commit, check again) |
