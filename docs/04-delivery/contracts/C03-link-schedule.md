@@ -3,7 +3,7 @@
 | | |
 |---|---|
 | Contract ID | C03 (`link-schedule`) |
-| Version | 2.1 (draft for `contract-C03-v1`; revised per [review 39](../../reviews/39-contract-C03-review.md) and [review 52](../../reviews/52-contract-C03-fix-verification.md)) |
+| Version | 2.2 (draft for `contract-C03-v1`; revised per [review 39](../../reviews/39-contract-C03-review.md) and [review 52](../../reviews/52-contract-C03-fix-verification.md); review 58 N-03) |
 | Status | **Draft**, verified by [review 52](../../reviews/52-contract-C03-fix-verification.md) with V52-1 … V52-4 applied; to be tagged only once C02 and C04 carry the same revision rule. No open mismatches (M1, M2 settled; review 39 decisions D39-1 … D39-6 applied). Freeze together with or after C01. **Errata owed** (R39-08): **RFC-001**: (i) M1: `target_version` = registry version, `ENVELOPE_REFUSED(check)`, supply idempotency by (link, **tenant**, key) with `action_id` on the console path, deduplicated before the envelope checks (R39-07, D39-4); (ii) M2: §11.1 rule (2) and the `REDUCTION_FINAL` row release `hold_2` only with the lifecycle `cut` at the highest revision; (iii) C4-7: `onAdopt`/`onMovedOut` re-arm the `T_eff` Tick, step and `notice_due` timers, `Moving` and `Stopped` handled; (iv) `REDUCTION_SET_EXTENDED` a feed event, not only an `ALERT` value; (v) `REDUCTION_FINAL` only after every `CutAnswer` (R39-02); (vi) offer-only classified from state at the `ReductionEffective` entry (R39-03 (a)); (vii) a revision ≥ 2 sent only when strictly lower at some minute or its covered parts changed (R39-01 (c)); (viii) `last` replaces `of` (R39-04); (ix) affected notices per reservation, due-now first (R39-05, R39-06); (x) a supplier may restore an outage network operations recorded and the reverse (D39-5); (xi) cite P1-S84. **RFC-002**: revision on the lifecycle `cut` (M2); `cut_target` repeat = same (key, revision), a revision at or below the highest recorded answered with its recorded answer and writing nothing, a higher revision always writing a `cut` (R39-01 (b)); an offer-scoped target whose offer is Final with `move_at ≤ T_eff` applied as a normal cut (R39-03 (b)). **RFC-003**: `hold_2` release on the highest applied revision (M2, D39-1); any lifecycle `cut` applied after closed minutes amends them ("late POL-07 cut", R39-03 (c)), replacing erratum 5.1's extension-only rule and its "extension chunk" wording; the `hold_2` liveness alarm (R39-20). **RFC-006**: the notifier tells affected holders from `AFFECTED_NOTICE` only (R39-05) within 40 s (R39-06). **C02** (V52-1, V52-2): the "Revisions (C4-2)" bullet carries rule 3's text verbatim (replacing "A lower revision received after a higher one is recorded …"); the case-table row "new revision" reads "a revision above the highest recorded"; a new case-table row "`offer` set, offer Final, `move_at ≤ T_eff` → E11 cause *cut* → `APPLIED`" (R39-03 (b)). **C04** (V52-1, V52-2): "Cut": every revision above the highest recorded writes one `cut`, `APPLIED(none)` included, a revision at or below it writes nothing and never supersedes; idempotency key (link, reduction, reservation, `target_revision`); PL-3 the same rule; "Cut" and PL-3 add "except an offer-scoped target whose offer is Final with `move_at ≤ t_eff` and the link on the new path: applied as a normal cut and emitted as `cut`" (R39-03 (b)); same integrity rule (R39-13). Status stays Draft until C02 and C04 carry the same text. **RFC-000**: AI-39-1, AI-39-2. **Requirements**: RQ-39-1 |
 | Provider | RFC-001 (link schedule owner) |
 | Consumers | Supply commands: callers are the supplier API (supplier principals through RFC-005's edge) and the operator console (network-operations envelope, RFC-005 §7.4). Schedule feed: RFC-002 (account owner), RFC-003 (rating), RFC-006 (history, notifier, alerting) |
@@ -377,9 +377,13 @@ consume them, with C4-2 applied.
    - *Offer accepted before `T_eff`* (R39-03). If `offer_accept` is applied at the link
      before the `ReductionEffective` entry, the reservation is a member of `A_R` (state at
      the entry) and its `CUT_DECIDED` has no `offer`. If it is applied after the entry
-     (late, failover) with `move_at ≤ T_eff`, the target goes out offer-scoped; RFC-002,
-     finding the offer Final, applies it as a normal cut and writes a lifecycle `cut`, and
-     this rule amends any minute already closed.
+     (late, failover), the target goes out offer-scoped.
+   - *Offer-scoped target for a Final offer* (review 58 N-03). An offer-scoped
+     `cut_target` can arrive when the offer is Final and the link is on the new path.
+     In this condition, RFC-002 applies the target as a normal cut from
+     `max(t_eff, move_at)`. The target does not stay offer-scoped. RFC-002 writes a
+     lifecycle `cut`. This rule then amends each minute that is already closed. C02 and
+     C04 use the same rule.
 6. **Per-reservation closure**:
    `closure(r) = min(lifecycle closed time, CLOSED(t) of each Share link of r, hold_1, hold_2)`.
 7. **Liveness** (R39-20). RFC-003 alerts when a reservation's `hold_2` outlives
@@ -615,11 +619,16 @@ consume them, with C4-2 applied.
    - A restoration notice goes to exactly the reservations with an earlier
      `AFFECTED_NOTICE` for the outage (P1-S40).
    - `maintenance_cut` tells the supplier.
-9. **CT-3.7 (RFC-002 with RFC-003) offer accepted before `T_eff`** (R39-03). An
-   `offer_accept` applied after the `ReductionEffective` entry with `move_at ≤ T_eff`: the
-   offer-scoped target is applied by RFC-002 as a normal cut with a lifecycle `cut`;
-   minutes from `T_eff` already closed at the full rate are amended down, reason "late
-   POL-07 cut".
+9. **CT-3.7 (RFC-002 with RFC-003) offer-scoped target for a Final offer** (R39-03,
+   review 58 N-03).
+   - Apply `offer_accept` after the `ReductionEffective` entry. Then send the
+     offer-scoped `cut_target` while the offer is Final and the link is on the new path.
+   - Make sure that RFC-002 applies the target as a normal cut from
+     `max(t_eff, move_at)`, and writes a lifecycle `cut`.
+   - Make sure that RFC-002 does not keep the target offer-scoped
+     (no `KEPT_FOR_OFFER`, no `offer_cut_kept`).
+   - Make sure that RFC-003 amends down each closed minute from `max(t_eff, move_at)`,
+     with the reason "late POL-07 cut".
 10. **CT-3.8 (RFC-003) liveness.** A `hold_2` still up 1 h after `REDUCTION_FINAL` raises
     the alarm (R39-20).
 11. **CT-all.** An unknown `kind` with the next `feed_seq` is consumed as a no-op, and
@@ -712,3 +721,4 @@ The readings listed under "Readings adopted" are accepted.
 | V52-2 | Status errata list C02's new case-table row and C04's "Cut"/PL-3 exception for R39-03 (b) |
 | V52-3 | 200 B per `AFFECTED_NOTICE` is a stated budget; `notice_id` dropped (dedup by `link_id`, `log_seq`, `reservation`); PT-9 checks the size; fallback split 20 + 35 + 5 s at 300 B recorded |
 | V52-4 | CT-3.4's key matches rule 5: (link, reduction) and the target revision |
+| Review 58 N-03 (version 2.2) | Rule 5 and CT-3.7: an offer-scoped `cut_target` that arrives when the offer is Final, with the link on the new path, applies as a normal cut from `max(t_eff, move_at)`. It does not stay offer-scoped. C02 and C04 use the same rule |
