@@ -3,8 +3,8 @@
 | | |
 |---|---|
 | Contract ID | C04 |
-| Version | 2.1 (draft). Version 2 revised version 1 per [review 43](../../reviews/43-contract-C04-review.md). Version 2.1 revises version 2 per [review 58](../../reviews/58-contract-C04-review.md). See [Review 43 resolution](#review-43-resolution) and [Review 58 resolution](#review-58-resolution) |
-| Status | **Draft**, for fix verification of review 58. The orchestrator settled every point (see [Settled](#settled)). The contract becomes Frozen after the fix verification gives ACCEPT (tag `contract-C04-v2.1`) |
+| Version | 2.2 (draft). Version 2.2 renames `pending_answered` to `pendingAnswered` and states the covered-parts rule of C02 draft.3. Version 2 revised version 1 per [review 43](../../reviews/43-contract-C04-review.md). Version 2.1 revises version 2 per [review 58](../../reviews/58-contract-C04-review.md). See [Review 43 resolution](#review-43-resolution) and [Review 58 resolution](#review-58-resolution) |
+| Status | **Draft**, for fix verification of review 58. The orchestrator settled every point (see [Settled](#settled)). The contract becomes Frozen after the fix verification gives ACCEPT (tag `contract-C04-v2.2`) |
 | Provider | RFC-002 (the account owner: the booking module, and RFC-004 Part A's funds module, writing to the same log) |
 | Consumers | RFC-006 (the notifier, alerting and history), RFC-003 (rating, and the catalogue's locked-price read model), RFC-004 (Part A owns the release-after-grace rule; Part B settlement reads this feed only through RFC-003's charge lines), RFC-005 (envelope verification on the command port), the operator console, reporting |
 | Transport | **Kafka event** for both feeds, published from the transactional outbox (direct publish plus changefeed relay; C01 §2.5, RFC-006 §5.3). **Synchronous gRPC command** for `terminate`, routed by account slot with C01's `CommandEnvelope`. **In-process** for release after grace: the funds module's F7 outcome feeds the booking module's E11 in the same entry, and nothing goes on the wire |
@@ -161,7 +161,7 @@ interface OutcomeEvent extends PayloadBase {   // headers: stream "outcome", kin
 /** C01's ReportMarker, extended by this contract (review 43 B-01, D-1). Headers: kind "report_marker", report_through = reportPosition. */
 interface ReportMarker extends C01ReportMarker {   // { slot: SlotNo; generation: 0; epoch: Epoch; reportPosition: HlcTs }
   prevReportPosition: HlcTs | null;         // reportPosition of the previous marker of the SAME slot (report_through on that slot's partition ''); null only for the slot's first marker (N-02)
-  pending_answered: RequestId[];            // requests whose outcome events this marker newly covers (prev < ts ≤ reportPosition) and that were answered `pending`; at most 5,000 ids (est.) per chunk
+  pendingAnswered: RequestId[];            // requests whose outcome events this marker newly covers (prev < ts ≤ reportPosition) and that were answered `pending`; at most 5,000 ids (est.) per chunk
   chunk: { part: number; last: boolean };   // N-12: an overflow list goes in consecutive markers with the same reportPosition, part 0, 1, …; the notifier treats the set as one marker
 }
 ```
@@ -254,7 +254,7 @@ interface Cut extends LifecycleBase {
   target_revision: number;                  // the revision of the cut_target command this E11 applied (C02)
   t_eff: UtcMinute;
   target: Pieces | "none";                  // as recorded after this command: per-minute min over every revision received for the key
-  covered_parts: PartId[];
+  covered_parts: PartId[];                 // revision 1 sets them; a later revision has the same parts less ended parts, never adds one (C02 draft.3)
   applied: { status: "applied"; change_ids: ChangeId[] }    // [] = no part's rate changed; otherwise [this E11's change_id]
          | { status: "not_applied"; why: "ended" | "left_link" };
   part_rates: PartRates[];                  // changed parts from t_eff; [] when nothing changed
@@ -448,7 +448,7 @@ buffers until such a marker arrives, whichever path brought the event or the mar
   entry (RFC-002 §8.1), and it writes the covering marker after that. So when it writes
   the first marker covering a request q, it knows whether it sent `pending` for q. Once it
   has decided to send the final answer, it never sends `pending` for q.
-- `pending_answered` lists every request whose event the marker newly covers
+- `pendingAnswered` lists every request whose event the marker newly covers
   (`prevReportPosition` < `ts` ≤ `reportPosition`) and for which `pending` was sent.
 - After an acquisition (expiry, handoff, re-home or resume), the first marker of the new
   holder lists **every** covered event above `prevReportPosition`. The new holder cannot
@@ -470,7 +470,7 @@ buffers until such a marker arrives, whichever path brought the event or the mar
 - **Keep every marker (N-01).** For `account.outcome.v1`, the notifier keeps every marker
   by (slot, epoch, `reportPosition`, `chunk.part`). The monotone drop of C01 ("ignored at
   or below the last") applies only to the `reported` gate. It does not apply to
-  `pending_answered`. Thus a first covering marker that arrives after a later marker (by
+  `pendingAnswered`. Thus a first covering marker that arrives after a later marker (by
   relay or by takeover republish) still gives its list to the notifier.
 - **Liveness (N-01, D58-1).** If the first covering marker is not received in
   `gap_timeout`, the notifier reads it from the outbox or from history, as it does for a
@@ -554,6 +554,11 @@ Every event is written as an outbox row in the transaction of the entry it repor
   Neither writes an entry or a `cut` (C02 answers both).
 - **Order.** Among the `cut` events of a key, revisions therefore strictly increase in
   `stream_seq` order, and the later event supersedes.
+- **Covered parts (C02 draft.3, review 54 D4).** Revision 1 of a key sets the covered
+  parts. A revision ≥ 2 has the same parts. It can omit a part that has ended since
+  revision 1. It never adds a part. If a revision ≥ 2 adds a part, the owner answers
+  `MISMATCH`, writes nothing and alerts. `covered_parts` on each `cut` is the set of the
+  revision that the event applies.
 - **`target`.** It is the per-minute `min` of everything recorded. A piece above the
   recorded one is ignored at that minute and alerted.
 - **Not applied.** `part_rates` is `[]` and `applied.status` says why.
@@ -803,7 +808,7 @@ the same identity. The owner records only a definitive failure.
   a new `EndCause`, or any change to units or to the meaning of `part_rates` or `fee_id`.
 - The notifier, reporting and history may store an unknown `kind` and ignore it. Every
   consumer ignores unknown optional fields.
-- The `ReportMarker` extension (`prevReportPosition`, `pending_answered`) is part of
+- The `ReportMarker` extension (`prevReportPosition`, `pendingAnswered`) is part of
   `account.outcome.v1` from this version on.
 
 ## Scenarios relied on
@@ -862,7 +867,7 @@ X1-S12, X1-S16, X1-S17, X1-S36, P4-S23, P4-S97.
 
 | # | Side | Test | Scenarios |
 |---|---|---|---|
-| CN-1 | Notifier | No delivery without a covering marker. Exactly one webhook when `answered_pending` or the first covering marker's `pending_answered` says so, whichever path delivers first. None otherwise. A later marker arriving before the first covering marker does not trigger a decision when `answered_pending` is `false`. **Out of order (N-01):** M2 arrives before M1 (by relay or takeover republish), and M1 lists q. The notifier keeps M1 and sends exactly one webhook for q. If M1 is still missing after `gap_timeout` and cannot be read from the outbox or history, the notifier sends the webhook (D58-1). Chunked markers count as one marker | P2-S06, P2-S09 |
+| CN-1 | Notifier | No delivery without a covering marker. Exactly one webhook when `answered_pending` or the first covering marker's `pendingAnswered` says so, whichever path delivers first. None otherwise. A later marker arriving before the first covering marker does not trigger a decision when `answered_pending` is `false`. **Out of order (N-01):** M2 arrives before M1 (by relay or takeover republish), and M1 lists q. The notifier keeps M1 and sends exactly one webhook for q. If M1 is still missing after `gap_timeout` and cannot be read from the outbox or history, the notifier sends the webhook (D58-1). Chunked markers count as one marker | P2-S06, P2-S09 |
 | CN-2 | Notifier | Nothing (no notice, no webhook) for any event with `withheld_by`. `withhold_refused` and `told` give one notice within 60 s | X1-S36, X1-S17 |
 | CN-3 | Notifier | `cut` with `rate_cut`, `ended(revoked \| released)`, `partner_leg_affected`, `offer_made`, `offer_accepted`, `offer_declined`, `offer_lapsed`, `offer_failed` and `offer_cut_kept` (N-11) give one notice each. Duplicates give none. There is no second release notice from the funds or standing feeds | P1-S26, P1-S75, P2-S91, P4-S23 |
 | CR-1 | Rating | Accrual uses `part_rates`. A booking starts at `max(window.start, floor_min(decided_ts))`, an added part at `part.window.start`, and accrual ends at `ended.effective` | P3-S02, P3-S04, P3-S42, P3-S45 |
@@ -892,8 +897,8 @@ Review 43's amendments are folded into the rows.
 | MM-7 | Offer notices | No offer events | RFC-006 §15 expects them | `offer_*` and `offer_cut_kept`. Rating ignores both. `cut_kept` is carried as pieces (m-13) |
 | MM-8 | Honouring `withhold_notice` | "Which the notifier honours" | RFC-006 §15 silent | **Every** notice and webhook caused by a withheld termination's entry is suppressed, marked `withheld_by`. Status reads stay truthful (amended by review 43 D-3) |
 | MM-9 | Release notice source | Lifecycle feed | RFC-006 §15: standing and funds feeds | `ended(released)` only. C05's `ReleasedAfterGrace` notice is not delivered |
-| MM-10 | Which outcomes get a webhook | `pending` not logged | RFC-006 §15: only outcomes answered `pending` | `answered_pending` on the event **or** `pending_answered` on the first covering marker. After an acquisition (not an `adopt`), the first marker lists every covered event above the predecessor's last `report_through` in the same slot. The notifier keeps every marker; the monotone drop applies only to the gate. A first covering marker that cannot be obtained causes the webhook to be sent. RFC-006 sizing is unchanged (est.) (amended by review 43 B-01, D-1, and review 58 N-01, N-02, D58-1) |
-| MM-11 | Marker fields | (slot, epoch, report position) | RFC-006 adds generation | C01's `ReportMarker` (`generation: 0`, `reportPosition`, header `report_through`), extended by `prevReportPosition` and `pending_answered` |
+| MM-10 | Which outcomes get a webhook | `pending` not logged | RFC-006 §15: only outcomes answered `pending` | `answered_pending` on the event **or** `pendingAnswered` on the first covering marker. After an acquisition (not an `adopt`), the first marker lists every covered event above the predecessor's last `report_through` in the same slot. The notifier keeps every marker; the monotone drop applies only to the gate. A first covering marker that cannot be obtained causes the webhook to be sent. RFC-006 sizing is unchanged (est.) (amended by review 43 B-01, D-1, and review 58 N-01, N-02, D58-1) |
+| MM-11 | Marker fields | (slot, epoch, report position) | RFC-006 adds generation | C01's `ReportMarker` (`generation: 0`, `reportPosition`, header `report_through`), extended by `prevReportPosition` and `pendingAnswered` |
 | MM-12 | `ended(revoked)` from a cut | No end event named | RFC-003 §5.2 ends accrual at revocation (P3-S08) | Written in the cut's E11. **Listed as an allowed early-effective exception**, held by `hold_2` and amended late like a cut (amended by review 43 M-06) |
 | — | `terminate` per-call deadline | Not stated | Not stated | 2 s (est.), to be confirmed at C5 |
 | D-5 | Refusals of operator commands | Not recorded | Console and audit need stable replays | Recorded as an audit-only entry keyed by (partition, `action_id`) |
@@ -906,7 +911,7 @@ needs the errata below.
 | RFC or contract | Erratum | Source |
 |---|---|---|
 | RFC-002 | §8 (gate sentence) and §8.3: the reporting entries include the E11 that decides or fails a change, and E12 for a change that frees capacity. Every change request gets an outcome event | M-01 |
-| RFC-002 | §8.1 and §8.3: the outcome event carries `answered_pending` (`pending` sent before the entry was formed). The owner decides a final answer or `pending` atomically per request. The first marker covering a request lists it in `pending_answered` if `pending` was sent. After an acquisition (not an `adopt`), the first marker lists every covered event above the predecessor's `report_through` in the same slot. Markers carry `prevReportPosition` | B-01, MM-10, N-02 |
+| RFC-002 | §8.1 and §8.3: the outcome event carries `answered_pending` (`pending` sent before the entry was formed). The owner decides a final answer or `pending` atomically per request. The first marker covering a request lists it in `pendingAnswered` if `pending` was sent. After an acquisition (not an `adopt`), the first marker lists every covered event above the predecessor's `report_through` in the same slot. Markers carry `prevReportPosition` | B-01, MM-10, N-02 |
 | RFC-002 | §9.7, §13.1: one lifecycle `cut` per `cut_target` revision above the highest recorded, even with the same content, carrying `target_revision`. Nothing for a revision at or below it: a recorded repeat gets its recorded reply; a never-recorded lower revision gets the highest recorded revision's reply, echoing its own revision; neither supersedes (V52-1). An offer-scoped target on a Final offer whose new path includes the link is applied as a normal cut from `max(t_eff, move_at)` and emitted as `cut` (V52-2 as widened by review 58 N-03). `ended(revoked)` in the same E11 when every part is 0 to the end | MM-3, M-02, MM-12 |
 | RFC-002 | §9.5, §9.6: `fee_id = "<reservation>/<path>/<leg index>"`. The move's E11 records the old partner leg's fees due at `move_at`, paid by Share, and `moved` carries them | MM-2, M-03 |
 | RFC-002 | §13.1: `account_is_probe` on lifecycle events, as a cross-check of the catalogue designation | MM-1 |
@@ -927,9 +932,9 @@ needs the errata below.
 | RFC-004 | §A7, JR-2: release E11s effective `nb(ts)` of the F7 entry. Lateness is alerted per `delay_min`. Part A's release notice is not delivered (the lifecycle `ended(released)` is the notice). A fee due carries its payer, so the funds module never drains a buyer's hold for a Share-paid fee (revoked, cancelled after a cut, a move's old partner leg) | MM-4, MM-9, m-09 |
 | RFC-004 | Traceability: cite P4-S117 (the late POL-07 cut, §B3.4) | m-10 |
 | RFC-001 | Traceability: cite P1-S84 (a move final after the cut carries the cut rate) | m-10 |
-| RFC-006 | §5.3, §5.4: the report marker is C01's `ReportMarker` (header `report_through`), extended with `prevReportPosition` and `pending_answered`. `generation` is a header only, not part of the gate | MM-11, B-01, m-02 |
-| RFC-006 | §15: holder notices from the lifecycle `cut` (with `rate_cut`), `ended`, `partner_leg_affected`, `offer_made`, `offer_accepted`, `offer_declined`, `offer_lapsed`, `offer_failed` and `offer_cut_kept`. No notice or webhook for any event with `withheld_by`. The release notice only from `ended(released)`. Outcome webhooks iff `answered_pending` or the first covering marker's `pending_answered`, applying to every booking request, changes included. The notifier keeps every marker by (slot, epoch, `reportPosition`, `chunk.part`); the monotone drop applies only to the gate. A first covering marker missing after `gap_timeout` is read from the outbox or history, else the webhook is sent. Chunked markers count as one. Buyer-facing freed-capacity reports wait for `leg_changes_durable`. Sizing unchanged (est.; marker lists are capped at 5,000 ids per chunk) | MM-6 … MM-10, B-01, M-04, N-01, N-11, N-12 |
-| C01 | §2.5: extend `ReportMarker` with `prevReportPosition`, `pending_answered` and `chunk` (account kind), or let C04 extend it. **§5 report-marker row: "ignored at or below the last for the gate; delivered to a marker handler regardless (outcome feed)"**, and §3.5 marker delivery to match (N-01). §5: confirm "security alert, keep the first", with consumer contracts allowed to stop | B-01, m-03, N-01, N-12 |
+| RFC-006 | §5.3, §5.4: the report marker is C01's `ReportMarker` (header `report_through`), extended with `prevReportPosition` and `pendingAnswered`. `generation` is a header only, not part of the gate | MM-11, B-01, m-02 |
+| RFC-006 | §15: holder notices from the lifecycle `cut` (with `rate_cut`), `ended`, `partner_leg_affected`, `offer_made`, `offer_accepted`, `offer_declined`, `offer_lapsed`, `offer_failed` and `offer_cut_kept`. No notice or webhook for any event with `withheld_by`. The release notice only from `ended(released)`. Outcome webhooks iff `answered_pending` or the first covering marker's `pendingAnswered`, applying to every booking request, changes included. The notifier keeps every marker by (slot, epoch, `reportPosition`, `chunk.part`); the monotone drop applies only to the gate. A first covering marker missing after `gap_timeout` is read from the outbox or history, else the webhook is sent. Chunked markers count as one. Buyer-facing freed-capacity reports wait for `leg_changes_durable`. Sizing unchanged (est.; marker lists are capped at 5,000 ids per chunk) | MM-6 … MM-10, B-01, M-04, N-01, N-11, N-12 |
+| C01 | §2.5: extend `ReportMarker` with `prevReportPosition`, `pendingAnswered` and `chunk` (account kind), or let C04 extend it. **§5 report-marker row: "ignored at or below the last for the gate; delivered to a marker handler regardless (outcome feed)"**, and §3.5 marker delivery to match (N-01). §5: confirm "security alert, keep the first", with consumer contracts allowed to stop | B-01, m-03, N-01, N-12 |
 | C03 v2.1 | Rule 5 and CT-3.7: widen the wording from "offer Final, `move_at ≤ T_eff`" to "offer Final, link on the new path", with the cut from `max(t_eff, move_at)`. Wording only: rule 4 holds nothing for offer-scoped targets | N-03 |
 | C05 (erratum against frozen version 1, a C05 1.1; not a precondition to freeze C04, D58-4) | `EndCause` aligned with C04 (`cancelled_after_cut`; no `moved` or `shortened_to_end` as end causes). `feeDue` carries the payer. `Notice.ReleasedAfterGrace` is not delivered by the notifier | m-09, D58-4 |
 | RFC-005 | None. Note: check 3 does not catch a different envelope under a used `action_id`. The identity lookup does (M-05) | M-05 |
@@ -948,7 +953,7 @@ Every fix review 43 proposes is accepted with its decisions D-1 … D-6 (binding
 
 | Finding | Severity | Resolution in version 2 |
 |---|---|---|
-| B-01 | Blocker | `ReportMarker.pending_answered` and `prevReportPosition`. Webhook iff `answered_pending` or the first covering marker lists the request. After a holder change the first marker lists every covered event. PO-5, CN-1. RFC-002, RFC-006 and C01 errata (D-1) |
+| B-01 | Blocker | `ReportMarker.pendingAnswered` and `prevReportPosition`. Webhook iff `answered_pending` or the first covering marker lists the request. After a holder change the first marker lists every covered event. PO-5, CN-1. RFC-002, RFC-006 and C01 errata (D-1) |
 | M-01 | Major | Reporting entries include the E11 deciding or failing a change, and E12. PO-1 amended. RFC-002 §8/§8.3 erratum |
 | M-02 | Major | Superseded by review 52 V52-1 and V52-2 (binding): every revision above the highest recorded writes a `cut`, even with the same content. A lower or equal revision writes nothing and never supersedes. An offer-scoped target on a Final offer (`move_at ≤ t_eff`, link on the new path) writes a `cut`. Revisions strictly increase in `stream_seq`. `change_ids: ChangeId[]`. PL-3, CR-2 and the Idempotency row amended. MM-3 amended |
 | M-03 | Major | `Moved.fees_due` (old path, payer Share). `fee_id` includes the path. PL-5, CR-4. RFC-002 and RFC-003 errata (D-2). MM-2 amended |
@@ -994,3 +999,4 @@ Every fix that review 58 proposes is applied. Its decisions D58-1 to D58-4 are b
 | N-12 | Minor | One marker lists at most 5,000 ids (est.). Longer lists go in chunks with the same `reportPosition` (`chunk.part`, `chunk.last`). The notifier treats the set as one marker. The sizing claim is marked (est.) |
 | D58-4 | Decision | The C05 row is an erratum against frozen C05 version 1 (a C05 1.1). It is not a precondition to freeze C04 |
 | AI-58-1 | Architecture | Added to the RFC-000 §8 obligations row |
+| v2.2 edit | Orchestrator | `pending_answered` is renamed to `pendingAnswered` everywhere, to agree with C01, which owns the `ReportMarker` schema. The Cut section and `covered_parts` now state the C02 draft.3 rule: revision 1 sets the covered parts, a later revision can only omit ended parts, and a revision that adds a part gets `MISMATCH` |
