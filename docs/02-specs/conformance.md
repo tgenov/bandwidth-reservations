@@ -106,6 +106,7 @@ plan, not in the scenario.
 | P2-S10 | An outcome never changes once reported | TBD | — | not assessed |
 | P2-S99 | A status read never contradicts the decided outcome, and reflects it within status_staleness | TBD | — | not assessed |
 | P2-S107 | An outcome other than confirmed is reported once its Share-link releases are durable, within release_grace while a link's schedule owner is failing over | TBD | — | not assessed |
+| P2-S111 | While a request's decision record fails over before its deadline, a status read of an outcome not yet reported reads pending, never a wrong outcome | TBD | — | not assessed |
 | P2-S108 | A reported outcome is reported by every later status read, even while the decision record is unavailable at the deadline | TBD | — | not assessed |
 | P2-S11 | A request without a deadline gets the default deadline | TBD | — | not assessed |
 | P2-S12 | A deadline outside its bounds is invalid | TBD | — | not assessed |

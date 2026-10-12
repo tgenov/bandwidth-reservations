@@ -130,6 +130,34 @@ design target.
 | Glossary | *Serving region* states the go-live condition |
 | Scenarios | None. This is an assumption and a gate, not behaviour |
 
+## RQ-12, from RFC-000 revision 3
+
+This issue comes from the "Requirements issues" section of RFC-000 revision 3 (only that
+section was read). The coordinator decided it; the decision is binding. It has an
+Amendments row, "RFC-000 revision 3: RQ-12 …". It was applied after v1.4 (392
+scenarios), so the baseline is now **393 scenarios** (P2 111). The new ID is
+**P2-S111**.
+
+Decision: the POL-04 status-read exception is extended to "before or at the deadline".
+While an account's decision record is failing over (bounded by admission's 1 min RTO), a
+status read of an outcome not yet reported may report `pending` beyond
+`status_staleness`. It never reports a wrong outcome, and never `pending` after an outcome
+already reported (RQ-10 stands).
+
+| Where | Change |
+|---|---|
+| POL-04 | The exception "Decision record unavailable at the deadline" becomes "Decision record unavailable, before or at the deadline". While the record is failing over, a status read reports `pending`, even beyond `status_staleness`, until the record is available again: at most admission's recovery time (1 min, POL-06) after it became unavailable, and at most `release_grace` after the deadline when it is unavailable at the deadline. It never reports another outcome. It still applies only to an outcome not yet reported. The Why is extended |
+| Summary | The POL-04 line is updated |
+| P2-N2 | The need and its measure state the extended exception |
+| Glossary | *Status read* states it |
+| P2-S99 | The last Then's exception now reads "unavailable, before (P2-S111) or at its deadline (P2-S106)" |
+| New | **P2-S111** `@need-P2-N2 @POL-04 @POL-06`. An outcome is decided at 5 s, and the decision record is then unavailable for 20 s, before the outcome is reported and before the 30 s deadline. Every status read meanwhile reports pending, even beyond `status_staleness`, never another outcome. The outcome is reported once the record returns, within 1 min of it becoming unavailable |
+| Conformance | One row added (P2-S111), in file order after P2-S107 |
+
+Checks: re-run as above against the committed v1.4 tree. The output is identical apart
+from the counts (393 scenarios, 393 unique IDs, 66 needs all cited, 46 parameters, the
+conformance matrix at 393 rows).
+
 ## Choices made in applying the decisions
 
 1. **RQ-7, the role of the completion margin.** POL-02's completion margin is redefined

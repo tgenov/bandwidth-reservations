@@ -47,7 +47,7 @@ the provenance line under each heading lists the questions it answers.
 | POL-01 | Pricing model | Pay per reservation: per Mbps-minute reserved, accrued per minute, no minimum term; usage pricing only for best-effort, burst and traffic outside a reservation |
 | POL-02 | Contention | The oldest request wins; a waiting younger holder yields; contention alone never makes every competitor lose, for waiters whose deadline less their completion margin outlasts the outcome ahead; refusals caused by Share's own holds or undecided partner bookings are contention |
 | POL-03 | Interrupted route requests | Resume within the deadline; otherwise fail, release, notify |
-| POL-04 | Buyer interaction | An answer within `ack_budget`: final if ready, otherwise `pending`, then poll or webhook; each outcome is decided at one point, and a status read lags it by at most `status_staleness`, never contradicting it; an outcome other than confirmed is reported only once its Share-link releases are durable, within `status_staleness` of the decision (`release_grace` while a link's schedule owner is failing over); pending up to `release_grace` past the deadline while the decision record is unavailable, unless the outcome was already reported; capacity is free from the moment the outcome is reported |
+| POL-04 | Buyer interaction | An answer within `ack_budget`: final if ready, otherwise `pending`, then poll or webhook; each outcome is decided at one point, and a status read lags it by at most `status_staleness`, never contradicting it; an outcome other than confirmed is reported only once its Share-link releases are durable, within `status_staleness` of the decision (`release_grace` while a link's schedule owner is failing over); pending while the decision record is unavailable, before or at the deadline (at most 1 min, or up to `release_grace` past the deadline), unless the outcome was already reported; capacity is free from the moment the outcome is reported |
 | POL-05 | Authority over a link | One schedule owner per link; a single-link booking is a one-leg route; contended requests wait unless `wait = false` |
 | POL-06 | Non-functional targets | 99.99% admission and ingestion, 99.9% wallet, payouts, reporting, in each serving region; funds holds and headroom checks for bookings held to admission's targets; ×50 design load; RPO 0; RTO per capability (1 min to 30 min on node or zone loss, 1 h on region loss); a declared region disaster is outside the availability, latency and timeliness measurements, while RPO 0 still applies; the assumed topology, and its go-live condition of diverse fibre paths, are in X2's constraints; probes use a designated account, on a credit limit set by finance, with no business side effects |
 | POL-07 | Loss of supply | Never revoke silently; stop new sales at once; an outage affects only the minutes it overcommits, all holders alike; maintenance on free capacity only; permanent reductions by notice, newest Mbps first, with a firm equivalent-path offer at the lower price, all-Share paths first, its Share-leg capacity held for `offer_window` and any partner leg booked at acceptance |
@@ -202,7 +202,7 @@ stays in flight.
 
 ## POL-04. Buyer interaction: synchronous when ready, otherwise pending
 
-*Answers D-04 (R-06); architecture review RI-3; RFC-000 revision RQ-5, RQ-6; RFC-000 review 2 RQ-7, RQ-8, RQ-10.*
+*Answers D-04 (R-06); architecture review RI-3; RFC-000 revision RQ-5, RQ-6; RFC-000 review 2 RQ-7, RQ-8, RQ-10; RFC-000 revision 3 RQ-12.*
 
 **Decision.**
 - Every booking request gets an answer, final or `pending`, within `ack_budget`.
@@ -228,9 +228,13 @@ stays in flight.
     of a Share link the request holds is failing over, that may take longer than
     `status_staleness`: the outcome is then reported within `release_grace` (POL-26)
     of the decision, and status reads report `pending` until then.
-  - **Decision record unavailable at the deadline.** While a request's decision record
-    is unavailable at its deadline, a status read reports `pending` until the record is
-    available again, at most `release_grace` after the deadline (POL-26).
+  - **Decision record unavailable, before or at the deadline.** While a request's
+    decision record is unavailable (its account's record is failing over), before or at
+    the request's deadline, a status read reports `pending`, even beyond
+    `status_staleness` after the decision, until the record is available again: at most
+    admission's recovery time (1 min, POL-06) after it became unavailable, and, when it
+    is unavailable at the deadline, at most `release_grace` after the deadline (POL-26).
+    It never reports an outcome other than the one decided.
 - **A reported outcome stays reported.** Once a request's outcome has been reported,
   every later status read reports it, whatever the state of its decision record or of
   its links' schedule owners; neither exception above ever turns it back into
@@ -262,7 +266,11 @@ cannot be durable within `status_staleness`, so reporting waits for it, for at m
 meanwhile, so nothing is lost commercially, and the alternative, reporting before the
 release is durable, would show a buyer free capacity that is still held. A reported
 outcome never reverts to `pending`, because a buyer or agent may already have acted on
-it (POL-29 retries return the same answer).
+it (POL-29 retries return the same answer). A decision record that fails over before the
+deadline has the same problem as one unavailable at it: a decision in flight at the
+failure becomes known only once the record is available again, so no status read can
+report it within `status_staleness`; `pending` is the only answer that is never wrong,
+and admission's recovery time bounds it.
 
 ## POL-05. Authority over a link: one schedule owner
 
@@ -1511,3 +1519,4 @@ administrator, keeps disclosure a deliberate account decision that an agent cann
 | 2026-10-12 | RFC-000 review 2: RQ-10 (POL-04): the exception "status reads report `pending` while the decision record is unavailable at the deadline" never applies to an outcome already reported; a reported outcome is reported by every later status read | RFC-000 review 2 RQ-10: a `pending` answer could follow a reported outcome, against "an outcome never changes once reported" |
 | 2026-10-12 | RFC-000 review 2: RQ-11 (POL-24): the reconciliation invariant adds payments the partner has received and reported and the ledger has not yet posted, each matched to its partner credit, symmetric with payouts executed but not yet confirmed; the safeguarding rule likewise | RFC-000 review 2 RQ-11: a top-up near the cut, posted seconds later, would have made every daily cut show a difference and alert |
 | 2026-10-12 | RFC-000 review 2: A0R-05 (POL-06, X2 constraints): the assumed topology gains a go-live condition, *Assumed*: R1 Nairobi has at least two physically diverse fibre paths, one of them to R3 Johannesburg not via Mombasa, and R2 Mombasa likewise, one of them to R3 not via Nairobi; a go-live condition (production gate), not a design target | RFC-000 review 2 A0R-05: one Nairobi–Mombasa cut could isolate Nairobi from Johannesburg too |
+| 2026-10-12 | RFC-000 revision 3: RQ-12 (POL-04): the status-read exception for an unavailable decision record applies before or at the deadline: while a request's decision record is failing over, a status read of an outcome not yet reported may report `pending` beyond `status_staleness`, until the record is available again, at most admission's 1 min recovery time after it became unavailable (and at most `release_grace` after the deadline when unavailable at it); never a wrong outcome, never after a reported outcome (RQ-10 stands) | RFC-000 revision 3 RQ-12: a decision in flight when an account's record fails over before the deadline becomes known only after the failover, so no status read could report it within `status_staleness` |

@@ -113,7 +113,7 @@ Feature: Booking, changing and ending route reservations, all or nothing
       Given a booking request's outcome has been decided
       When the buyer reads its status at any time after the decision
       Then the status read reports either pending or the decided outcome, never another outcome
-      And every status read from `status_staleness` (POL-04) after the decision reports the decided outcome, unless the request's decision record is unavailable at its deadline (P2-S106), or the outcome is not confirmed and the schedule owner of a Share link the request holds is failing over (P2-S107)
+      And every status read from `status_staleness` (POL-04) after the decision reports the decided outcome, unless the request's decision record is unavailable, before (P2-S111) or at its deadline (P2-S106), or the outcome is not confirmed and the schedule owner of a Share link the request holds is failing over (P2-S107)
 
     @P2-S107 @need-P2-N2 @need-P2-N3 @POL-04 @POL-26 @POL-08
     Scenario Outline: An outcome other than confirmed is reported once its Share-link releases are durable, within release_grace while a link's schedule owner is failing over
@@ -129,6 +129,14 @@ Feature: Booking, changing and ending route reservations, all or nothing
         | event                                                   | reason                        |
         | the buyer withdraws it                                  | "withdrawn"                   |
         | its deadline arrives and it has not been confirmed      | that its deadline passed      |
+
+    @P2-S111 @need-P2-N2 @POL-04 @POL-06
+    Scenario: While a request's decision record fails over before its deadline, a status read of an outcome not yet reported reads pending, never a wrong outcome
+      Given a pending route booking over Share links L1 and L2, with a deadline of 30 s, holds capacity on both
+      And its outcome is decided 5 s after it was received, and its decision record then becomes unavailable, before that outcome is reported, for 20 s, ending before its deadline
+      When the buyer reads its status while the decision record is unavailable
+      Then every status read reports pending, even later than `status_staleness` (POL-04) after the decision, and never an outcome other than the one decided
+      And the decided outcome is reported once the record is available again, no later than admission's recovery time (POL-06: 1 min) after it became unavailable
 
     @P2-S108 @need-P2-N2 @POL-04
     Scenario: A reported outcome is reported by every later status read, even while the decision record is unavailable at the deadline
