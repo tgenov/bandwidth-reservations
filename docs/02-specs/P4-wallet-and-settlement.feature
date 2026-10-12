@@ -209,13 +209,15 @@ Feature: Wallet, funds holds, ledger and supplier settlement
     Scenario: The unused hold is released when a reservation ends early
       Given "b1" holds funds for an open-ended reservation of 100 Mbps
       When the reservation is cancelled
-      Then from the minute the cancellation takes effect no funds are held for it
+      Then from the minute the cancellation takes effect no funds are held for its charges from then on
+      And its charges for earlier minutes not yet posted stay held until they are posted, and the rest of the hold is released (POL-15)
 
     @P4-S61 @need-P4-N3 @POL-15 @POL-07 @POL-16 @POL-30
     Scenario Outline: The hold is released when Share ends a reservation
       Given "b1" holds funds for an open-ended reservation of 100 Mbps
       When the reservation is <ended>
-      Then from the minute it ends no funds are held for it
+      Then from the minute it ends no funds are held for its charges from then on
+      And its charges for earlier minutes not yet posted, and any fee due, stay held until they are posted (POL-15)
 
       Examples:
         | ended                                              |
@@ -270,7 +272,7 @@ Feature: Wallet, funds holds, ledger and supplier settlement
       Given any number of bookings and changes by "b1" and its agent keys at the same time
       When every one has its outcome
       Then the holds taken for those confirmed never together exceeded "b1"'s headroom, nor any key's headroom
-      And they are the holds of some one-at-a-time order of the same bookings and changes
+      And they are the holds given by making their funds checks one at a time, in the order received, each counting the holds of the requests then in flight (POL-25)
 
   Rule: The buyer sees available headroom, itemised
 
@@ -449,6 +451,13 @@ Feature: Wallet, funds holds, ledger and supplier settlement
       And the hold grows by the 0.100000 USD the headroom allows, to 0.388000 USD (POL-16)
       And the reservation keeps its capacity for the full `suspension_grace` (POL-16)
       And if "b1" does not resume, the 0.044000 USD of the grace's 0.432000 USD of charges beyond the hold becomes a negative balance under POL-21 and POL-23
+
+    @P4-S108 @need-P4-N5 @POL-27 @POL-16 @POL-18
+    Scenario: A price notice that the account's headroom would not cover states the top-up that would
+      Given account "b1" has a headroom of 0.100000 USD (POL-18) and 0.288000 USD held for one open-ended reservation of 100 Mbps at 2 micro-USD per Mbps-minute
+      When a new price of 3 micro-USD per Mbps-minute for it is announced, to take effect `price_notice` (POL-27) later
+      Then the notice to "b1" states the new price and the hold of 0.432000 USD it will need
+      And it states that "b1"'s headroom would not cover the 0.144000 USD more, and quotes a top-up of 0.044000 USD that would
 
   Rule: Network operations always knows an account's standing
 
@@ -687,6 +696,14 @@ Feature: Wallet, funds holds, ledger and supplier settlement
       Then partner P is credited 0.500000 USD
       And no other supplier and no commission receive any of it
 
+    @P4-S110 @need-P4-N11 @POL-07 @POL-23 @POL-11
+    Scenario: The difference Share bears on a dearer equivalent path is the path's charge rounded down once, less the buyer's charge
+      Given a reservation of 3 Mbps moved to a dearer equivalent path, its buyer paying its original price of 1.5 micro-USD per Mbps-minute (POL-07)
+      And the new path's price is 2.7 micro-USD per Mbps-minute
+      When a minute of it is charged
+      Then the buyer is charged 4 micro-USD, 4.5 rounded down once (POL-11)
+      And Share bears 4 micro-USD: the path's 8.1 micro-USD rounded down once to 8, less the buyer's 4 (POL-23)
+
   Rule: Payouts are weekly, exact and made once
 
     Background:
@@ -830,6 +847,14 @@ Feature: Wallet, funds holds, ledger and supplier settlement
         | b1      | 4.700000  | a negative balance after a reversal | 5.700000  | 4.700000  | 1.000000 | active again, its headroom of 1.000000 USD reaching `low_balance_warning` (POL-16) |
         | e1      | 10.000000 | an unpaid invoice             | 11.000000 | 10.000000 | 1.000000  | active again as a prepaid account, with no credit limit (POL-15)            |
 
+    @P4-S107 @need-P4-N13 @POL-21 @POL-15 @POL-23
+    Scenario: A negative balance not caused by a reversal is written off 90 days after it arose
+      Given account "b1"'s ledger balance became -0.288000 USD on day D, when a shown cancellation fee exceeded what was left of its hold at release (P4-S97)
+      And no top-up has repaid it
+      When 90 days have passed since day D
+      Then the 0.288000 USD is written off automatically, at Share's cost (POL-23), and stays recorded as owed by "b1" (POL-21)
+      And no supplier's balance changes
+
   Rule: Credit is given only to vetted accounts, and collected by rule
 
     @P4-S82 @need-P4-N17 @POL-15 @POL-24 @POL-32
@@ -861,6 +886,13 @@ Feature: Wallet, funds holds, ledger and supplier settlement
       Then "e1" is active again, with no request from the buyer, its ledger balance being 0.000000 USD and its headroom 4.712000 USD
       And network operations is told to unblock its usage-priced traffic
 
+    @P4-S105 @need-P4-N17 @need-P4-N5 @POL-15 @POL-16 @POL-18 @POL-24
+    Scenario: A top-up to an account with an overdue invoice pays that invoice first, and can resume the account
+      Given credit-limit account "e1" is suspended as in P4-S92, with one overdue invoice of 1.000000 USD
+      When "e1" tops up 1.500000 USD within `suspension_grace`
+      Then 1.000000 USD of it pays the overdue invoice, recorded as an invoice payment (POL-24), and 0.500000 USD raises its ledger balance to 0.500000 USD
+      And "e1" is active again, with no request from the buyer, its headroom being 5.212000 USD (POL-16)
+
   Rule: The books are reconciled with the money daily
 
     @P4-S54 @need-P4-N14 @POL-24
@@ -871,7 +903,7 @@ Feature: Wallet, funds holds, ledger and supplier settlement
 
       Examples:
         | difference                                                                                                                              |
-        | the funds held at the payment partner differ from the signed sum of buyer balances and supplier balances, plus Share's own balance there, less payouts the partner has executed that the ledger has not yet confirmed, plus payments the partner has received and reported that the ledger has not yet posted |
+        | the funds held at the payment partner differ from the signed sum of buyer balances and supplier balances, plus Share's own balance there, less payouts the partner has executed that the ledger has not yet confirmed, plus payments the partner has received and reported that the ledger has not yet posted, less payments the ledger has posted that the partner has not yet received |
         | a payment counted as received by the partner and not yet posted by the ledger matches no credit in the partner's report                  |
         | a provider transaction in the partner's report matches no ledger top-up, invoice payment, reversal, payout, supplier-debt payment or movement of Share's own funds |
         | a ledger top-up, invoice payment, reversal, payout, supplier-debt payment or movement of Share's own funds matches no provider transaction in the partner's report |
@@ -919,6 +951,27 @@ Feature: Wallet, funds holds, ledger and supplier settlement
         | a withdrawal of 1.500000 USD of Share's commission               | movement of Share's own funds (a withdrawal)      |
         | a credit-limit account's payment of a 10.000000 USD invoice      | invoice payment                                   |
         | a supplier's payment of a 15.000000 USD supplier debt invoiced to it | supplier-debt payment                         |
+
+    @P4-S106 @need-P4-N14 @POL-24
+    Scenario Outline: A payment posted before the partner received it is counted in flight, and alerts only if not received within settlement_lag_max
+      Given buyer "b1" was credited a top-up of 20.000000 USD that its payment provider notified before settling it to the payment partner
+      And at the end of day D the partner has not yet received it and holds 80.000000 USD, while buyer balances sum to 100.000000 USD and supplier balances and Share's own balance to 0.000000 USD
+      When the reconciliation of day D runs, <age> after the top-up was posted
+      Then it finds 80.000000 = 100.000000 + 0.000000 - 20.000000, the top-up counted as posted and not yet received (POL-24)
+      And <alert>
+
+      Examples:
+        | age    | alert                                                                                                        |
+        | 2 days | no alert is raised                                                                                           |
+        | 8 days | an operational alert is raised that the payment was not received within `settlement_lag_max` (POL-24: 7 days) |
+
+    @P4-S109 @need-P4-N14 @need-P4-N2 @POL-24 @POL-20
+    Scenario: A payment received before the cut and posted after it, with its FX difference, is counted at the partner's USD amount and raises no alert
+      Given the payment partner received a top-up of 1,234 KES for "b1" before the end of day D and reports it as 9.520000 USD
+      And after the cut the ledger credits "b1" 9.516979 USD for it, and posts its FX difference of +0.003021 USD to Share's own account (POL-20)
+      When the reconciliation of day D runs
+      Then the top-up is counted as received and not yet posted at 9.520000 USD, the partner's amount (POL-24)
+      And no alert is raised for it
 
     @P4-S80 @need-P4-N14 @POL-24
     Scenario Outline: Provider settlement reports and bank statements are reconciled daily by the same rule

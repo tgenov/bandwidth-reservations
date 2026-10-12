@@ -131,11 +131,12 @@ Feature: Booking, changing and ending route reservations, all or nothing
         | its deadline arrives and it has not been confirmed      | that its deadline passed      |
 
     @P2-S111 @need-P2-N2 @POL-04 @POL-06
-    Scenario: While a request's decision record fails over before its deadline, a status read of an outcome not yet reported reads pending, never a wrong outcome
+    Scenario: While a request's decision record fails over before its deadline, a status read of an outcome not yet reported reads pending or the decided outcome, never a wrong outcome
       Given a pending route booking over Share links L1 and L2, with a deadline of 30 s, holds capacity on both
       And its outcome is decided 5 s after it was received, and its decision record then becomes unavailable, before that outcome is reported, for 20 s, ending before its deadline
       When the buyer reads its status while the decision record is unavailable
-      Then every status read reports pending, even later than `status_staleness` (POL-04) after the decision, and never an outcome other than the one decided
+      Then every status read reports either pending or the decided outcome, even later than `status_staleness` (POL-04) after the decision, and never another outcome
+      And once a status read has reported the decided outcome, every later one reports it (POL-04)
       And the decided outcome is reported once the record is available again, no later than admission's recovery time (POL-06: 1 min) after it became unavailable
 
     @P2-S108 @need-P2-N2 @POL-04
@@ -248,6 +249,16 @@ Feature: Booking, changing and ending route reservations, all or nothing
       And its holds on L1 and L2 are released no later than `release_grace` (POL-26: 1 min) after its deadline
       And operations is alerted, with the request and the legs concerned
 
+    @P2-S114 @need-P2-N3 @need-P2-N10 @POL-26 @POL-04
+    Scenario: A decision record unavailable within ack_budget before the deadline counts as unavailable at the deadline
+      Given a pending route booking over Share links L1 and L2, with a deadline of 30 s, holds capacity on both
+      And no confirmation of the request was decided before its deadline (POL-26)
+      And its decision record is unavailable from 25 s until 29.98 s after the request was received, within `ack_budget` (POL-04: 200 ms) before its deadline
+      When the request's deadline arrives
+      Then the request has failed as of its deadline (POL-26)
+      And its holds on L1 and L2 are released no later than `release_grace` (POL-26: 1 min) after its deadline, as when the record is unavailable at the deadline
+      And operations is alerted, with the request and the legs concerned
+
     @P2-S106 @need-P2-N3 @need-P2-N2 @need-P2-N10 @POL-26 @POL-04
     Scenario: A confirmation decided in time may become known after the deadline, within release_grace, if the decision record was unavailable
       Given a pending route booking over Share links L1 and L2, with a deadline of 30 s, holds capacity on both
@@ -255,7 +266,7 @@ Feature: Booking, changing and ending route reservations, all or nothing
       And the decision record becomes unavailable before that confirmation is reported, and stays unavailable until after the deadline
       When the decision record is available again, no later than `release_grace` (POL-26: 1 min) after the deadline
       Then the request is confirmed, and its holds on L1 and L2 are its reservation, never released
-      And until then every status read reports pending, never failed (POL-04)
+      And until then every status read reports pending or confirmed, never failed (POL-04)
       And no confirmation of any request is decided after its deadline
       And operations is alerted, with the request and the legs concerned
 
@@ -326,6 +337,14 @@ Feature: Booking, changing and ending route reservations, all or nothing
       When A then fails
       Then B is still rejected
       And no reservation of that capacity exists, and nothing is held for A or B
+
+    @P2-S116 @need-P2-N4 @POL-02 @POL-05
+    Scenario: A waiter blocked on several legs is given the latest of the remaining deadlines ahead of it when its own deadline passes
+      Given a Share link L2 with a capacity of 10 Mbps and no reservations
+      And request A holds 8 Mbps on L for [10:00, 11:00), and request B holds 8 Mbps on L2 for [10:00, 11:00)
+      And a route booking W of 8 Mbps over L and L2 for the same window waits for both, with a deadline of 5 s
+      When W's deadline passes while A has 10 s of its deadline left and B has 20 s
+      Then W has failed with the reason "deadline passed while waiting" and a `retry_after` of 20 s, the latest of A's and B's remaining deadlines (POL-02)
 
     @P2-S61 @need-P2-N4 @POL-02 @POL-26 @POL-05
     Scenario: A request whose deadline is shorter than the outcome it waits on is outside the contention guarantee
@@ -490,6 +509,19 @@ Feature: Booking, changing and ending route reservations, all or nothing
       Given a booking request with key "k2" is pending
       When the buyer retries it with key "k2"
       Then the response is pending for that same request, and no second request is started
+
+    @P2-S113 @need-P2-N6 @POL-29 @POL-08
+    Scenario Outline: A change sent again under the same key is the same change only if its reservation, kind, new end or rate and wait setting match
+      Given a buyer asked, with idempotency key "k7", to shorten its reservation R to end at 12:00
+      When the same principal sends, with key "k7", <second>
+      Then <result>
+
+      Examples:
+        | second                                       | result                                                                                          |
+        | the same shortening of R to 12:00            | the response is that of the first change, and R is shortened once                               |
+        | a shortening of R to 13:00                   | it is not accepted, as a reuse of the key for a different request, and the first change is unaffected |
+        | a decrease of R to 2 Mbps                    | it is not accepted, as a reuse of the key for a different request, and the first change is unaffected |
+        | a shortening of another reservation to 12:00 | it is not accepted, as a reuse of the key for a different request, and the first change is unaffected |
 
   Rule: Partner legs are booked safely
 
@@ -734,11 +766,21 @@ Feature: Booking, changing and ending route reservations, all or nothing
       And it holds nothing
 
     @P2-S70 @need-P2-N8 @POL-15 @POL-25 @POL-18
-    Scenario: Concurrent bookings by one account are funded as if decided one at a time
+    Scenario: Concurrent bookings by one account are funded as if their funds checks were made one at a time, in the order received
       Given any number of booking requests by one account, from any of its users and agent keys, at the same time
       When every request has its outcome
       Then the holds of those confirmed never together exceeded the account's headroom
-      And there is an order of the requests in which deciding them one at a time gives every one of them the same outcome
+      And every outcome is the one given by making their funds, key-headroom and capacity-in-flight checks one at a time, in the order received, each counting the holds of the requests then in flight (POL-25)
+
+    @P2-S112 @need-P2-N8 @need-P4-N3 @POL-25 @POL-15 @POL-18 @POL-05
+    Scenario: Two concurrent requests may both be refused where checking one after the other's outcome would have confirmed one
+      Given account "b1" has a headroom of 0.300000 USD (POL-18)
+      And "b1" sends requests R1 and R2 at the same time, R1 received first, each needing a funds hold of 0.288000 USD (POL-15)
+      And R1 asks not to wait (`wait = false`), and the capacity it needs is held for another account's request in flight
+      When R2's funds check is made while R1's funds hold is in place
+      Then R2 is rejected for insufficient funds
+      And R1 is rejected at once with a `retry_after` (POL-05), and its funds hold is released
+      And R2 stays rejected, although checked after R1's outcome it would have been confirmed (POL-25)
 
     @P2-S71 @need-P2-N8 @POL-25 @POL-18
     Scenario: Concurrent bookings by one agent key never together exceed its limits
@@ -855,7 +897,7 @@ Feature: Booking, changing and ending route reservations, all or nothing
     Scenario: A partner leg's minimum term and cancellation fee are shown at booking
       Given a route with a partner leg that imposes a minimum term and a cancellation fee
       When a buyer is shown the price of a booking on it
-      Then the price shows the minimum term and the cancellation fee
+      Then the price shows the minimum term and the cancellation fee, and whether the leg's rate can be decreased
 
     @P2-S75 @need-P2-N9 @need-P2-N8 @POL-08 @POL-15 @POL-10 @POL-01 @POL-16 @POL-18
     Scenario: An extension the account cannot fund is rejected, stating the payment needed, and the reservation is unchanged
@@ -933,6 +975,13 @@ Feature: Booking, changing and ending route reservations, all or nothing
         | revoked at the end of `revocation_notice` (POL-07) |
         | released at the end of `suspension_grace` (POL-16) |
         | terminated by Share (POL-30)                       |
+
+    @P2-S115 @need-P2-N9 @need-P2-N7 @POL-08
+    Scenario: A decrease over a partner leg whose shown terms do not allow one is rejected, stating the rule
+      Given a confirmed reservation R3 of 4 Mbps over Share link L1 and partner link P, whose terms shown at booking do not allow a decrease
+      When the account decreases R3 to 2 Mbps
+      Then the decrease is rejected, stating that the partner's terms shown at booking do not allow it, and that R3 may be cancelled instead
+      And R3 is unchanged, at 4 Mbps on every leg
 
     @P2-S82 @need-P2-N9 @need-P2-N7 @POL-08
     Scenario: A cancellation over a partner leg takes effect for the buyer whatever the partner answers

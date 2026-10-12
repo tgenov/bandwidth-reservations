@@ -61,8 +61,8 @@ Feature: Non-functional targets
         | reporting and statements | one day's statement                         | 2 s    |
 
     @X2-S20 @need-X2-N1 @POL-06 @POL-18
-    Scenario Outline: Probes run end to end as a designated probe account, without business side effects
-      Given the designated Share probe account, with its designated probe links and exporters in the region (POL-06)
+    Scenario Outline: Probes run end to end as designated probe accounts, without business side effects
+      Given the designated Share probe accounts, with the designated probe links of the designated Share probe supplier and the designated probe exporters in the region (POL-06)
       When a probe <action>
       Then it is handled on the same path as any buyer's or exporter's
       And nothing it does is rated, settled, shown in a supplier report or reported as quarantined traffic
@@ -72,13 +72,21 @@ Feature: Non-functional targets
         | books a single probe link, with its funds hold               |
         | sends a flow record from a probe exporter and it is accepted |
         | asks for the probe account's balance and headroom            |
+        | asks for the status of a payout to the probe supplier        |
 
     @X2-S24 @need-X2-N1 @POL-06 @POL-15 @POL-32
-    Scenario: The probe account books on a credit limit set by finance, and is never invoiced
-      Given the designated Share probe account has a `credit_limit` (POL-15) set by an operator in finance (POL-32)
+    Scenario: Each probe account books on a credit limit set by finance, and is never invoiced
+      Given a designated Share probe account has a `credit_limit` (POL-15) set by an operator in finance (POL-32)
       When a probe books a single probe link
       Then a real credit hold is taken for the booking against the probe account's `credit_limit`, as for any account
       And the probe account is never invoiced
+
+    @X2-S27 @need-X2-N1 @POL-06
+    Scenario: Enough probe accounts are designated that every part of admission and the wallet serving accounts is probed
+      Given the designated Share probe accounts (POL-06)
+      When admission and the wallet are probed in a serving region over a minute
+      Then every part of them that serves accounts is asked by at least one probe
+      And no probe account is a buyer's account
 
     @X2-S21 @need-X2-N1 @need-X2-N5 @POL-06 @POL-15 @POL-18
     Scenario Outline: The funds holds and headroom checks bookings need are held to admission's targets, not the wallet's
@@ -118,7 +126,7 @@ Feature: Non-functional targets
     Scenario Outline: A single-link booking is answered, final or pending, within ack_budget, whatever the booking's length
       Given the design load
       When buyers book single links for windows of <length>
-      Then the 99th percentile time to an answer, final or pending, is at most 200 ms
+      Then in each serving region, over each calendar month, the 99th percentile time to an answer, final or pending, is at most 200 ms
 
       Examples:
         | length      |
@@ -131,20 +139,20 @@ Feature: Non-functional targets
     Scenario: A single-link booking on a link with no capacity in flight gets its final answer within ack_budget
       Given the design load
       When buyers book single Share links on which no capacity is in flight
-      Then the 99th percentile time to a final answer is at most 200 ms
+      Then in each serving region, over each calendar month, the 99th percentile time to a final answer is at most 200 ms
 
     @X2-S06 @need-X2-N3 @POL-06 @POL-04 @POL-26
     Scenario: A route booking is acknowledged within ack_budget and has its outcome by its deadline
       Given the design load
       When buyers book routes
-      Then the 99th percentile time to the first response is at most 200 ms
+      Then in each serving region, over each calendar month, the 99th percentile time to the first response is at most 200 ms
       And every request has its outcome by its deadline
 
     @X2-S07 @need-X2-N3 @POL-06 @POL-18
     Scenario: A top-up is credited within 10 s of the provider's notification
       Given payment notifications at their design peak of 1,000 per second
       When notifications for completed top-ups arrive
-      Then the 99th percentile time from notification to credited headroom is at most 10 s
+      Then in each serving region, over each calendar month, the 99th percentile time from notification to credited headroom is at most 10 s
 
     @X2-S22 @need-X2-N3 @POL-06 @POL-14 @POL-18
     Scenario: An accepted record is counted in headroom within attribution_lag_max of its acceptance
@@ -190,10 +198,36 @@ Feature: Non-functional targets
     @X2-S23 @need-X2-N3 @need-X2-N4 @POL-06 @POL-26
     Scenario: During a declared region disaster the latency targets are suspended, and no acknowledged fact may be lost
       Given a region is lost, and the loss is declared a disaster
-      When requests, notifications and records are handled from the declaration until the lost region is restored or replaced
+      When requests, notifications and records are handled for as long as the disaster lasts, from the loss the system recorded until its declared end
       Then they are left out of the measurement of every latency target (X2-S05, X2-S15, X2-S06, X2-S07, X2-S22, X2-S17 and X2-S08)
       And every request still has its outcome by its deadline (POL-26)
       And every fact is acknowledged only once it is durable in two regions, and no acknowledged fact is lost
+
+    @X2-S25 @need-X2-N1 @need-X2-N3 @POL-06 @POL-32
+    Scenario Outline: A region disaster, and its end, take effect only once declared with evidence and approved by a second operator
+      Given a region is lost
+      When <declaration>
+      Then <result>
+
+      Examples:
+        | declaration                                                                                                   | result                                                                                  |
+        | an operator in network operations declares a disaster with its evidence, and a second network operations operator approves it | the disaster is declared, recorded with both operators, the reason and the evidence (POL-32) |
+        | an operator in network operations declares a disaster, and no second operator has approved it                 | no disaster is declared, and every minute still counts against every target              |
+        | an operator in any other role declares a disaster                                                             | it is refused and recorded, and no disaster is declared                                  |
+
+    @X2-S26 @need-X2-N1 @need-X2-N3 @POL-06
+    Scenario: A declared region disaster counts from the loss the system recorded, not from its declaration
+      Given the system recorded the loss of a region at 10:00
+      And the disaster was declared and approved at 10:20, the declaration stating the loss as 09:40
+      When the month's availability, latency and timeliness are measured
+      Then the disaster's minutes start at 10:00, the loss the system recorded, until its declared end (POL-06)
+      And the minutes from 09:40 to 10:00 count against every target as usual
+
+    @X2-S28 @need-X2-N1 @POL-06
+    Scenario: A region loss that is never declared a disaster counts against every target
+      Given a region was lost from 10:00 to 10:20, and no disaster was declared
+      When the month's availability, latency and timeliness are measured
+      Then every minute from 10:00 to 10:20 counts against every target, in each serving region (POL-06)
 
   Rule: No acknowledged fact is ever lost
 

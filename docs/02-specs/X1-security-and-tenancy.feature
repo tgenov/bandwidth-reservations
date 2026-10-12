@@ -80,7 +80,7 @@ Feature: Security, tenancy and audit
     Scenario Outline: A supplier sees the reservations on its link, but not who holds them
       Given buyer "b1" holds a confirmed reservation R on a link of supplier "s1"
       When a principal of "s1" asks for the schedule of that link <when>
-      Then it shows R's rate, window and endpoints and a reference to R that is used for no other reservation
+      Then it shows R's rate, window and endpoints, which are R's termination points on that link of "s1", never the route's ends, and a reference to R that is used for no other reservation
       And it shows <identity>
 
       Examples:
@@ -94,7 +94,9 @@ Feature: Security, tenancy and audit
       Given buyer "b1" holds a confirmed reservation R on a link of supplier "s1"
       And an account administrator of "b1" consented to identify "b1" to "s1"
       When the administrator withdraws that consent
-      Then every later view by "s1" of that link's schedule shows nothing that identifies "b1" or links R to "b1"'s other reservations
+      Then every later view by "s1" of that link's schedule shows nothing that identifies "b1"
+      And a reservation of "b1" on a link of "s1" confirmed after the withdrawal is shown with nothing that links it to "b1" or to R (POL-33)
+      And R keeps the reference "s1" already saw, which provisioning depends on
       And the withdrawal is recorded with the administrator and the time
 
     @X1-S24 @need-X1-N2 @POL-04
@@ -125,8 +127,8 @@ Feature: Security, tenancy and audit
 
   Rule: Only an account administrator manages agent keys and their limits
 
-    @X1-S18 @need-X1-N9 @POL-25 @POL-33
-    Scenario Outline: An account administrator issues, changes and revokes keys and sets their limits
+    @X1-S18 @need-X1-N9 @POL-25 @POL-33 @POL-32
+    Scenario Outline: An account administrator manages keys and their limits, users, administrator rights, webhook endpoints and consent
       Given an account administrator of "b1"
       When the administrator <action>
       Then the change takes effect
@@ -139,6 +141,9 @@ Feature: Security, tenancy and audit
         | revokes an agent key                                       |
         | consents to identify the account to a named supplier       |
         | withdraws that consent                                     |
+        | adds a user to the account                                 |
+        | grants the account administrator right to another user     |
+        | registers a webhook endpoint for the account (POL-32)      |
 
     @X1-S19 @need-X1-N9 @POL-25
     Scenario Outline: An agent key cannot manage keys or limits, its own or another's
@@ -154,6 +159,8 @@ Feature: Security, tenancy and audit
         | change another key's limits                    |
         | issue a new agent key                          |
         | revoke another agent key                       |
+        | register a webhook endpoint                    |
+        | grant the account administrator right to a user |
 
     @X1-S29 @need-X1-N9 @need-X1-N2 @POL-25 @POL-33
     Scenario Outline: Only an account administrator can consent to identify the account to a supplier
@@ -181,11 +188,32 @@ Feature: Security, tenancy and audit
         | issue an agent key                      |
         | raise an agent key's `key_spend_limit`  |
         | revoke an agent key                     |
+        | register a webhook endpoint             |
+        | grant itself the account administrator right |
 
     @X1-S20 @need-X1-N9 @need-X1-N8 @POL-25 @POL-19
     Scenario: Every change to an agent key or its limits records who made it and when
       When an account administrator issues, changes or revokes an agent key, or changes its limits
       Then the change records the administrator, the time, and the old and new values
+
+    @X1-S33 @need-X1-N9 @POL-32
+    Scenario Outline: Only a supplier administrator manages the supplier's users, credentials and endpoints
+      Given supplier "s1"
+      When <principal> tries to <action> of "s1"
+      Then <result>
+
+      Examples:
+        | principal                                        | action                                    | result                                               |
+        | a supplier administrator of "s1"                 | add a user                                | it takes effect, recorded with the administrator (POL-32) |
+        | a supplier administrator of "s1"                 | issue a credential for an exporter        | it takes effect, recorded with the administrator     |
+        | a user of "s1" without the administrator right   | issue a credential for an exporter        | it is refused, nothing changes, and the attempt is recorded |
+        | a principal of supplier "s2"                     | register a webhook endpoint               | it is refused as if "s1" did not exist               |
+
+    @X1-S38 @need-X1-N9 @POL-32
+    Scenario: An account always keeps at least one account administrator
+      Given account "b1" has exactly one account administrator
+      When that administrator removes its own administrator right
+      Then the request is refused, stating that an account keeps at least one administrator, and nothing changes
 
     @X1-S21 @need-X1-N9 @POL-25
     Scenario: An account cannot have more than account_max_keys keys
@@ -227,6 +255,8 @@ Feature: Security, tenancy and audit
         | a principal of buyer "b1" | record an unplanned outage               |
         | a principal of "s2"       | record the restoration of an unplanned outage |
         | a principal of buyer "b1" | announce a permanent reduction           |
+        | a principal of "s2"       | record a permanent increase of capacity  |
+        | a principal of "s2"       | cancel planned maintenance               |
 
     @X1-S23 @need-X1-N10 @need-X1-N7 @POL-07 @POL-32
     Scenario Outline: Network operations may record an outage and its restoration, but not commercial changes
@@ -240,6 +270,8 @@ Feature: Security, tenancy and audit
         | record the restoration of capacity         | it takes effect and is recorded with the operator and reason  |
         | announce a permanent reduction             | it is refused, and nothing changes                            |
         | book planned maintenance                   | it is refused, and nothing changes                            |
+        | record a permanent increase of capacity    | it is refused, and nothing changes                            |
+        | register a new link for "s1"               | it is refused, and nothing changes                            |
 
   Rule: Only authentic payment notifications move money
 
@@ -258,7 +290,7 @@ Feature: Security, tenancy and audit
 
   Rule: Operator power is controlled and recorded
 
-    @X1-S12 @need-X1-N7 @need-X1-N8 @POL-30 @POL-23 @POL-17 @POL-19 @POL-32 @POL-15 @POL-21 @POL-22 @POL-33
+    @X1-S12 @need-X1-N7 @need-X1-N8 @POL-30 @POL-23 @POL-17 @POL-19 @POL-32 @POL-15 @POL-21 @POL-22 @POL-33 @POL-14
     Scenario Outline: An operator in the role that owns an action can take it, and the action is recorded with its reason
       Given an operator in the <role> role (POL-32)
       When the operator takes the action of <action> on account "b1", giving a reason
@@ -275,6 +307,8 @@ Feature: Security, tenancy and audit
         | finance            | resolving an escalated payout to a supplier (POL-22)                                                     |
         | finance            | resolving an escalated reversal whose payment never arrived (POL-21)                                     |
         | compliance         | disclosing the account's identity to a supplier under a legal order that requires it (POL-33), approved by a second compliance operator |
+        | finance            | setting the account's `usage_rate_cap` for a product (POL-14)                                            |
+        | finance            | reversing a mistaken attribution of quarantined traffic to the account (POL-17)                          |
 
     @X1-S13 @need-X1-N7 @POL-32 @POL-30
     Scenario Outline: An operator is refused any action that belongs to another role
@@ -290,6 +324,64 @@ Feature: Security, tenancy and audit
         | finance            | terminate a reservation for network abuse          |
         | network operations | terminate a reservation for fraud                  |
         | compliance         | record an unplanned outage                         |
+        | finance            | set a `reservation_price`                          |
+        | support            | read the audit trail                               |
+        | commercial         | correct a price                                    |
+        | network operations | register a link                                    |
+
+    @X1-S31 @need-X1-N7 @need-X1-N8 @POL-32 @POL-01 @POL-12 @POL-07 @POL-06 @POL-19
+    Scenario Outline: An operator in the role that owns an action not on one account can take it, and it is recorded
+      Given an operator in the <role> role (POL-32)
+      When the operator takes the action of <action>, giving a reason
+      Then <result>
+      And it is recorded with the operator, any approver, the role, the reason and the time (POL-19)
+
+      Examples:
+        | role               | action                                                                                       | result                                                              |
+        | commercial         | setting a `reservation_price` for a product and route (POL-01)                               | it takes effect only once a second commercial operator approves it  |
+        | commercial         | setting a supplier's split weight (POL-12)                                                   | it takes effect only once a second commercial operator approves it  |
+        | commercial         | recording a partner's minimum term, cancellation fee and whether its legs can be decreased   | it takes effect                                                     |
+        | commercial         | registering a link for supplier "s1", with its capacity (POL-07)                             | it takes effect                                                     |
+        | commercial         | retiring a link on which nothing is reserved, held, offered or booked as maintenance from then on (POL-07) | it takes effect                                       |
+        | network operations | declaring a region disaster, with the evidence of the loss (POL-06)                          | it takes effect only once a second network operations operator approves it |
+        | compliance         | reading the audit trail                                                                      | the answer is given                                                 |
+
+    @X1-S32 @need-X1-N7 @POL-32 @POL-30
+    Scenario Outline: An action awaiting a second approval lapses, can be cancelled, and is refused if its preconditions no longer hold
+      Given an operator in the compliance role asked to terminate reservation R of "b1" for fraud, and no second compliance operator has approved it (POL-30)
+      When <event>
+      Then <result>
+
+      Examples:
+        | event                                                                                | result                                                                    |
+        | `approval_expiry` (POL-32: 72 h) passes                                              | the request lapses, R is unchanged, and a later approval is refused        |
+        | the operator who asked cancels the request                                           | the request is cancelled, R is unchanged, and a later approval is refused  |
+        | "b1" cancels R, and a second compliance operator then approves the request           | the approval is refused, because R no longer exists to be terminated       |
+
+    @X1-S35 @need-X1-N2 @need-X1-N7 @POL-33 @POL-32
+    Scenario Outline: A disclosure under a legal order has the order's scope and ends with it
+      Given buyer "b1" holds reservations on links of supplier "s1" and of supplier "s2"
+      And an operator in compliance disclosed "b1"'s identity to "s1" under a legal order <order>, approved by a second compliance operator (POL-33)
+      When <when>
+      Then "s1" sees "b1"'s identity on <shown>
+
+      Examples:
+        | order                                           | when                                              | shown                                                           |
+        | that states no scope or end                     | "s1" views its links' schedules                   | "b1"'s reservations on links of "s1", and nothing of "s2"'s links |
+        | whose stated end date has passed                | "s1" views its links' schedules                   | none of "b1"'s reservations                                     |
+        | that states no scope or end                     | one compliance operator has ended the disclosure  | none of "b1"'s reservations                                     |
+
+    @X1-S36 @need-X1-N7 @POL-30 @POL-32
+    Scenario Outline: A termination notice is withheld only by compliance, with a second approval, under a legal order that forbids it
+      Given a reservation of "b1" is terminated <termination>
+      When <who> asks that its holder not be told
+      Then <result>
+
+      Examples:
+        | termination                              | who                                                                                    | result                                                                     |
+        | for network abuse by network operations  | the network operations operator                                                        | it is refused, and the holder is told                                      |
+        | for a legal order by compliance          | an operator in compliance, citing an order that forbids it, approved by a second compliance operator | the holder is not told, and the order is recorded with the termination |
+        | for a legal order by compliance          | an operator in compliance, without a second compliance operator's approval            | the holder is told                                                         |
 
     @X1-S16 @need-X1-N7 @POL-30 @POL-32
     Scenario: An operator cannot end a reservation for a reason outside POL-30
@@ -303,7 +395,7 @@ Feature: Security, tenancy and audit
       Given an operator in the network operations role (POL-32)
       When the operator terminates a reservation of "b1" for network abuse
       Then the termination records the reason and the operator
-      And the holder of the reservation is told, unless the law forbids it
+      And the holder of the reservation is told within `affected_notice_time`, with the reason, as for every termination for network abuse (POL-30)
       And its charges stop at the termination (P3)
 
     @X1-S26 @need-X1-N7 @POL-30 @POL-32
@@ -323,15 +415,16 @@ Feature: Security, tenancy and audit
       Examples:
         | action                                                               | result                                                      |
         | reads the reservations of "b1"                                       | the answer is given, and the read is recorded               |
-        | cancels a reservation of "b1" at "b1"'s documented request           | the cancellation takes effect as "b1"'s own change (POL-08), with "b1"'s fees and charges, recorded as an operator action with the request |
+        | cancels a reservation of "b1" at "b1"'s documented request, made through the marketplace by an authenticated principal of "b1" who may cancel it | the cancellation takes effect as "b1"'s own change (POL-08), with "b1"'s fees and charges, recorded as an operator action with the request |
         | cancels a reservation of "b1" without a documented request from "b1" | it is refused, nothing changes, and the attempt is recorded |
+        | cancels a reservation of "b1" on a request received only by e-mail or telephone | it is refused as not a documented request, nothing changes, and the attempt is recorded |
 
   Rule: Every change to money, capacity, links or keys is attributable, and the record is fixed
 
     @X1-S14 @need-X1-N8 @POL-19 @POL-07 @POL-16 @POL-30
     Scenario: Every change to money or capacity records the principal and the time
-      When any principal confirms, changes, cancels, revokes, releases or terminates a reservation, changes a link's capacity, or moves money
-      Then the change records that principal and the time
+      When any principal confirms, changes, cancels, revokes, releases or terminates a reservation, changes a link's capacity, moves money, grants or removes an operator role or an administrator right, gives or withdraws consent, changes a price, weight, partner term or other policy setting, or registers or changes a webhook endpoint
+      Then the change records that principal, by its pseudonymous identifier, and the time
 
     @X1-S15 @need-X1-N8 @POL-19
     Scenario: An audit record cannot be altered or removed
@@ -339,3 +432,18 @@ Feature: Security, tenancy and audit
       When any principal, operators included, tries to alter or remove it
       Then the attempt is refused and itself recorded
       And the audit record is unchanged
+
+  Rule: Personal data can be erased without altering the audit or the books
+
+    @X1-S34 @need-X1-N11 @need-X1-N8 @POL-19
+    Scenario: Erasing a person's personal data leaves every audit and financial record unaltered and attributable
+      Given a user "u1" of "b1" made changes and money movements that are recorded in the audit trail and the ledger
+      When "u1"'s personal data must be erased, and is erased
+      Then "u1"'s personal data can no longer be recovered from anything Share holds (POL-19)
+      And every audit record and money movement of "u1" is unchanged, still attributed to "u1"'s pseudonymous identifier for the retention period
+      And recomputing any balance or charge from the records gives the same result as before the erasure
+
+    @X1-S37 @need-X1-N11 @POL-19
+    Scenario: Logs and records hold no personal data
+      When any principal acts, and its action is logged and recorded
+      Then the logs, audit records, history and financial records identify it only by its pseudonymous identifier, and hold no name, contact detail or other personal data (POL-19)

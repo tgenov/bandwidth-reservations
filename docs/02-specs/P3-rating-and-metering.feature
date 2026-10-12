@@ -165,6 +165,14 @@ Feature: Rating reservations and metered traffic
         | 3          | 200     | 100        | 100 × 3 − 200: the path is dearer |
         | 1          | 100     | 0          | the path is cheaper; nothing to pay |
 
+    @P3-S64 @need-P3-N1 @POL-27 @POL-08 @POL-01
+    Scenario: A notified price change of an open-ended reservation applies to every part, one added after the announcement included
+      Given an open-ended reservation of 100 Mbps booked at 2 micro-USD per Mbps-minute
+      And a new price of 3 micro-USD per Mbps-minute for it was announced `price_notice` (POL-27) before 10:00
+      And 50 Mbps were added to it after the announcement, at 2 micro-USD per Mbps-minute, the price then in force (POL-08)
+      When the new price takes effect at 10:00
+      Then from 10:00 the reservation accrues 450 micro-USD a minute: all 150 Mbps at 3 micro-USD per Mbps-minute
+
   Rule: A partner cancellation fee is charged only if shown at booking, and to the party the policy names
 
     @P3-S11 @need-P3-N12 @POL-08
@@ -188,6 +196,17 @@ Feature: Rating reservations and metered traffic
         | when    | result                                        |
         | 2 days  | the account is charged 0.500000 USD           |
         | 31 days | the account is charged no cancellation fee    |
+
+    @P3-S63 @need-P3-N12 @POL-08
+    Scenario Outline: A shorten whose new end falls inside a partner's minimum term incurs the shown fee, as a cancellation would
+      Given a reservation over a partner leg with a minimum term of 30 days, shown at booking as a cancellation fee of 0.500000 USD, which started 2 days ago
+      When the account shortens it to end <when> after it started
+      Then <result>
+
+      Examples:
+        | when    | result                                      |
+        | 10 days | the account is charged 0.500000 USD         |
+        | 31 days | the account is charged no cancellation fee  |
 
     @P3-S44 @need-P3-N12 @POL-08 @POL-07 @POL-16 @POL-30
     Scenario Outline: Who pays a shown cancellation fee depends on who ended the reservation early
@@ -277,6 +296,13 @@ Feature: Rating reservations and metered traffic
       Then "a1" is charged once for that traffic, 9,800 micro-USD for 0.98 GB
       And the suppliers of the route are paid their split of that charge (P4)
 
+    @P3-S67 @need-P3-N13 @POL-17 @POL-01
+    Scenario: When a route's last leg is a partner link Share does not meter, the count at the hand-off to that partner is billed
+      Given a route over Share link L1 and partner link P, which Share does not meter
+      And in one minute L1 counts 1.1 GB of an account's usage-priced traffic entering it and 1.0 GB handed off to P
+      When the minute is charged
+      Then the account is charged once, for 1.0 GB, the count at the hand-off to P (POL-17)
+
   Rule: A record's bytes belong to the minutes in which its flow was active
 
     Background:
@@ -344,6 +370,18 @@ Feature: Rating reservations and metered traffic
       When a record of 1 GB for "a1" for a flow active from 12:19:30 to 12:20:30 is charged
       Then the minute starting 12:19 is charged 5,000 micro-USD for 0.5 GB at 10,000
       And the minute starting 12:20 is charged 6,500 micro-USD for 0.5 GB at 13,000
+
+    @P3-S69 @need-P3-N5 @POL-27 @POL-17
+    Scenario Outline: A usage_price changes only after price_notice, whatever traffic it prices
+      Given a product and route with a `usage_price` for <traffic>
+      When a new `usage_price` for it is announced
+      Then the new price takes effect at a minute boundary no earlier than `price_notice` (POL-27) after the announcement
+
+      Examples:
+        | traffic                                                             |
+        | a best-effort product                                               |
+        | burst on a guaranteed product that permits it                       |
+        | attributable traffic outside a reservation on a guaranteed product  |
 
   Rule: Each kind of traffic is billed by its rule
 
@@ -413,6 +451,14 @@ Feature: Rating reservations and metered traffic
         | within `dispute_window` (POL-17)  | "a1" is charged 10,000 micro-USD, at the price of the traffic's minute, and the supplier is paid its split (P4) |
         | after `dispute_window` (POL-17)   | "a1" is not charged, and the supplier is not paid for it                       |
 
+    @P3-S65 @need-P3-N6 @POL-17 @POL-23
+    Scenario: A mistaken attribution of quarantined traffic is reversed at Share's cost, and the supplier keeps what it was paid
+      Given 1 GB of quarantined traffic, at a `usage_price` of 10,000 micro-USD per GB in its minute, was attributed to account "a1", which was charged 10,000 micro-USD, and its supplier was paid its split (P4)
+      When an operator in finance reverses that attribution within `dispute_window` (POL-17), giving a reason
+      Then "a1"'s charge for that traffic is amended to zero, by an amendment of -10,000 micro-USD with cause Share (POL-23)
+      And the supplier keeps what it was paid, Share bearing it in full
+      And the traffic cannot be attributed to any account again
+
   Rule: No record is silently discarded
 
     @P3-S28 @need-P3-N7
@@ -434,11 +480,12 @@ Feature: Rating reservations and metered traffic
       When the records are received
       Then the valid records are charged as if the unusable one had not arrived
 
-    @P3-S30 @need-P3-N7
-    Scenario: A kept record that is corrected is charged once
+    @P3-S30 @need-P3-N7 @POL-23
+    Scenario: A kept record that is corrected by its own exporter is charged once
       Given a record that could not be used was kept with its reason
-      When a corrected version of it is submitted, any number of times
+      When the exporter that produced it submits a corrected version of it, any number of times
       Then its bytes are charged once
+      And a corrected version submitted by any other principal, an operator included, is refused and recorded (POL-23)
 
     @P3-S31 @need-P3-N7
     Scenario: An accepted record is never altered or removed
@@ -446,6 +493,20 @@ Feature: Rating reservations and metered traffic
       When any principal, operators included, tries to alter or remove it
       Then the attempt is refused and recorded
       And the record is unchanged
+
+    @P3-S66 @need-P3-N7 @need-P3-N8 @POL-23 @POL-17 @POL-11
+    Scenario Outline: A corrected version of an accepted record, from its own exporter within dispute_window, supersedes it for charging
+      Given an accepted record of 2 GB of usage-priced traffic of account "a1" in one minute, at a `usage_price` of 10,000 micro-USD per GB, charged 20,000 micro-USD
+      And the exporter that produced it is <owner>'s
+      When that exporter submits a corrected version of the record, of 1 GB, <when> after the end of that minute
+      Then <result>
+      And the original record is kept, unaltered
+
+      Examples:
+        | owner                     | when                             | result                                                                                                     |
+        | the route's only supplier | within `dispute_window` (POL-17) | "a1"'s charge is amended by -10,000 micro-USD (POL-11), the supplier owing its own reduction as a supplier debt (POL-23) |
+        | Share                     | within `dispute_window` (POL-17) | "a1"'s charge is amended by -10,000 micro-USD (POL-11), borne by Share in full (POL-23)                    |
+        | the route's only supplier | after `dispute_window` (POL-17)  | the charge is not amended                                                                                  |
 
   Rule: Past charges are amended, never rewritten, and every amendment is explained
 
@@ -508,6 +569,17 @@ Feature: Rating reservations and metered traffic
       When "a1" asks for that minute's charges
       Then the original charge and both amendments are shown, each with its reason and time
 
+    @P3-S70 @need-P3-N8 @POL-17 @POL-23 @POL-01
+    Scenario Outline: dispute_window runs from the end of the minute the charge belongs to
+      Given a charge of "a1" for the minute [10:00, 10:01) on day D
+      When an operator in finance corrects its price at <when>
+      Then the correction is <result>
+
+      Examples:
+        | when                    | result                             | case                                                                |
+        | 10:00:59 on day D + 30  | made, as an amendment              | before 10:01 on day D + 30, `dispute_window` (POL-17: 30 days) after the minute's end |
+        | 10:01 on day D + 30     | refused, and no amendment is made  | `dispute_window` has passed                                         |
+
   Rule: Every charge can be reproduced from what was recorded
 
     @P3-S36 @need-P3-N9
@@ -546,6 +618,17 @@ Feature: Rating reservations and metered traffic
       When an accepted record is counted in its account's unposted usage later than `attribution_lag_max` (POL-14) after its acceptance
       Then it is reported as a breach of the usage exposure bound, with its exporter and attribution lag
       And it is charged like any other record
+
+    @P3-S68 @need-P3-N10 @POL-14 @POL-13
+    Scenario Outline: A record spread over several minutes is late only from the end of the last minute it was active in
+      Given a flow record of usage-priced traffic active from 10:00:00 to 10:02:00
+      When it arrives at <arrival>
+      Then it is <outcome>
+
+      Examples:
+        | arrival  | outcome                                                       | case                                                      |
+        | 10:04:50 | charged, and not reported as a breach                         | 170 s after 10:02, within `max_lateness` (POL-14: 180 s) |
+        | 10:05:10 | charged, and reported as a breach of the usage exposure bound | 190 s after 10:02                                         |
 
   Rule: Accepted records are kept as evidence of what was delivered
 
