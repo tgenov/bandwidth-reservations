@@ -3,8 +3,8 @@
 | | |
 |---|---|
 | Contract ID | C09 |
-| Version | 1.0-draft.3 |
-| Status | **Draft**, for fix verification. Draft.3 answers [review 48](../../reviews/48-contract-C09-review.md) (REJECT: R48-01 … R48-24, decisions D-48-1 … D-48-5). The orchestrator accepts every fix that the review proposes ("Review 48 resolution"). Draft.3 also makes the joint change from C11 draft.2: `RecordId` gets the observation domain and the NetFlow v9 record index (C11 F41-15). Draft.2 answered [review 36](../../reviews/36-contract-C09-review.md) ("Review 36 resolution"). The earlier settled points stay ("Settled"). RFC-000, RFC-003, RFC-005 and RFC-006 take the changes as errata after freeze ("Consumer obligations") |
+| Version | 1 |
+| Status | **Frozen.** Frozen at C4 on fix verification 60; errata owed listed below ("Consumer obligations"). [Fix verification 60](../../reviews/60-contract-C09-fix-verification.md) gave ACCEPT WITH CHANGES. Version 1 applies its V60-1 … V60-6 as proposed ("Fix verification 60 resolution"). Draft.3 answered [review 48](../../reviews/48-contract-C09-review.md), and draft.2 answered [review 36](../../reviews/36-contract-C09-review.md). Draft.3 also made the joint change from C11 draft.2 (`RecordId` gets the observation domain and the NetFlow v9 record index, C11 F41-15). The earlier settled points stay ("Settled") |
 | Provider | Identity and access (RFC-005 revision 5, §3.7, §10, C12; the key service for `digest_key`) |
 | Consumers | Metering ingestion (RFC-003 revision 5 + erratum 5.1, through C11: `put_payload`, `withdraw_payload`, `digest_key`); the evidence query (RFC-003: `digest_key`); identity and access itself (`put`, `tag_note`, `get`, `lookup_login`, `erase`, `store_outbox_head`; `get` purpose "payout destination" for payouts, RFC-004 revision 5 through C16; KYB documents for onboarding); notifier (`get`, contact details at send time); operator console (`put` of case notes and request and order documents, `get` with a read grant); reporting (`get`, display names at view time); RFC-006 revision 6 backup pruner and restore tooling (store events feed, `reapply`) |
 | Transport | Store operations, `digest_key` and `store_outbox_head`: synchronous query and command (gRPC over mTLS, caller allowlist by workload identity, RFC-005 §4.4). Store events feed: Kafka event, published from one partition of identity's transactional outbox (RFC-000 §8 personal-data store row, A1) |
@@ -187,7 +187,9 @@ type GetAnswer =
 
 // ---------- lookup_login (identity only, R36-30) ----------
 type LookupLoginRequest = RequestMeta & { normalised_identifier: string };   // plaintext over mTLS, never logged
-type LookupLoginAnswer = { kind: "principal"; principal_id: SubjectId } | { kind: "not_found" } | Unavailable | Refused;
+type LookupLoginAnswer =
+  | { kind: "principal"; principal_id: SubjectId; version: string }   // version of the matched login_identifier item (V60-5)
+  | { kind: "not_found" } | Unavailable | Refused;
 
 // ---------- erase ----------
 type ErasureScope = {
@@ -213,7 +215,7 @@ type EraseEnvelope = {                                // the compliance envelope
   action_id: string;
   request_ref: RequestRef;                            // signed; must equal EraseRequest.request_ref
   scope: ErasureScope;                                // signed; must equal EraseRequest.scope
-  verification_ref?: string;                          // non-user request: the verification's case note
+  verification_ref?: string;                          // non-user request: the note ID of the request's erasure_request_document (the evidence the verification cites) (V60-6)
   not_after: EpochMicros;
   assertions: { operator: string; credential_id: string; counter: number;
                 authenticator_data: string; client_data_json: string; signature: string }[];
@@ -296,6 +298,12 @@ service has a SQL role on it, so no DDL is part of this contract.
   restore gives its AS OF time to identity (step 6 of "Restore"). Identity finds each item
   with a version after that time. It records an alert for each item and re-bases it at the
   next change. The user enters again a change that the restore lost.
+- **Content below the projected version** (V60-5). Identity does not act on content whose
+  `found.version` is below its own projected version for the item. It holds the notice and
+  asks the user to enter the change again. For `lookup_login`, identity compares the
+  answer's `version` with its projected version of the `login_identifier`. If the matched
+  version is superseded, identity refuses the login and asks the user to enter the change
+  again.
 - **Write-once kinds** (`kyb_document`, `payout_destination_details` and the note kinds):
   an item is written once. A second put with the same content answers `stored`; with
   other content it is `refused(item_exists)` and alerted (R36-01 c). A new payout
@@ -389,8 +397,10 @@ service has a SQL role on it, so no DDL is part of this contract.
   - the global budget (1,000 puts and 4,194,304 B per second) is shared over the N serving
     instances (N = 8, est.). Each instance starts each window with 1/N. Each second, an
     instance lends its unused share of the last window to the instances that refused puts.
-    Thus the global caps are never exceeded. The unused budget is at most one window's
-    lending delay, not (N − 1)/N;
+    The lender gives this share **out of its next window's allowance**: it starts that window
+    with 1/N minus what it lent (V60-1). Thus, in each window, the sum of all allowances is
+    the global cap, and the global caps are never exceeded. The unused budget is at most one
+    window's lending delay, not (N − 1)/N;
   - tokens are taken at admission, after the repeat and tombstone checks (so a repeat of a
     kept `record_id` and a tombstoned one consume none), and refunded on a known non-commit;
   - there is no counter row in any transaction, so no single hot row;
@@ -499,11 +509,13 @@ service has a SQL role on it, so no DDL is part of this contract.
      `request_ref`, `scope`, `verification_ref`, `not_after`);
   3. verifies the assertions by the C4 rules and the C15 operator check, with role
      compliance (X1-S13: support cannot erase);
-  4. records the result and the operator with the `request_ref`.
+  4. records a passing check (the result and the operator) with the `request_ref`.
 
-  If one step fails, the answer is `refused(envelope_invalid)`. A duplicate or a re-drive
-  of the same `request_ref` gets its answer from that record. The store does not check the
-  envelope again. Thus a re-drive after `not_after` or `approval_expiry` completes.
+  If one step fails, the answer is `refused(envelope_invalid)`. The store audits the
+  failure and records nothing with the `request_ref` (V60-4). Thus a later call with a
+  valid envelope gets a new check. A duplicate or a re-drive of a `request_ref` with a
+  passing check gets its answer from that record. The store does not check the envelope
+  again. Thus a re-drive after `not_after` or `approval_expiry` completes.
   **Residual**: identity serves C15. Thus this check stops a defective identity, but not a
   compromised identity.
 - **Effect**:
@@ -532,6 +544,8 @@ service has a SQL role on it, so no DDL is part of this contract.
   writes the parts of `erasure_executed` with their batches. No encoded part is larger
   than 512 KiB. Part 1 holds the scope. The last part holds `store_commit`, the commit of
   the last batch. Consumers use an erasure only when they have all parts 1 … `of`.
+  Consumers deduplicate parts by (`request_ref`, `part`), not only by `event_id`, because a
+  re-drive after a restore can publish a part again with a new `event_id` (V60-2).
 - **Answer** `erased(store_commit, destroyed)`. Items in a batch are `not_found` from that
   batch's commit, every item in scope from `store_commit`. Identity tells the supplier's
   administrators the exporter and hours destroyed **only for an `exporters_period` scope**,
@@ -602,10 +616,11 @@ service has a SQL role on it, so no DDL is part of this contract.
 
 1. Choose a backup. Do not use a backup whose oldest contained generation reaches its
    usage end during the expected time of the restore.
-2. **Set the fence before the restore starts.** The fence is outside `pds`: a control row
-   in identity's own tables, or all store instances stopped. A fenced store serves no
-   `put`, `tag_note`, `put_payload`, `withdraw_payload`, `get`, `lookup_login` or `erase`.
-   Each of them gives `temporarily_unavailable`. Then restore the backup.
+2. **Set the fence before the restore starts.** The fence is a control row in identity's
+   own tables, outside `pds` (V60-3). Store instances read it. While it is set, they serve
+   only `reapply` and the rewrap (step 3). They give `temporarily_unavailable` to every
+   other operation, and `reapply` is `refused(not_restoring)` when the row is not set. Then
+   restore the backup.
 3. Rewrap every key under the current `KEK_PD` generation at once.
 4. Call identity's `store_outbox_head()` after the fence is set. Wait until the relay has
    published through that head.
@@ -616,11 +631,15 @@ service has a SQL role on it, so no DDL is part of this contract.
    fenced. It writes no event and is idempotent by `event_id` (a reapply ledger in the
    restored store). For each event, `reapply` deletes what the act deleted, and **writes
    the state that the act wrote** (R48-03):
-   - `erasure_executed` (all parts): delete the listed subject keys, items, blind-index
-     rows, notes and key ranges; **write** the subject tombstones and the erased ranges;
-     **write** the `request_ref` record with `store_commit`, `destroyed` and the envelope
-     check result. Then a re-driven `erase` gets the original answer and the store writes
-     no second event;
+   - `erasure_executed`: `reapply` applies **each part as it reads it** (V60-2). It deletes
+     the keys, items, blind-index rows, notes and key ranges that the part lists. From part
+     1, it **writes** the subject tombstones, the erased ranges and the `request_ref`
+     record. It marks the record "envelope checked", because an event exists only if the
+     check passed (the operator is in audit). The record holds the progress through the last
+     part read, and `store_commit` when it reads the last part. A re-drive of `erase`
+     resumes from that record, with no envelope check again. It gives numbers to new parts
+     after the last published part. When the record has all parts, a re-driven `erase` gets
+     the original answer and the store writes no event;
    - `payload_withdrawn`: delete the item; **write** the withdrawal tombstone with `was`
      and `day`. Then a re-driven withdrawal gets the original `was` and the store writes no
      second event;
@@ -668,7 +687,7 @@ service has a SQL role on it, so no DDL is part of this contract.
 | `tag_note` | (`note_id`, `subject`) | `tagged`, no write | — |
 | `put_payload` | `record_id` | Kept: `kept(first bucket)`. Tombstoned: `not_kept(late)`. Not kept and not tombstoned: decided afresh | `record_id` contains the keyed digest, so different bytes mean a defect: answered as the first put, nothing written, and an **integrity alert** (identifiers only) (S-G1). The comparison value is **HMAC-SHA-256 of the plaintext under the item's bucket key** (R48-02, D-48-3). The store compares only while the bucket key is unwrapped in memory (the open hour). Otherwise it gives the first bucket, with no comparison and no alert. There is no HSM call. No stored value from the plaintext stays readable after the bucket key is destroyed |
 | `withdraw_payload` | `record_id` | `withdrawn` with the tombstone's `was`; no second event | — |
-| `erase` | `request_ref` | `erased` with the first `store_commit` and `destroyed`, from the `request_ref` record, with no envelope check again; one set of `erasure_executed` parts per `request_ref`, also after a restore (R48-03, R48-05) | `refused(scope_conflict)`; identity never re-scopes a request |
+| `erase` | `request_ref` | `erased` with the first `store_commit` and `destroyed`, from the `request_ref` record, with no envelope check again. A re-drive after a restore resumes from the record that `reapply` wrote, and numbers new parts after the last published part (V60-2). Consumers deduplicate parts by (`request_ref`, `part`) (R48-03, R48-05) | `refused(scope_conflict)`; identity never re-scopes a request |
 | `reapply` | `event_id` | Skipped | — |
 | `digest_key` first version | exporter | The same version 1 | — |
 | Store events | `event_id` | Consumers apply once | — |
@@ -732,9 +751,9 @@ service has a SQL role on it, so no DDL is part of this contract.
 - `not_kept(erased)` is new in draft.2. Until RFC-003's erratum records it as its own drop
   reason, ingestion records it as "dropped: cap" by the rule above (R36-09). C11 draft.2
   already gives it as "dropped: erased".
-- Draft.3 changes `RecordId` (observation domain, NetFlow v9 index), `erasure_executed`
-  (parts, ranges, notes) and `EraseRequest.envelope`. This is a draft, so there is no
-  compatibility rule for these changes.
+- Draft.3 changed `RecordId` (observation domain, NetFlow v9 index), `erasure_executed`
+  (parts, ranges, notes) and `EraseRequest.envelope` before the freeze. Version 1 is the
+  baseline for the rules in this section.
 - Never changed within a major version: idempotency keys, the `keep_by` − ε rule, "known
   outcomes only", the ordering "answer after event committed", the Kafka key, the meaning of
   `not_found`, the purpose → kinds table (narrowing only by a new major version).
@@ -767,7 +786,9 @@ destination details through identity, C16); all at `requirements-v1.10`.
    admitted and the 11th is `not_kept(cap: per_exporter_count)`; bytes past 262,144 in the
    second are refused; the global caps are never exceeded across instances; with 13
    full-rate exporters on one instance and seven idle instances, lending gives the busy
-   instance the unused share within one window (R48-16); in the next second the allowance
+   instance the unused share within one window (R48-16); in the window after lending, a
+   burst on the lenders keeps the total ≤ 1,000 puts and ≤ 4,194,304 B (V60-1); in the next
+   second the allowance
    is restored; a payload of 65,537 B is refused; with measured live payload bytes set at
    36 × 10¹² B, a put is `not_kept(cap: storage)`; a repeat of a kept `record_id` consumes
    no token; during an injected membership change an exporter's admissions stay in the
@@ -830,7 +851,8 @@ destination details through identity, C16); all at `requirements-v1.10`.
     first batch resumes and emits each part once (R36-15). Envelope (R48-05): an erase
     whose scope or `request_ref` differs from the signed ones is
     `refused(envelope_invalid)`; an envelope signed by a support operator is refused
-    (X1-S13); a re-drive after `not_after` completes.
+    (X1-S13); a re-drive after `not_after` completes; a failed check records nothing, and a
+    later call for the same `request_ref` with a valid envelope succeeds (V60-4).
 14. Late execution: an erasure committed at r + 12 days forces a new generation at once;
     the HSM destroys h at the new `s_h+1` + 7 days; every copy is unreadable by the
     rotation start + 7 days; two late erasures before one rotation start cause one rotation
@@ -898,6 +920,13 @@ destination details through identity, C16); all at `requirements-v1.10`.
       `through_serial`, not later keys;
     - a change of a mutable item after the restore succeeds after one re-base on
       `current_version`;
+    - after a restore that loses a change of `contact` or `login_identifier`, identity
+      sends no notice to the old address, refuses a login matched on the superseded
+      identifier, and asks for re-entry (V60-5);
+    - a restore across an erase that is mid-batch, re-driven after `not_after`, completes
+      with no envelope check again and no duplicate part number (V60-2);
+    - only the control row fences: while it is set, the rewrap and `reapply` run, and every
+      other operation gives `temporarily_unavailable` (V60-3);
     - a restore with the feed withheld does not remove the fence; a backup whose oldest
       generation ends during the restore is not used; the restored keys are rewrapped at
       once.
@@ -918,6 +947,19 @@ Orchestrator decisions, binding; this draft specifies each.
 | S-G2 | **`get` purpose vocabulary** | The `GetPurpose` enum with its per-caller allowlist, bound to kinds and grants by R36-03 |
 | S-G3 | **`digest_key` by version** | Optional `version` argument accepted |
 | Bound | **Erasure bound** (review 48) | min(r + 23, e + 14) days, and e + 7 days after a forced rotation |
+
+## Fix verification 60 resolution
+
+The orchestrator applies V60-1 … V60-6 as the verification proposes.
+
+| Finding | Change |
+|---|---|
+| V60-1 lending exceeds the global cap | A lender gives its share out of its next window's allowance. In each window, the sum of allowances is the global cap. Test 3 |
+| V60-2 restore across a mid-batch erase | `reapply` applies each part as it reads it and writes the `request_ref` record marked "envelope checked", with the progress. The re-drive resumes from it and numbers new parts after the last published part. Consumers deduplicate parts by (`request_ref`, `part`). Test 29 |
+| V60-3 fence by stopped instances | Only the control row outside `pds` fences. While it is set, instances serve only `reapply` and the rewrap. Test 29 |
+| V60-4 failed check recorded | The store records only a passing check. It audits a failed check and records nothing. Test 13 |
+| V60-5 old content served after a restore | Identity ignores content below its projected version. `lookup_login` returns the matched version, and identity refuses a login on a superseded identifier. Test 29 |
+| V60-6 stale comment, missing erratum | `verification_ref` names the `erasure_request_document`. RFC-006 erratum: give the AS OF time to identity before the fence is removed |
 
 ## Review 48 resolution
 
@@ -994,8 +1036,8 @@ changes.
 
 ## Consumer obligations
 
-Each takes the changes as errata after this contract is frozen; until then this contract
-records the agreed reading, and the RFCs are not edited.
+This contract is frozen. Each RFC below owes these errata. Until each erratum is applied,
+this contract records the agreed reading where it differs from the RFC.
 
 - **RFC-000 §8** (AI-36-1 with AI-48-1, R36-13, R48-20): personal-data store row:
   - put idempotent by (subject, item, version), with write-once kinds and per-caller kinds
@@ -1019,7 +1061,9 @@ records the agreed reading, and the RFCs are not edited.
   min(r + 23, e + 14) days, e + 7 after a forced rotation, the supplier notice only for
   `exporters_period` scopes); and AI-48-2 in §3.7, §7.5 and C12: the document kinds and
   `tag_note` (R48-07), the erase envelope with its signed fields and assertions, checked once
-  for each `request_ref` (R48-05), the comparison under the bucket key (R48-02), the
+  for each `request_ref`, only a passing check recorded (R48-05, V60-4); identity ignores
+  content below its projected version, and `lookup_login` returns the version (V60-5); cap
+  lending out of the lender's next window (V60-1); the comparison under the bucket key (R48-02), the
   nesting of key layers (R48-08), the forced-rotation mechanics (R48-11), deletion of every
   note tagged with an erased subject (unchanged in RFC-005; C09 follows it, R48-01), the
   key row read and sweep (R48-09, R48-14), the decommissioned cluster (R48-22), the rate
@@ -1030,7 +1074,9 @@ records the agreed reading, and the RFCs are not edited.
   `max.message.bytes` 1,048,576); R36-07 and R48-14 (the state-based sweep, also after a
   restore, makes the 40 TB allotment a backstop); R36-24 (rewrap at once, backup
   choice); R48-20 (§14.4 wording: the bucket key, not each item key, is wrapped under the
-  receipt day's expiry key).
+  receipt day's expiry key); R48-04 with V60-6 (the restore's AS OF time given to identity
+  before the fence is removed); V60-2 and V60-3 (`reapply` applies each part and writes
+  the "envelope checked" record; the fence is only the control row).
 - **RFC-003**: S-M4 (already its label); R36-05 (every non-answer withdrawn), R36-09
   (`not_kept(erased)` as a drop reason), R36-12 (`not_found` as a configuration error),
   R36-14 (`received_at` on `withdraw_payload`), R36-28 (the later log entry
@@ -1042,7 +1088,7 @@ records the agreed reading, and the RFCs are not edited.
 
 ## Open issues
 
-These issues do not stop the fix verification. They go to the requirements owners and
+These issues did not stop the freeze. They go to the requirements owners and
 the architecture owners.
 
 - **RQ-36-1**: how long the store keeps a non-user's identity evidence after the request is
