@@ -99,12 +99,17 @@ Feature: Security, tenancy and audit
       And R keeps the reference "s1" already saw, which provisioning depends on
       And the withdrawal is recorded with the administrator and the time
 
-    @X1-S24 @need-X1-N2 @POL-04
-    Scenario: A webhook goes only to its own account's endpoint and carries nothing about another account
-      Given "b1" and "b2" have each registered a webhook endpoint
-      When the outcome of a booking request of "b1" is known
-      Then it is sent only to the endpoint "b1" registered
-      And it carries nothing about "b2" or any other account
+    @X1-S24 @need-X1-N2 @POL-04 @POL-07
+    Scenario Outline: A webhook goes only to its own account's endpoint and carries nothing about another account
+      Given <own> and <other> have each registered a webhook endpoint
+      When <event>
+      Then it is sent only to the endpoint <own> registered
+      And it carries nothing about <other> or any other account
+
+      Examples:
+        | own  | other | event                                                                                     |
+        | "b1" | "b2"  | the outcome of a booking request of buyer "b1" is known                                   |
+        | "s1" | "s2"  | maintenance that supplier "s1" booked on its link is cut to fit a permanent reduction (POL-07) |
 
   Rule: An agent key acts only for its account, and every credential stops working within 60 s of its revocation
 
@@ -344,12 +349,17 @@ Feature: Security, tenancy and audit
       Then it is refused and no money moves
       And it is recorded for investigation
 
-  Rule: A buyer can verify every webhook Share sends
+  Rule: Every receiver can verify every webhook Share sends
 
-    @X1-S11 @need-X1-N6 @POL-04
-    Scenario: A webhook can be verified as coming from Share and unaltered
-      When Share sends a webhook to a buyer
-      Then the buyer can verify, from the webhook alone and what Share has given them, that Share sent it and that it was not altered
+    @X1-S11 @need-X1-N6 @POL-04 @POL-07
+    Scenario Outline: A webhook can be verified as coming from Share and unaltered, by a buyer or a supplier
+      When Share sends <receiver> a webhook with <content>
+      Then the receiver can verify, from the webhook alone and what Share has given it, that Share sent it and that it was not altered
+
+      Examples:
+        | receiver      | content                                                    |
+        | buyer "b1"    | the outcome of a booking request                           |
+        | supplier "s1" | a notice that its maintenance was cut to fit a permanent reduction (POL-07) |
 
   Rule: Operator power is controlled and recorded
 
@@ -366,7 +376,7 @@ Feature: Security, tenancy and audit
         | compliance         | terminating a reservation for fraud or a sanctions or legal order (POL-30), approved by a second compliance operator |
         | finance            | correcting a price, with its cause (POL-23)                                                              |
         | finance            | attributing quarantined traffic to the account (POL-17)                                                  |
-        | finance            | setting or removing a `credit_limit`, set only on an account that has passed know-your-business checks (POL-15) |
+        | finance            | setting a `credit_limit` of at most `credit_limit_four_eyes_above` (POL-32: 10,000 USD), or removing one, set only on an account that has passed know-your-business checks (POL-15) |
         | finance            | resolving an escalated payout to a supplier (POL-22)                                                     |
         | finance            | resolving an escalated reversal whose payment never arrived (POL-21)                                     |
         | compliance         | disclosing the account's identity to a supplier under a legal order that requires it (POL-33), approved by a second compliance operator |
@@ -423,6 +433,19 @@ Feature: Security, tenancy and audit
         | the operator who asked cancels the request                                           | the request is cancelled, R is unchanged, and a later approval is refused  |
         | "b1" cancels R, and a second compliance operator then approves the request           | the approval is refused, because R no longer exists to be terminated       |
 
+    @X1-S49 @need-X1-N7 @POL-32 @POL-15
+    Scenario Outline: A credit limit above credit_limit_four_eyes_above takes effect only with a second finance operator's approval
+      Given account "e1" has passed know-your-business checks and has a `credit_limit` (POL-15) of 5,000.000000 USD
+      When an operator in finance <action>, giving a reason
+      Then <result>
+      And it is recorded with the operator, any approver, the role, the reason and the time
+
+      Examples:
+        | action                                              | result                                                                                                             |
+        | sets "e1"'s `credit_limit` to 10,000.000000 USD     | it takes effect at once, being not above `credit_limit_four_eyes_above` (POL-32: 10,000 USD)                        |
+        | sets "e1"'s `credit_limit` to 15,000.000000 USD     | it takes effect only once a second finance operator approves it, and lapses unapproved after `approval_expiry` (POL-32) |
+        | removes "e1"'s `credit_limit`                       | it takes effect at once                                                                                             |
+
     @X1-S35 @need-X1-N2 @need-X1-N7 @POL-33 @POL-32
     Scenario Outline: A disclosure under a legal order has the order's scope and ends with it
       Given buyer "b1" holds reservations on links of supplier "s1" and of supplier "s2"
@@ -444,7 +467,7 @@ Feature: Security, tenancy and audit
       Examples:
         | who                                                                   | termination                                                                                            | result                                                                                         |
         | the network operations operator                                       | for network abuse, asking that its holder not be told                                                  | the termination takes effect, the request not to tell is refused, and the holder is told       |
-        | an operator in compliance, approved by a second compliance operator   | for a legal order, recording in the same action, and citing the order, that the order forbids telling the holder | the holder is not told, and the order is recorded with the termination                |
+        | an operator in compliance, approved by a second compliance operator   | for a legal order, recording in the same action, and citing the order, that the order forbids telling the holder | the holder is told nothing the termination causes, no notice and no webhook, of the termination or of a request or offer it ends; a status read by the holder still gives the true state; and the order is recorded with the termination |
         | an operator in compliance, approved by a second compliance operator   | for a legal order, without withholding the notice, and a compliance operator then asks, citing the order, that the holder not be told | the later request is refused, and the holder is told within `affected_notice_time` (POL-07) |
 
     @X1-S16 @need-X1-N7 @POL-30 @POL-32
@@ -548,6 +571,26 @@ Feature: Security, tenancy and audit
         | citing a documented legal requirement, with its legal reference, and a second compliance operator approves it | it is recorded as an erasure request with that legal reference, `erasure_max` (POL-19) running from that record, and one compliance operator may then execute it |
         | citing a documented legal requirement, and no second compliance operator has approved it                | nothing is recorded as a request and nothing is erased, and it lapses after `approval_expiry` (POL-32)                                                            |
         | citing no legal requirement                                                                              | it is refused and recorded, and nothing is erased                                                                                                                |
+
+    @X1-S47 @need-X1-N11 @need-X1-N7 @POL-19 @POL-22 @POL-24 @POL-32
+    Scenario Outline: An executed erasure covers what the person's request reaches
+      Given <situation>
+      When an operator in compliance executes the erasure request of user "u1" (POL-32)
+      Then <result>
+
+      Examples:
+        | situation                                                                                                                                        | result                                                                                                                                                                                                  |
+        | a support note in the erasable store names user "u1" of "b1" and user "u2" of "b2"                                                               | the whole note is erased, "u2"'s data in it included (POL-19)                                                                                                                                            |
+        | "u1" is a sole trader whose bank account is the payout destination of supplier "s1", and a payout instructed to it is not yet confirmed           | the destination's details are kept until that payout is confirmed or has failed finally and the reconciliation has matched it (POL-24), then erased within `erasure_max` (POL-19); the payout records keep only a reference to them, and no payout is instructed to "s1" until a supplier administrator sets a new destination (POL-22) |
+        | "u1" is a user of supplier "s1", whose exporter "x1" sends payloads that do not conform to the record template before and after the erasure is executed | the payloads received before it is executed are erased; a payload received after it is not covered by it, and expires by its own deadline (POL-19)                                                       |
+
+    @X1-S48 @need-X1-N11 @POL-19 @POL-32
+    Scenario: The evidence of a non-user's erasure request is kept for erasure_evidence_retention, then erased, and the record of the request stays
+      Given a person who is not a Share user sent a documented erasure request with evidence of identity, and an operator in compliance executed it on day D (POL-32)
+      When `erasure_evidence_retention` (POL-19: 12 months) has passed since day D
+      Then the written request and its evidence are erased, and within `erasure_max` (POL-19) of that time they can no longer be recovered from any copy Share holds
+      And until then only operators in compliance could read them (POL-32)
+      And the record of the request, by pseudonymous identifiers, stays in the audit for the retention period (POL-19)
 
     @X1-S37 @need-X1-N11 @POL-19
     Scenario: Logs and records hold no personal data

@@ -909,6 +909,20 @@ Feature: Wallet, funds holds, ledger and supplier settlement
         | -2.500000 USD | nothing is written off under POL-21, the uncovered negative balance being max(0, 2.500000 - 1.000000 - 1.500000) = 0                                                           |
         | -3.000000 USD | the uncovered negative balance, max(0, 3.000000 - 1.000000 - 1.500000) = 0.500000 USD, is written off automatically, at Share's cost (POL-23), and stays recorded as owed by "e1" |
 
+    @P4-S119 @need-P4-N13 @need-P4-N2 @POL-21 @POL-20 @POL-11 @POL-24 @POL-32
+    Scenario Outline: A reversal takes back at most what its payment credited, at the payment's own rate, and only once
+      Given buyer "b1" was credited 9.516979 USD for a top-up of 1,234 KES at a shown rate of 0.0077123 USD per KES (P4-S06)
+      When the payment provider <reversal>
+      Then <result>
+
+      Examples:
+        | reversal                                                          | result                                                                                                                       |
+        | reverses all 1,234 KES of that top-up                             | "b1" is debited 9.516979 USD, exactly what the top-up credited, whatever the rate on the day of the reversal (POL-21)         |
+        | reverses 617 KES of that top-up                                   | "b1" is debited 4.758489 USD: 9.516979 × 617 / 1,234 = 4.7584895 USD, rounded down to the micro (POL-21, POL-11)              |
+        | reverses 1,500 KES of that top-up, more than was paid             | no money moves; the reversal is recorded, reported to the reconciliation (POL-24) and resolved by an operator in finance (POL-32) |
+        | reverses 100 KES of that top-up, after an earlier reversal of it  | no money moves; the reversal is recorded, reported to the reconciliation (POL-24) and resolved by an operator in finance (POL-32) |
+        | reverses 9.516979 USD of that top-up, in another currency than it was paid in | no money moves; the reversal is recorded, reported to the reconciliation (POL-24) and resolved by an operator in finance (POL-32) |
+
   Rule: Credit is given only to vetted accounts, and collected by rule
 
     @P4-S82 @need-P4-N17 @POL-15 @POL-24 @POL-32
@@ -956,15 +970,16 @@ Feature: Wallet, funds holds, ledger and supplier settlement
       And 0.500000 USD of it then pays I2, recorded as an invoice payment (POL-24), and the remaining 0.500000 USD raises its ledger balance to 0.500000 USD
 
     @P4-S114 @need-P4-N5 @need-P4-N17 @POL-16 @POL-15 @POL-21 @POL-18
-    Scenario Outline: The resume amount is the least top-up that resumes the account, itemised
+    Scenario Outline: The resume amount is the least top-up that resumes the account, itemised, with the headroom after it
       Given <account>
       When "e1" is told the amount that would resume it
       Then the resume amount is <amount> USD, itemised as <items>
+      And the quote states that "e1"'s headroom once it is applied is <after> USD, as an explanation and not as an item (POL-16)
 
       Examples:
-        | account                                                                                                                                                                                         | amount   | items                                                                                                                  |
-        | credit-limit account "e1" is suspended as in P4-S92, with one overdue invoice of 1.000000 USD                                                                                                   | 1.000000 | the overdue invoice, 1.000000 USD, after whose payment headroom is 4.712000 USD and nothing more is needed (POL-16)    |
-        | account "e1" is suspended as in P4-S111 before its top-up, owing the written-off amount of 1.000000 USD and I2 of 0.500000 USD, with no credit limit since the write-off (POL-15), and no reservations or usage exposure | 2.500000 | the written-off amount, 1.000000 USD; I2, 0.500000 USD; and 1.000000 USD to reach `low_balance_warning` (POL-16)        |
+        | account                                                                                                                                                                                         | amount   | items                                                                                                                  | after    |
+        | credit-limit account "e1" is suspended as in P4-S92, with one overdue invoice of 1.000000 USD                                                                                                   | 1.000000 | the overdue invoice, 1.000000 USD, nothing more being needed (POL-16)                                                   | 4.712000 |
+        | account "e1" is suspended as in P4-S111 before its top-up, owing the written-off amount of 1.000000 USD and I2 of 0.500000 USD, with no credit limit since the write-off (POL-15), and no reservations or usage exposure | 2.500000 | the written-off amount, 1.000000 USD; I2, 0.500000 USD; and 1.000000 USD to reach `low_balance_warning` (POL-16)        | 1.000000 |
 
   Rule: The books are reconciled with the money daily
 
@@ -1046,6 +1061,19 @@ Feature: Wallet, funds holds, ledger and supplier settlement
       Then the top-up and its reversal net to zero in the payments posted and not yet received (POL-24)
       And they are matched to each other, with no partner transaction for either
       And no alert is raised for them, even once `settlement_lag_max` (POL-24) has passed
+
+    @P4-S120 @need-P4-N14 @POL-24
+    Scenario Outline: Payments not yet received from one provider above provider_unreceived_alert raise an alert, and stop nothing
+      Given payment provider "pp1" notifies payments before it settles them to the payment partner
+      And at the end of day D, the payments that the ledger has posted from "pp1" and that the partner has not yet received total <total> USD, each posted less than `settlement_lag_max` (POL-24) ago
+      When the reconciliation of day D runs
+      Then <alert>
+      And every later payment from "pp1" is credited as usual, none refused or delayed
+
+      Examples:
+        | total     | alert                                                                                                      |
+        | 9,000.000000  | no alert is raised                                                                                         |
+        | 12,000.000000 | an operational alert is raised to finance that "pp1"'s total is above `provider_unreceived_alert` (POL-24: 10,000 USD) |
 
     @P4-S109 @need-P4-N14 @need-P4-N2 @POL-24 @POL-20
     Scenario: A payment received before the cut and posted after it, with its FX difference, is counted at the partner's USD amount and raises no alert

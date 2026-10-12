@@ -96,10 +96,10 @@ Feature: Booking, changing and ending route reservations, all or nothing
       And polling with the request's idempotency key returns the outcome once it is known
 
     @P2-S09 @need-P2-N2 @POL-04
-    Scenario: A buyer who registered a webhook is sent the outcome
+    Scenario: A buyer who registered a webhook is sent the outcome of each request answered pending, a change included
       Given the buyer has registered a webhook
-      And a booking of theirs was answered pending
-      When the booking's outcome is known
+      And a booking request of theirs, a booking or a change, was answered pending
+      When the request's outcome is known
       Then the outcome is sent to the webhook, signed, and retried until acknowledged for up to `webhook_retry` (POL-04)
 
     @P2-S10 @need-P2-N2 @POL-04 @POL-29
@@ -415,6 +415,16 @@ Feature: Booking, changing and ending route reservations, all or nothing
       Then B is confirmed
       And D is rejected for no fit
 
+    @P2-S118 @need-P2-N4 @POL-02 @POL-05
+    Scenario: A younger holder that kept its capacity while it was not waiting yields once it starts to wait
+      Given `priority_rule` is `request_age` (POL-02)
+      And Share links L1, L2 and L3, each with a capacity of 10 Mbps
+      And request A, received before request B, holds 8 Mbps on L1 and waits for 8 Mbps on L2 for [10:00, 11:00)
+      And request B holds 8 Mbps on L2 for [10:00, 11:00), is not waiting, and so kept its hold on L2
+      When B then waits for 8 Mbps on L3 for [10:00, 11:00), which a request C in flight holds, while A still waits for L2
+      Then B releases its hold on L2 and waits, pending, within its own deadline
+      And A is confirmed before either deadline passes
+
     @P2-S20 @need-P2-N4 @POL-05 @POL-26
     Scenario: A contended request waits, pending, and is confirmed if the capacity in flight is released within its deadline
       Given a pending request in flight holds 8 Mbps on L for [10:00, 11:00)
@@ -523,6 +533,17 @@ Feature: Booking, changing and ending route reservations, all or nothing
         | a decrease of R to 2 Mbps                    | it is not accepted, as a reuse of the key for a different request, and the first change is unaffected |
         | a shortening of another reservation to 12:00 | it is not accepted, as a reuse of the key for a different request, and the first change is unaffected |
 
+    @P2-S122 @need-P2-N6 @POL-29 @POL-08
+    Scenario Outline: A withdrawal names its request's key, is the same withdrawal on every retry, and can come before its request
+      Given <state>
+      When the buyer <action>
+      Then <result>
+
+      Examples:
+        | state                                    | action                                                                                       | result                                                                                         |
+        | a booking request with key "k8" is pending | withdraws "k8", and then sends the same withdrawal again                                   | the request fails as "withdrawn" once and releases what it holds, and both answers report that outcome |
+        | no request uses key "k9"                 | withdraws "k9", and then sends a booking with key "k9" within `idempotency_retention` (POL-29) | the booking fails as "withdrawn" and holds nothing                                              |
+
   Rule: Partner legs are booked safely
 
     Background:
@@ -600,6 +621,21 @@ Feature: Booking, changing and ending route reservations, all or nothing
         | mismatch                                                      | resolution                                                                                         |
         | a booking on P with no Share reservation behind it            | Share cancels it at its own cost (POL-23), and no buyer is charged for it                           |
         | a Share reservation whose leg on P the partner does not have  | the reservation is treated as affected by an unplanned outage on P (POL-07), and its holder is told |
+        | a Share reservation of 4 Mbps for [10:00, 12:00) whose leg on P the partner has only at 3 Mbps for [10:00, 11:00) | the missing part, 1 Mbps for [10:00, 11:00) and 4 Mbps for [11:00, 12:00), is treated as affected by an unplanned outage on P (POL-07), and its holder is told |
+
+    @P2-S121 @need-P2-N9 @need-P2-N7 @POL-08
+    Scenario Outline: A booking over a partner leg with a fee is decided on the terms of the quote it cites, and is never charged a fee it was not shown
+      Given the partner's terms for P include a cancellation fee of 2.000000 USD
+      And at 09:00 Share gave the buyer quote Q1 for a booking of the route at 4 Mbps for [10:00, 11:00), with that fee, valid until 09:05
+      When the buyer books the route at 4 Mbps for [10:00, 11:00) <request>
+      Then <result>
+
+      Examples:
+        | request                                                                                   | result                                                                                                  |
+        | at 09:01, citing Q1                                                                       | it is decided as usual, and the terms shown for it are those of Q1 (POL-08)                              |
+        | at 09:01, citing no quote                                                                 | it is rejected, stating the current terms, the fee of 2.000000 USD included, and nothing is held        |
+        | at 09:06, citing Q1                                                                       | it is rejected because Q1 is no longer valid, stating the current terms, and nothing is held            |
+        | at 09:01, citing Q1, after an operator in commercial recorded a fee of 3.000000 USD for P at 09:00:30 | it is rejected, stating the current terms, the fee of 3.000000 USD included, and nothing is held |
 
   Rule: A partner without holds is booked last, at most once per route, at Share's risk
 
@@ -846,6 +882,18 @@ Feature: Booking, changing and ending route reservations, all or nothing
       And stating that 3 Mbps is the largest rate that fits [10:00, 11:00) on every leg
       And stating that [12:00, 13:00) is the earliest one-hour window within the selling horizon that fits 5 Mbps on every leg
 
+    @P2-S120 @need-P2-N11 @need-P2-N1 @POL-07 @POL-10
+    Scenario Outline: A booking or an extension over a link that is being retired is rejected at once, naming the link, with no counter-offer
+      Given an operator in commercial has started to retire L2 (POL-07)
+      When a buyer <request>
+      Then it is rejected at once with the reason "link unavailable", naming L2, and with no counter-offer (POL-10)
+      And nothing is held for it on any leg, and no funds are held for it
+
+      Examples:
+        | request                                                                                          |
+        | books the route at 2 Mbps for [10:00, 11:00)                                                     |
+        | extends its confirmed reservation of 1 Mbps on the route for [10:00, 11:00) to end at 12:00      |
+
   Rule: A reservation is changed or ended as one unit, without risk to what the buyer already has
 
     Background:
@@ -974,6 +1022,18 @@ Feature: Booking, changing and ending route reservations, all or nothing
         | end   | result                                                                                                                  |
         | 10:01 | R ends at 10:01, as a cancellation, without waiting for the extension, which fails with the reason "reservation ended" and holds nothing |
         | 12:00 | the shortening is decided after the extension, in arrival order, against R as the extension leaves it, and R then ends at 12:00 |
+
+    @P2-S119 @need-P2-N9 @POL-08
+    Scenario Outline: A cancellation or a decrease made just after a confirmation frees the capacity on every leg from the next minute boundary
+      Given <confirmed> at 10:00:30
+      When the account <change> at 10:00:31
+      Then <result>
+      And this holds in whatever order Share's links learn of the confirmation and of the change
+
+      Examples:
+        | confirmed                                                              | change                | result                                                                                                  |
+        | a new reservation R4 of 4 Mbps on L1 and L2 for [10:01, 18:00) is confirmed | cancels R4            | R4 ends at 10:01 and never accrues, and from 10:01 its 4 Mbps on L1 and L2 is available to other buyers |
+        | an increase of R to 8 Mbps is confirmed                                | decreases R to 4 Mbps | R is 4 Mbps from 10:01, the added part never accrues, and from 10:01 the 4 Mbps it added on L1 and L2 is available to other buyers |
 
     @P2-S80 @need-P2-N9 @POL-07 @POL-16 @POL-30
     Scenario Outline: A change still pending when its reservation is ended by Share is not confirmed

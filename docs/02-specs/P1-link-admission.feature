@@ -439,6 +439,11 @@ Feature: Selling capacity on one link without overselling
       Then within `affected_notice_time` (POL-07) of the record, the notice that A is affected is in the list of notices of A's account, and its first delivery to the endpoint has been attempted
       And its delivery is retried for `webhook_retry` (POL-04)
 
+    @P1-S85 @need-P1-N8 @POL-07 @POL-26
+    Scenario: While the link's schedule owner fails over, the holders are told within affected_notice_time plus release_grace
+      When an unplanned outage reduces the link's capacity to 6 Mbps, and the link's schedule owner fails over before the holders are told
+      Then within `affected_notice_time` (POL-07) + `release_grace` (POL-26) of the outage's record, the holders of A and B and network operations are told which reservations are affected and from when
+
   Rule: Planned maintenance is booked ahead by the link's supplier, on free capacity only
 
     Background:

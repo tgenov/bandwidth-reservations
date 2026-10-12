@@ -81,6 +81,7 @@ plan, not in the scenario.
 | P1-S78 | Whether a confirmation had begun committing when a reduction was recorded is judged by whether it sees the reduction's displacement record | TBD | — | not assessed |
 | P1-S72 | When a reservation ends during an outage, the others are no longer affected where they now fit, and their holders are told | TBD | — | not assessed |
 | P1-S75 | A holder whose webhook endpoint is down is still told within affected_notice_time | TBD | — | not assessed |
+| P1-S85 | While the link's schedule owner fails over, the holders are told within affected_notice_time plus release_grace | TBD | — | not assessed |
 | P1-S28 | Maintenance that fits on free capacity is booked | TBD | — | not assessed |
 | P1-S29 | Maintenance that needs committed capacity is rejected | TBD | — | not assessed |
 | P1-S30 | Maintenance booked with less than the required notice is rejected | TBD | — | not assessed |
@@ -126,7 +127,7 @@ plan, not in the scenario.
 | P2-S06 | Every booking request gets a response within ack_budget | TBD | — | not assessed |
 | P2-S07 | A request whose outcome is known within ack_budget gets its final outcome | TBD | — | not assessed |
 | P2-S08 | A request whose outcome is not yet known is pending, and the outcome can be polled with its idempotency key | TBD | — | not assessed |
-| P2-S09 | A buyer who registered a webhook is sent the outcome | TBD | — | not assessed |
+| P2-S09 | A buyer who registered a webhook is sent the outcome of each request answered pending, a change included | TBD | — | not assessed |
 | P2-S10 | An outcome never changes once reported | TBD | — | not assessed |
 | P2-S99 | A status read never contradicts the decided outcome, and reflects it within status_staleness | TBD | — | not assessed |
 | P2-S107 | An outcome other than confirmed is reported once its Share-link releases are durable, within release_grace while a link's schedule owner is failing over | TBD | — | not assessed |
@@ -163,6 +164,7 @@ plan, not in the scenario.
 | P2-S87 | A cycle of three waiting requests is broken, and the oldest is confirmed before any deadline | TBD | — | not assessed |
 | P2-S88 | In a broken cycle, the next oldest is confirmed if the oldest then ends without confirmation | TBD | — | not assessed |
 | P2-S97 | A request that yields in a crossing keeps its place among waiters | TBD | — | not assessed |
+| P2-S118 | A younger holder that kept its capacity while it was not waiting yields once it starts to wait | TBD | — | not assessed |
 | P2-S20 | A contended request waits, pending, and is confirmed if the capacity in flight is released within its deadline | TBD | — | not assessed |
 | P2-S52 | A waiting request whose capacity is then confirmed to the request ahead of it is rejected with a counter-offer | TBD | — | not assessed |
 | P2-S21 | Changing the priority rule does not change the outcome of uncontended requests | TBD | — | not assessed |
@@ -176,6 +178,7 @@ plan, not in the scenario.
 | P2-S65 | After idempotency_retention a key identifies a new request | TBD | — | not assessed |
 | P2-S27 | A retry while the request is pending returns its current status | TBD | — | not assessed |
 | P2-S113 | A change sent again under the same key is the same change only if its reservation, kind, new end or rate and wait setting match | TBD | — | not assessed |
+| P2-S122 | A withdrawal names its request's key, is the same withdrawal on every retry, and can come before its request | TBD | — | not assessed |
 | P2-S28 | Retried partner calls never book the partner twice | TBD | `test/routes.test.ts` › "randomised contention (seed 11/12/13): never oversold, competitors never all lose, all sagas finish" *(prior evidence, to be re-validated)* | not assessed |
 | P2-S29 | Share never confirms a leg the partner has not confirmed | TBD | — | not assessed |
 | P2-S30 | A transient partner refusal does not end the request before its deadline | TBD | — | not assessed |
@@ -185,6 +188,7 @@ plan, not in the scenario.
 | P2-S32 | Every partner is fully reconciled daily, and each mismatch alerts operations | TBD | — | not assessed |
 | P2-S90 | A partner call whose result is unknown is reconciled for that booking at once | TBD | — | not assessed |
 | P2-S91 | A mismatch found in reconciliation is resolved without charging the buyer for it | TBD | — | not assessed |
+| P2-S121 | A booking over a partner leg with a fee is decided on the terms of the quote it cites, and is never charged a fee it was not shown | TBD | — | not assessed |
 | P2-S33 | A partner without holds is booked only after every other leg and the funds are secured | TBD | — | not assessed |
 | P2-S34 | A route with two legs on partners without holds is rejected before anything is held | TBD | — | not assessed |
 | P2-S35 | A failure after the partner without holds was booked cancels it at Share's cost | TBD | — | not assessed |
@@ -211,6 +215,7 @@ plan, not in the scenario.
 | P2-S72 | Revoking an agent key fails its pending requests and leaves its reservations with the account | TBD | — | not assessed |
 | P2-S103 | An event after a request's decision does not change its outcome, even while its status still reads pending | TBD | — | not assessed |
 | P2-S73 | A route counter-offer fits every leg, not only the blocking one | TBD | — | not assessed |
+| P2-S120 | A booking or an extension over a link that is being retired is rejected at once, naming the link, with no counter-offer | TBD | — | not assessed |
 | P2-S43 | A cancellation takes effect at the next minute boundary on every leg | TBD | — | not assessed |
 | P2-S44 | Shortening cancels the remaining part | TBD | — | not assessed |
 | P2-S45 | An extension is decided against capacity for the added period only | TBD | — | not assessed |
@@ -227,6 +232,7 @@ plan, not in the scenario.
 | P2-S79 | Concurrent changes to one reservation are applied one at a time, in arrival order | TBD | — | not assessed |
 | P2-S81 | A cancellation is never delayed by a pending change, which then fails | TBD | — | not assessed |
 | P2-S94 | A shortening to the next minute boundary is a cancellation; any other shortening waits its turn | TBD | — | not assessed |
+| P2-S119 | A cancellation or a decrease made just after a confirmation frees the capacity on every leg from the next minute boundary | TBD | — | not assessed |
 | P2-S80 | A change still pending when its reservation is ended by Share is not confirmed | TBD | — | not assessed |
 | P2-S115 | A decrease over a partner leg whose shown terms do not allow one is rejected, stating the rule | TBD | — | not assessed |
 | P2-S82 | A cancellation over a partner leg takes effect for the buyer whatever the partner answers | TBD | — | not assessed |
@@ -284,11 +290,13 @@ plan, not in the scenario.
 | P3-S25 | Attributable traffic outside an active reservation is billed at usage_price and counts toward usage exposure | TBD | — | not assessed |
 | P3-S53 | A record spread across the end of a reservation is covered for the minute inside it and billed for the minute outside | TBD | — | not assessed |
 | P3-S26 | Traffic that cannot be attributed is quarantined, not billed, and reported | TBD | — | not assessed |
+| P3-S77 | A record from an observation domain not registered to its exporter is kept and quarantined, and charged only if finance attributes it | TBD | — | not assessed |
 | P3-S27 | Quarantined traffic is billed, and its supplier paid, only if attributed within dispute_window | TBD | — | not assessed |
 | P3-S65 | A mistaken attribution of quarantined traffic is reversed at Share's cost, and the supplier keeps what it was paid | TBD | — | not assessed |
 | P3-S28 | A record that cannot be used is kept with its reason and not charged | TBD | — | not assessed |
 | P3-S29 | A record that cannot be used does not delay the records behind it | TBD | — | not assessed |
 | P3-S30 | A kept record that is corrected by its own exporter is charged once | TBD | — | not assessed |
+| P3-S78 | A corrected version of a record that could not be used is charged only if it is submitted before its deadline | TBD | — | not assessed |
 | P3-S71 | A payload that does not conform to the record template is rejected, and outside the erasable store only its identity, digest and reason are kept | TBD | — | not assessed |
 | P3-S75 | A non-conforming payload that is not kept still leaves its identity, keyed digest and reason, and is counted | TBD | — | not assessed |
 | P3-S31 | An accepted record is never altered or removed | TBD | — | not assessed |
@@ -309,6 +317,7 @@ plan, not in the scenario.
 | P3-S61 | An accepted record counts in unposted usage from within attribution_lag_max of its acceptance until it is posted | TBD | — | not assessed |
 | P3-S62 | A record counted in unposted usage later than attribution_lag_max after its acceptance is reported as a breach | TBD | — | not assessed |
 | P3-S68 | A record spread over several minutes is late only from the end of the last minute it was active in | TBD | — | not assessed |
+| P3-S76 | After a change of usage_rate_cap, the lateness bound uses the highest cap in force over its span | TBD | — | not assessed |
 | P3-S39 | Accepted records can be retrieved by reservation, link and minute | TBD | — | not assessed |
 | P4-S01 | Repeated and reordered notifications change the wallet once per transaction | TBD | `billing/test/wallet.test.ts` › "payment webhooks (D19 wallet) › repeated and out-of-order webhooks credit the wallet exactly once" *(prior evidence, to be re-validated)* | not assessed |
 | P4-S02 | A reversal arriving before its payment is held and matched | TBD | — | not assessed |
@@ -412,19 +421,21 @@ plan, not in the scenario.
 | P4-S94 | After a write-off the account stays suspended until a top-up repays Share, and then resumes by the usual rule | TBD | — | not assessed |
 | P4-S107 | A negative balance not caused by a reversal is written off 90 days after it arose | TBD | — | not assessed |
 | P4-S112 | On a credit-limit account, the 90-day clock runs only on the negative balance no invoice covers | TBD | — | not assessed |
+| P4-S119 | A reversal takes back at most what its payment credited, at the payment's own rate, and only once | TBD | — | not assessed |
 | P4-S82 | A credit limit can be set only on an account that has passed know-your-business checks | TBD | — | not assessed |
 | P4-S83 | An invoice unpaid 90 days after its due date is written off at Share's cost | TBD | — | not assessed |
 | P4-S92 | An account suspended for an overdue invoice stays suspended whatever its headroom | TBD | — | not assessed |
 | P4-S93 | Paying every overdue invoice resumes the account, if the headroom rule also holds | TBD | — | not assessed |
 | P4-S105 | A top-up to an account with an overdue invoice pays that invoice first, and can resume the account | TBD | — | not assessed |
 | P4-S111 | A top-up repays a written-off amount first, then overdue invoices oldest first, then raises the balance | TBD | — | not assessed |
-| P4-S114 | The resume amount is the least top-up that resumes the account, itemised | TBD | — | not assessed |
+| P4-S114 | The resume amount is the least top-up that resumes the account, itemised, with the headroom after it | TBD | — | not assessed |
 | P4-S54 | The daily reconciliation proves what must agree, and reports every difference | TBD | — | not assessed |
 | P4-S90 | Funds at the partner equal the signed balances, less payouts executed but not yet confirmed, plus payments received but not yet posted, and no alert is raised | TBD | — | not assessed |
 | P4-S91 | Share's own balance below the receivables it funds is an alert, even when the sums agree | TBD | — | not assessed |
 | P4-S104 | Every kind of partner transaction is matched to one ledger movement, and raises no alert | TBD | — | not assessed |
 | P4-S106 | A payment posted before the partner received it is counted in flight, and alerts only if not received within settlement_lag_max | TBD | — | not assessed |
 | P4-S113 | A payment posted before the partner received it, and reversed before it did, nets to zero and raises no alert | TBD | — | not assessed |
+| P4-S120 | Payments not yet received from one provider above provider_unreceived_alert raise an alert, and stop nothing | TBD | — | not assessed |
 | P4-S109 | A payment received before the cut and posted after it, with its FX difference, is counted at the partner's USD amount and raises no alert | TBD | — | not assessed |
 | P4-S80 | Provider settlement reports and bank statements are reconciled daily by the same rule | TBD | — | not assessed |
 | P4-S81 | A reconciliation not completed by 12:00 UTC on the next day is an operational alert | TBD | — | not assessed |
@@ -456,11 +467,12 @@ plan, not in the scenario.
 | X1-S22 | Nobody but the link's supplier books maintenance, announces a permanent reduction or records an outage or its restoration on it, network operations aside | TBD | — | not assessed |
 | X1-S23 | Network operations may record an outage and its restoration, but not commercial changes | TBD | — | not assessed |
 | X1-S10 | A notification not proven authentic moves no money and is recorded | TBD | — | not assessed |
-| X1-S11 | A webhook can be verified as coming from Share and unaltered | TBD | — | not assessed |
+| X1-S11 | A webhook can be verified as coming from Share and unaltered, by a buyer or a supplier | TBD | — | not assessed |
 | X1-S12 | An operator in the role that owns an action can take it, and the action is recorded with its reason | TBD | — | not assessed |
 | X1-S13 | An operator is refused any action that belongs to another role | TBD | — | not assessed |
 | X1-S31 | An operator in the role that owns an action not on one account can take it, and it is recorded | TBD | — | not assessed |
 | X1-S32 | An action awaiting a second approval lapses, can be cancelled, and is refused if its preconditions no longer hold | TBD | — | not assessed |
+| X1-S49 | A credit limit above credit_limit_four_eyes_above takes effect only with a second finance operator's approval | TBD | — | not assessed |
 | X1-S35 | A disclosure under a legal order has the order's scope and ends with it | TBD | — | not assessed |
 | X1-S36 | A termination notice is withheld only by compliance, under a legal order that forbids it, as part of the termination and approved with it | TBD | — | not assessed |
 | X1-S16 | An operator cannot end a reservation for a reason outside POL-30 | TBD | — | not assessed |
@@ -473,6 +485,8 @@ plan, not in the scenario.
 | X1-S39 | An erasure the data subject requests is executed by one compliance operator, and is complete in every copy within erasure_max | TBD | — | not assessed |
 | X1-S42 | An erasure is executed only on a recorded request from a channel open to its subject | TBD | — | not assessed |
 | X1-S43 | Compliance opens an erasure with no request only on a documented legal requirement, with a second compliance operator's approval | TBD | — | not assessed |
+| X1-S47 | An executed erasure covers what the person's request reaches | TBD | — | not assessed |
+| X1-S48 | The evidence of a non-user's erasure request is kept for erasure_evidence_retention, then erased, and the record of the request stays | TBD | — | not assessed |
 | X1-S37 | Logs and records hold no personal data | TBD | — | not assessed |
 | X2-S01 | Availability per capability | TBD | — | not assessed |
 | X2-S16 | A minute is available only if at least 90% of its probes succeed | TBD | — | not assessed |

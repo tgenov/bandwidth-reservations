@@ -453,6 +453,12 @@ Feature: Rating reservations and metered traffic
       Then it is quarantined and not charged
       And it is reported to operations and to the supplier of the link it crossed
 
+    @P3-S77 @need-P3-N6 @need-P3-N7 @POL-17
+    Scenario: A record from an observation domain not registered to its exporter is kept and quarantined, and charged only if finance attributes it
+      When a record from exporter "e1" arrives from an observation domain that is not registered to "e1"
+      Then it is kept with the reason "domain not of exporter"
+      And its traffic is quarantined and not charged, unless an operator in finance attributes it to an account within `dispute_window` (POL-17)
+
     @P3-S27 @need-P3-N6 @POL-17
     Scenario Outline: Quarantined traffic is billed, and its supplier paid, only if attributed within dispute_window
       Given 1 GB of traffic in a minute on a supplier's link was quarantined, at a `usage_price` of 10,000 micro-USD per GB in that minute
@@ -482,8 +488,8 @@ Feature: Rating reservations and metered traffic
 
       Examples:
         | defect                                 |
-        | no exporter                            |
-        | no sequence number                     |
+        | missing flow times                     |
+        | missing attribution key                |
         | a negative byte count                  |
         | an end time before its start time      |
 
@@ -499,6 +505,17 @@ Feature: Rating reservations and metered traffic
       When the exporter that produced it submits a corrected version of it, any number of times
       Then its bytes are charged once
       And a corrected version submitted by any other principal, an operator included, is refused and recorded (POL-23)
+
+    @P3-S78 @need-P3-N7 @POL-23 @POL-17
+    Scenario Outline: A corrected version of a record that could not be used is charged only if it is submitted before its deadline
+      Given a record from exporter "e1", active only in the minute starting 12:05 on day D, could not be used, and was first received at 12:07 on day D
+      When "e1" submits a corrected version of it at <time>
+      Then <result>
+
+      Examples:
+        | time                | result                                                                                                              |
+        | 12:05 on day D + 30 | its bytes are charged once (POL-23)                                                                                  |
+        | 12:06 on day D + 30 | it is refused as outside `dispute_window` (POL-17: 30 days from 12:06 on day D, the end of its last minute), recorded, and nothing is charged for it |
 
     @P3-S71 @need-P3-N7 @need-X1-N11 @POL-19 @POL-17
     Scenario: A payload that does not conform to the record template is rejected, and outside the erasable store only its identity, digest and reason are kept
@@ -686,6 +703,20 @@ Feature: Rating reservations and metered traffic
         | arrival  | outcome                                                       | case                                                      |
         | 10:04:50 | charged, and not reported as a breach                         | 170 s after 10:02, within `max_lateness` (POL-14: 180 s) |
         | 10:05:10 | charged, and reported as a breach of the usage exposure bound | 190 s after 10:02                                         |
+
+    @P3-S76 @need-P3-N10 @POL-14 @POL-06
+    Scenario Outline: After a change of usage_rate_cap, the lateness bound uses the highest cap in force over its span
+      Given account "a1" uses one best-effort product whose highest `usage_price` on any route is 10,000 micro-USD per GB, with a `usage_rate_cap` (POL-14) of 100 Mbps
+      And at 10:00:30 an operator in finance records a `usage_rate_cap` of <new> for it, which takes effect at 10:02:00, the first minute boundary at least the 60 s enforcement target after its record (POL-14)
+      When finance asks for "a1"'s lateness bound at <time>
+      Then it is <bound> micro-USD: <cap> for 430 s, <gb> GB, at 10,000 micro-USD per GB
+
+      Examples:
+        | new      | time     | cap      | gb     | bound   | case                                                                    |
+        | 50 Mbps  | 10:05:00 | 100 Mbps | 5.375  | 53,750  | the span, 370 s back and 60 s ahead, still includes minutes at 100 Mbps |
+        | 50 Mbps  | 10:10:00 | 50 Mbps  | 2.6875 | 26,875  | the span starts at 10:03:50, after the decrease took effect             |
+        | 200 Mbps | 10:00:45 | 100 Mbps | 5.375  | 53,750  | the span ends at 10:01:45, before the increase takes effect             |
+        | 200 Mbps | 10:01:30 | 200 Mbps | 10.75  | 107,500 | the span ends at 10:02:30, after the increase takes effect              |
 
   Rule: Accepted records are kept as evidence of what was delivered
 
