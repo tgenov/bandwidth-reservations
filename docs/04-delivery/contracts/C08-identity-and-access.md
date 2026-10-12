@@ -3,8 +3,8 @@
 | | |
 |---|---|
 | Contract ID | C08 |
-| Version | 1 |
-| Status | **Frozen.** Frozen at C4 on fix verification 56 ([review 56](../../reviews/56-contract-C08-fix-verification.md)); errata owed listed below ("Consumer obligations"). History: 1.0-draft, 1.1-draft (review 46), 1 (V56-1 … V56-7 applied; see "Fix verification 56 resolution") |
+| Version | 1.1 |
+| Status | **Frozen.** v1.1 erratum: aligned with C01 on restore role and stop acknowledgement (CC-2). Frozen at C4 on fix verification 56 ([review 56](../../reviews/56-contract-C08-fix-verification.md)); errata owed listed below ("Consumer obligations"). History: 1.0-draft, 1.1-draft (review 46), 1 (V56-1 … V56-7 applied; see "Fix verification 56 resolution"), 1.1 (CC-2 erratum; see "Errata") |
 | Provider | Identity and access, with the operator console, audit and webhook signing (RFC-005 revision 5: §2, §3.1–§3.3, §3.6, §3.7 erasure requests, §3.8, §4, §6, §7, §8.3, §9, §10, §11 C1–C6, C8, C10, C14, C15); the **key service** (RFC-005 §10) for the key-certification stream (§N). Integrity stop: semantics RFC-005, honoured by RFC-006's owner runtime and placement |
 | Consumers | **Edge gateway** (RFC-005 specifies it: C1 issuer, C14, erasure intake and recovery objection). **Account owner** (RFC-002 rev. 5 booking module; RFC-004 rev. 5 Part A funds module): C1, C2, C3 push and catch-up, envelope, operator check, target summary, read grant (status replicas), audit field set. **Link schedule owner and link registry** (RFC-001 rev. 5): C1, C2, envelope, operator check, target summary, read grant, audit field set. **Catalogue, rating, metering ingestion, attribution** (RFC-003 rev. 5 + erratum 5.1): C1, envelope, operator check, target summary, read grant, audit field set. **Payments, payouts, ledger, reconciliation, reporting** (RFC-004 rev. 5 + erratum 5.1): C1, envelope, operator check, target summary, read grant, audit field set, supplier visibility (reporting). **RFC-006 rev. 6**: owner runtime and placement (integrity stop and resume, restore role, `chain`, audit changefeed, placement's target summaries), notifier (endpoint feed and query, signed webhook), history and retention (audit changefeed, sealed segments), provisioning feed (supplier visibility), status replicas (read grants). **Operator console** (RFC-005): envelope issuer, `cancel`, `open_requests`, target-summary relay. **Buyers and suppliers**: signed webhook receivers |
 | Transport | In-process library: principal context, `decide`, reference functions. gRPC metadata over mTLS: principal context. **Kafka event** (from identity's transactional outbox through the changefeed relay, RFC-000 §5.5): identity status push, endpoint feed, policy feed; audit changefeed `cdc.audit.<kind>` (CDC projection). **gRPC query**: `catch_up`, `visibility`, `target_summary`, `open_requests`, `get_endpoint`, `get_policy`. **gRPC server stream**: `edge_stream`; `cert_stream` (key service). **gRPC command**: `operator_check`, `cancel`, `record_erasure_request`, `object_to_recovery`, every operator command carrying an envelope, `integrity_stop`, `integrity_resume`, `integrity_report`, `audit_append`. **Outbound HTTPS POST**: signed webhook. **No database read across owners** (RFC-000 A1): nobody reads identity's tables; the restore role's row-level-security predicate over audit's `integrity_stops` is a database-enforced policy, not an owner read |
@@ -617,79 +617,65 @@ type IntegrityResume = { kind: string; partition: Bytes; detection_ref: Detectio
 type IntegrityReport = { kind: string; partition: Bytes; seq: string;
                          observed_chain: Bytes; expected_chain: Bytes; reporter: "batch_head_check" | "takeover_replay" };
 type IntegrityReportAnswer = { kind: "accepted"; detection_ref: DetectionRef } | { kind: "temporarily_unavailable" };
+// The wire form is C01's IntegrityStop service (Stop, Resume → StopAck); C01 v1 is the authority (CC-2).
 type IntegrityAck =
-  | { kind: "stopped"; recorded_at: EpochMicros }   // durable in placement's integrity_stops projection
-  | { kind: "resumed"; recorded_at: EpochMicros }
-  | { kind: "unknown_stop" }                        // resume naming no open stop
+  | { kind: "stopped" | "resumed";
+      enforced_at: string;           // HLC timestamp of placement's transaction that wrote the stop row
+                                     // and incremented owner_slot.stops_version (the slot fence)
+      fenced_slots: number[] }       // the slot(s) whose stops_version was incremented (both during a move)
+  | { kind: "conflict" }             // same detection_ref, other kind or partition
+  | { kind: "not_stopped" }          // resume without an open stop
+  | { kind: "head_mismatch" }        // restored head ≠ audit's first-seen head, and no incident decision
   | { kind: "temporarily_unavailable" };
 // Owner runtime result while stopped: append(...) → Stopped (RFC-006 §12.2), answered by owners as
 // "temporarily unavailable".
 ```
 
 ```sql
--- Audit's table (written only by audit's role): the restore role's predicate.
--- owner_kind is the owner kind NAME (e.g. 'account'), distinct from the numeric row kind of AuditCdcEvent.kind.
+-- CC-2: C01 v1 §2.3 is the authority for these tables, roles and grants. This block repeats C01; if they differ, C01 applies.
+-- Placement's table (C01 §2.3). Placement writes it only on audit's command. A row with state 'stopped'
+-- exists only after the Stop transaction commits, and that transaction also increments
+-- owner_slot.stops_version of the slot that holds the partition. Thus a stop row is always an enforced stop.
+CREATE TABLE placement_integrity_stops (kind STRING, partition BYTES, detection_ref BYTES NOT NULL,
+  state STRING CHECK (state IN ('stopped','resumed')), checkpoint BYTES NULL, at DECIMAL NOT NULL,
+  PRIMARY KEY (kind, partition, detection_ref));
+
+-- Audit's own table (audit's role only) is the DETECTION RECORD. It is not a row-level-security predicate.
 CREATE TABLE audit.integrity_stops (
   owner_kind      STRING   NOT NULL,
   partition       BYTES    NOT NULL,
-  detection_ref   BYTES    NOT NULL CHECK (length(detection_ref) = 16),   -- DetectionRef (Id128)
+  detection_ref   BYTES    NOT NULL CHECK (length(detection_ref) = 16),
   opened_at       TIMESTAMPTZ NOT NULL,
-  acknowledged_at TIMESTAMPTZ NULL,      -- set when the runtime answers `stopped`; required by the policy (R46-18)
-  closed_at       TIMESTAMPTZ NULL,      -- set by audit BEFORE it sends integrity_resume (S-M5)
+  enforced_at     DECIMAL  NULL,         -- from StopAck; audit records the partition's head as of this timestamp
+  closed_at       TIMESTAMPTZ NULL,      -- set by audit before it sends Resume
   PRIMARY KEY (owner_kind, partition, detection_ref)
 );
-GRANT SELECT ON audit.integrity_stops TO restore_role;   -- needed by the policy subquery; nothing else
 
--- For every owner kind <kind>, on <kind>_log AND <kind>_head (names fully qualified, R46-02):
+GRANT SELECT ON placement_integrity_stops TO restore;    -- for the policy subquery only
+
+-- For every owner kind <kind>, on <kind>_log AND <kind>_head:
 ALTER TABLE <kind>_log  ENABLE ROW LEVEL SECURITY;
-ALTER TABLE <kind>_log  FORCE  ROW LEVEL SECURITY;      -- applies to the table owner too
+ALTER TABLE <kind>_log  FORCE  ROW LEVEL SECURITY;
 ALTER TABLE <kind>_head ENABLE ROW LEVEL SECURITY;
 ALTER TABLE <kind>_head FORCE  ROW LEVEL SECURITY;
 
-CREATE POLICY restore_only_stopped ON <kind>_log FOR ALL TO restore_role
-  USING      (EXISTS (SELECT 1 FROM audit.integrity_stops s
-                      WHERE s.owner_kind = '<kind>'
-                        AND s.partition = <kind>_log.partition
-                        AND s.acknowledged_at IS NOT NULL AND s.closed_at IS NULL))
-  WITH CHECK (EXISTS (SELECT 1 FROM audit.integrity_stops s
-                      WHERE s.owner_kind = '<kind>'
-                        AND s.partition = <kind>_log.partition
-                        AND s.acknowledged_at IS NOT NULL AND s.closed_at IS NULL));
+-- Permissive and restrictive policies with the same predicate (V56-1): the restore role reaches only
+-- partitions with a stop row in state 'stopped' in placement's table.
+CREATE POLICY restore_only_stopped ON <kind>_log FOR ALL TO restore
+  USING      (EXISTS (SELECT 1 FROM placement_integrity_stops s
+                      WHERE s.kind = '<kind>' AND s.partition = <kind>_log.partition AND s.state = 'stopped'))
+  WITH CHECK (EXISTS (SELECT 1 FROM placement_integrity_stops s
+                      WHERE s.kind = '<kind>' AND s.partition = <kind>_log.partition AND s.state = 'stopped'));
+CREATE POLICY restore_confined ON <kind>_log AS RESTRICTIVE FOR ALL TO restore
+  USING      (EXISTS (SELECT 1 FROM placement_integrity_stops s
+                      WHERE s.kind = '<kind>' AND s.partition = <kind>_log.partition AND s.state = 'stopped'))
+  WITH CHECK (EXISTS (SELECT 1 FROM placement_integrity_stops s
+                      WHERE s.kind = '<kind>' AND s.partition = <kind>_log.partition AND s.state = 'stopped'));
+-- The same two policies on <kind>_head, with <kind>_head.partition.
 
-CREATE POLICY restore_only_stopped ON <kind>_head FOR ALL TO restore_role
-  USING      (EXISTS (SELECT 1 FROM audit.integrity_stops s
-                      WHERE s.owner_kind = '<kind>'
-                        AND s.partition = <kind>_head.partition
-                        AND s.acknowledged_at IS NOT NULL AND s.closed_at IS NULL))
-  WITH CHECK (EXISTS (SELECT 1 FROM audit.integrity_stops s
-                      WHERE s.owner_kind = '<kind>'
-                        AND s.partition = <kind>_head.partition
-                        AND s.acknowledged_at IS NOT NULL AND s.closed_at IS NULL));
-
--- restore_role: SELECT, INSERT, UPDATE, DELETE on <kind>_log and <kind>_head only, granted only inside a
--- break-glass session (two approvers, break_glass_ttl 4 h) while audit has an open, acknowledged stop;
--- holds no application key; revoked at the session's end.
-
--- V56-1: with FORCE, permissive policies combine by OR. This RESTRICTIVE policy applies to the restore
--- role in addition to every permissive policy. Thus no other policy can widen the restore role.
-CREATE POLICY restore_confined ON <kind>_log AS RESTRICTIVE FOR ALL TO restore_role
-  USING      (EXISTS (SELECT 1 FROM audit.integrity_stops s
-                      WHERE s.owner_kind = '<kind>' AND s.partition = <kind>_log.partition
-                        AND s.acknowledged_at IS NOT NULL AND s.closed_at IS NULL))
-  WITH CHECK (EXISTS (SELECT 1 FROM audit.integrity_stops s
-                      WHERE s.owner_kind = '<kind>' AND s.partition = <kind>_log.partition
-                        AND s.acknowledged_at IS NOT NULL AND s.closed_at IS NULL));
-CREATE POLICY restore_confined ON <kind>_head AS RESTRICTIVE FOR ALL TO restore_role
-  USING      (EXISTS (SELECT 1 FROM audit.integrity_stops s
-                      WHERE s.owner_kind = '<kind>' AND s.partition = <kind>_head.partition
-                        AND s.acknowledged_at IS NOT NULL AND s.closed_at IS NULL))
-  WITH CHECK (EXISTS (SELECT 1 FROM audit.integrity_stops s
-                      WHERE s.owner_kind = '<kind>' AND s.partition = <kind>_head.partition
-                        AND s.acknowledged_at IS NOT NULL AND s.closed_at IS NULL));
-
--- Every other policy on these tables names its role: TO <owner_role> for the runtime's SELECT and
--- INSERT, and for the head UPDATE; FOR DELETE TO truncator for the watermark policy (RFC-006 §13.2).
--- No policy on these tables is TO PUBLIC.
+-- restore (break-glass): SELECT, INSERT, UPDATE, DELETE on <kind>_log and <kind>_head only, granted only
+-- inside a break-glass session (two approvers, break_glass_ttl 4 h); holds no application key; revoked
+-- at the session's end. Every other policy on these tables names its role (C01 §2.3); none is TO PUBLIC.
 ```
 
 ### §L. Webhook endpoints and signing secrets (RFC-005 C8, §8.3)
@@ -1090,24 +1076,33 @@ role, target, grant, time) **before answering**. Any failed check: refused with 
 
 - On a detection, audit appends `integrity_violation(kind, partition, seq range, layer,
   detection_ref)`, opens its `integrity_stops` row, and sends `integrity_stop` (also after an
-  `integrity_report`, §J). The runtime acknowledges `stopped` **once the stop is durable** in
-  placement's `integrity_stops`
-  projection (read by every holder on acquisition, resume and `adopt`, and pushed to the
-  current holder). From then, under **every** lease holder, across takeovers and moves,
-  `append` for the partition answers `Stopped`; owners answer callers "temporarily
-  unavailable"; nothing is decided.
-- On `stopped`, audit sets `acknowledged_at` on its row. The **restore role**, only in a
-  break-glass session with two approvers, writes back stored ciphertext only into
-  partitions whose stop is acknowledged and not closed (row-level security above, on
-  `<kind>_log` and `<kind>_head`, forced), so it can never race a live writer; it holds no
-  application key and is revoked at the session's end.
+  `integrity_report`, §J). Placement's `Stop` is one transaction (C01 §3.2). It writes the
+  stop row in `placement_integrity_stops` and increments `owner_slot.stops_version` of the
+  slot that holds the partition (both slots during a move, and `s` and `s + n` for a
+  `headDecides` account). The commit timestamp of that transaction is `enforced_at`.
+  Placement sends `stopped` **only after that transaction commits**, that is, only when the
+  stop is enforced at the slot fence (CC-2). No entry of the partition commits with `ts` >
+  `enforced_at`. Every batch reads the fence; a batch that sees a new `stops_version`
+  re-reads the stops and answers `Stopped`. Holders read the table on acquisition without
+  placement. Owners answer callers "temporarily unavailable"; nothing is decided.
+- Audit records the partition's head **as of `enforced_at`** as its first-seen head. The
+  **restore role**, only in a break-glass session with two approvers, writes back stored
+  ciphertext only into partitions with a `stopped` row in `placement_integrity_stops`
+  (row-level security above, on `<kind>_log` and `<kind>_head`, forced). The stop row
+  exists only after the fence commits, so the restore role cannot race a live writer. It
+  holds no application key and is revoked at the session's end.
 - Audit re-verifies the partition end to end and sends `integrity_resume` **only** if the
   chain re-verifies and the restored head equals **audit's first-seen head** (sequence and
   chain); otherwise the partition stays stopped, and a resume with lost rows happens only
   by a **recorded incident decision** (compliance and platform security), never
   automatically. Rows that cannot be recovered are never re-created.
-- **Errors**: `unknown_stop` on a resume with no open stop (no effect); a stop for an
-  already stopped `detection_ref` answers `stopped` again.
+- `Resume` is one transaction too: it sets the row's state to `resumed` and increments the
+  fence again. From its commit, the restore role cannot write the partition. Audit closes
+  its own detection row before it sends `Resume`.
+- **Errors**: `not_stopped` on a resume with no open stop (no effect); `conflict` for the
+  same `detection_ref` with another kind or partition; `head_mismatch` when the restored head
+  is not audit's first-seen head and no incident decision is given; a repeated stop for the
+  same `detection_ref` answers `stopped` again with the same `enforced_at`.
 
 ### §L. Webhook endpoints and secrets
 
@@ -1194,8 +1189,8 @@ contract's reading.
 | Envelope, approvals, console log | Operator console | Owners (the envelope), audit |
 | Target summary | Each owner, of its own state | Signing client, via the console relay |
 | `audit` column and `chain` | Each owner, through the owner runtime's `append` | Audit (changefeed, index), history (sealing), owners (replay) |
-| Audit append log, `integrity_stops` (audit), sealed-through watermark | Audit only | Audit query service; the database for row-level security |
-| Placement's `integrity_stops` projection | Owner runtime and placement on audit's command | Every lease holder |
+| Audit append log, `audit.integrity_stops` (detection record), sealed-through watermark | Audit only | Audit query service |
+| `placement_integrity_stops`; `owner_slot.stops_version` | Placement, on audit's command only (C01 §2.3) | Every owner role (named read); the `restore` role's row-level security |
 | Restored log rows | Restore role (break-glass), stopped partitions only | Owners after resume |
 | Endpoint feed contents | Identity | Notifier only (topic ACL); secret unwrap only by the notifier's delivery-worker workload |
 | Webhook signature | Notifier's delivery worker, per attempt, with RFC-005's format | Receivers |
@@ -1299,7 +1294,7 @@ same test.
 | P-07 | `object_to_recovery` vs hold expiry raced: exactly one of `recovery_cancelled` or `recovery_confirmed`; objections by a non-prior administrator, held administrator, key, after `hold_until` change nothing and are recorded (DT-26, DT-29) | X1-S40, X1-S44, X1-S45 |
 | P-08 | Endpoint feed: register, overlap rotate, rotate now, remove produce events with increasing `version`; a held administrator's registration is refused; registration refusals are indistinguishable (DT-10) | X1-S18, X1-S24, X1-S40 |
 | P-09 | Audit: an UPDATE or DELETE above the watermark through break-glass is detected from the changefeed before the next checkpoint; a query over the range answers "record altered or missing"; an `integrity_stop` is sent with a fresh `detection_ref` (DT-9, DT-31) | X1-S15 |
-| P-10 | Audit sends `integrity_resume` only when the restored head equals the first-seen head; with a row lost, no resume is sent; its `integrity_stops` row is closed before the resume | X1-S15 |
+| P-10 | Audit sends `integrity_resume` only when the restored head equals the first-seen head; with a row lost, no resume is sent; its detection row is closed before the resume | X1-S15 |
 | P-11 | Signing library: a delivery of 100 notices of one tenant verifies at a receiver double with the given secret; a body mixing tenants is refused by the library; both signatures present during overlap, one after rotate now | X1-S11, X1-S24 |
 | P-12 | `operator_check` with an assertion whose signature is wrong consumes nothing and answers `invalid`; the pair stays usable by the real action; a credential of operator A named under operator B answers `credential_status` = `unknown`; a second call with another digest under the same `action_id` answers `digest_conflict` (R46-01); an invalid call under a pending `action_id` with another digest leaves the real check unaffected (V56-5) | X1-S26, X1-S32 |
 | P-13 | `cancel` by a different operator (another person, the approver included) with a valid own assertion → `not_requester`, no receipt; by the requester's person → receipt (R46-06) | X1-S32 |
@@ -1322,7 +1317,7 @@ same test.
 | C-07 | Every owner with operator actions; placement; identity | `target_summary` signature verifies under the certified summary key; its `target_version` is the one check 6 compares; under `console_session`: missing `action_id` or `action_type` refused, target kind not matching the action → `target_kind_mismatch`, past `operator_read_limit` → `read_limit` and breadth alert, and **with the audit append failing, no answer** (D3); the `read_limit` refusal comes from audit's count of session-summary appends per operator and per console workload (V56-4) | X1-S31, X1-S32 |
 | C-08 | Every reader (reporting, status replicas, link owner, catalogue, audit query, store) | No grant, expired grant, out-of-target read → refused and recorded; with a grant the reader's audit append commits before the answer (DT-24) | X1-S13, X1-S27, X1-S31 |
 | C-09 | Reporting, provisioning feed | `visibility` unavailable → every identity hidden; no reuse of an answer across views; `registry_timestamp` recorded | X1-S28, X1-S30 |
-| C-10 | Owner runtime and database (RFC-006) | `integrity_stop` → `Stopped` under every holder across a takeover and a move until `integrity_resume`; with partition P1 of kind k stopped and acknowledged, a restore-role write to P2 of kind k (log and head) is refused; before `acknowledged_at`, a write to P1 is refused too; the policies hold for the table owner (FORCE) (R46-02, R46-18; DT-45, RFC-005 DT-31); the restore role cannot delete a row at or below the watermark in an unstopped partition, even with the truncation policy present (V56-1) | X1-S15 |
+| C-10 | Owner runtime and database (RFC-006) | `integrity_stop` → `Stopped` under every holder across a takeover and a move until `integrity_resume`; `StopAck` arrives only after the fence transaction commits, and no entry of the partition commits with `ts` > `enforced_at`; with partition P1 of kind k stopped in `placement_integrity_stops`, a restore-role write to P2 of kind k (log and head) is refused; after `Resume`, a write to P1 is refused too (CC-2); the policies hold for the table owner (FORCE) (R46-02, R46-18; DT-45, RFC-005 DT-31); the restore role cannot delete a row at or below the watermark in an unstopped partition, even with the truncation policy present (V56-1) | X1-S15 |
 | C-11 | Owner runtime | Every committed log row's `chain` matches the golden recomputation; a head `chain` mismatch holds the partition locally and sends `integrity_report`; audit's stop follows with a `detection_ref`, and only `integrity_resume` lifts the hold (R46-12) | X1-S15 |
 | C-12 | Notifier (RFC-006) | Endpoint chosen from the event's clear partition only; deliveries ≤ 100 notices, one tenant; fresh timestamp per attempt; a pinned-address connection whose certificate does not match the URL's host is refused (R46-23); the overlap's previous secret signs until the new secret's `active_from` + 24 h; DNS-rebinding to a private address refused at delivery; down endpoint: first attempt within `affected_notice_time` (DT-10, DT-23) | X1-S11, X1-S24, P1-S75, P2-S09 |
 | C-13 | Edge (RFC-005 §2.2) | Unauthenticated answers identical in bytes and timing class (DT-23, DT-3); stale slot → "temporarily unavailable"; erasure and objection forwarded with the user's token only | X1-S01 … S04 |
@@ -1339,7 +1334,7 @@ erratum listed under "Consumer obligations".
 | S-M2 | Four eyes on the set-scoped probe credit limit | None; one out-of-band confirmation per set-scoped action | RFC-006 §7.1 drops "four-eyes approval" (the requester's signing client shows placement's signed summary) |
 | S-M3 | Who computes the webhook HMAC | The notifier, in process, with the secret it holds in memory, in RFC-005's format. **Amended by review 46 (R46-19)**: the notifier's **delivery worker** holds the secrets and computes the HMAC, under its own key-release entry | RFC-006 §15 "signed by RFC-005's signing service" and "RFC-005 signs the delivery" → "signed by the delivery worker in RFC-005's format"; RFC-006 §7.1 "signed by placement's key through RFC-005's signing service" → "signed by placement's summary-signing key" (R46-21); RFC-005 §8.3, §10 key release to the delivery worker |
 | S-M4 | `webhook-id` across retries | Reused for every attempt of one fixed notice set; a regrouped retry is a new delivery with a new `webhook-id`; receivers deduplicate per `event_id`; a single-notice delivery's `webhook-id` = its `event_id` (kept, D4) | RFC-005 §8.3 "a retry carries the same notices under the same `webhook-id`" → as settled |
-| S-M5 | Two `integrity_stops` stores | Audit's table is authoritative and the restore role's row-level-security predicate; placement's projection is what the runtime honours; audit **closes** its row before sending `integrity_resume` | RFC-005 §9.3 and RFC-006 §12.2, §14.3 state the ordering |
+| S-M5 | Two `integrity_stops` stores | **Amended by CC-2 (v1.1)**: C01 v1 is the authority. Placement's `placement_integrity_stops` is the restore role's row-level-security predicate and the table that holders read. Audit's table is the detection record only. A stop is acknowledged only once it is enforced at the slot fence (`stops_version` on `owner_slot`, `enforced_at`). Audit closes its detection row before it sends `Resume` | RFC-005 §9.3, §10 (restore role reads placement's table; R47-28) and RFC-006 §12.2, §14.3 (acknowledgement at the fence), as C01 lists |
 | S-M6 | Where `iam_fresh` lives | The booking module's, in owner memory: `max(min over the identity-push partitions feeding the slot of the latest resolved timestamp applied, last catch-up read timestamp)`; unset after takeover. **Amended by review 46 (R46-07) and fix verification 53 (V53-3)**: as C05 S-2: `R_applied(p)` gap-free, a catch-up counts once its F4 commits, after acquisition set only by a committed catch-up or once every partition has reported | RFC-005 C3 and §3.3 ("F4 keeps" / "funds module keeps") → booking module; RFC-004 §A2, F4, JR-11 state that F4 neither holds nor advances it (R46-08) |
 | S-G1 | `catch_up` with `since` older than retention | Answer a current-state `snapshot` of the slot's accounts with its `position`. **Amended by review 46 (R46-07)**: a new lease holder always asks for the snapshot (no `since`); a running holder uses `since = iam_fresh` | RFC-005 C3 adds the snapshot answer and the `since` rule; RFC-004 F4 applies the snapshot (R46-08); RFC-002 §5.6 asks for it at once on acquisition; it is not a precondition (V56-7) |
 | S-G2 | Owners' summary, check and reader duties | Listed per RFC under "Consumer obligations" | As listed there |
@@ -1365,7 +1360,7 @@ the policy feed and the key-certification stream (§N).
 | RFC-002 rev. 5 | Account owner (booking); status replicas | Serve for `account` and `reservation` (stated, §13.1), with the common summary duties, **audit append before answering** | Verify for `act_at_documented_request`, `terminate_network_abuse`, `terminate_compliance`, `set_credit_limit`/`remove_credit_limit` incl. set-scoped (stated) | Status replicas as readers (stated, §8.2) | Own `iam_fresh` with the applied-only rule (S-M6); new holder asks for the snapshot at once and confirms nothing until a catch-up or snapshot entry commits or every partition has reported, running holder `since = iam_fresh` (S-G1, R46-07, V56-7) | **Yes**: S-M1 (drop the version-v membership test), S-G3 with D3 (summary authority, purpose binding, audit-before-answer), R46-07 (`since`, applied-only rule), check order and key source (R46-01, R46-13) |
 | RFC-003 rev. 5 + 5.1 | Catalogue; rating; attribution and quarantine | Serve for `product_route`, `account_product`, `supplier_terms`, `partner`, `charge`, `quarantine_item` (R46-09), with the common summary duties, **audit append before answering** | Verify for `set_price`, `set_split_weight` (four eyes), `record_partner_terms`, `correct_price`, `set_usage_rate_cap`, `attribute_quarantine`, `reverse_attribution`; call `operator_check` at apply | Catalogue as reader (preparatory reads); evidence reads via C09 | `audit` field set; `Stopped` | **Yes**: summary serving with audit-before-answer and the new target kinds, `operator_check` at apply, read-grant duties (§8 names only the envelope) |
 | RFC-004 rev. 5 + 5.1 | Funds module (Part A); payments; payouts; reporting | Payouts (`payout`), payments (`reversal`) serve summaries with the common duties, **audit append before answering**; account summaries are RFC-002's | Verify for `set_credit_limit` (with RFC-002), `resolve_payout_escalation`, `resolve_reversal_escalation`; call `operator_check` at apply | Reporting as reader for `read_account`; reporting calls `visibility` per supplier view, hides all on failure, records `registry_timestamp` | F4: apply push events only for actual changes, dedupe by `source` then version, **apply the S-G1 snapshot** | **Yes**: S-M1 (§A3, F5, §B12); **F4 drops "skips any event at or below `id_ts`"** in favour of `source` and version, and applies the snapshot (R46-08, S-G1; consistent with C05 review 45 M3); **§A2, F4, JR-11: F4 neither holds nor advances `iam_fresh`** (S-M6); summary serving with audit-before-answer and `operator_check` for payouts and payments; reporting's read-grant and `visibility` duties |
-| RFC-006 rev. 6 | Owner runtime; placement; notifier; provisioning feed; history | Placement serves `probeSetSummary(v)` and the region-disaster target (stated), with the common summary duties, **audit append before answering** | Placement verifies `declare_region_disaster`/`end_region_disaster` (four eyes) and **calls `operator_check` at apply** (R46-27) | — | Runtime: `chain`, audit changefeed, `integrity_stop`/`resume` → `Stopped` (stated); **on a head-chain mismatch, local hold and `integrity_report` to audit, no stop of its own** (R46-12); database: the forced RLS policies of §K and `acknowledged_at`. Notifier: endpoint feed, the **delivery worker** holds secrets and computes the HMAC per attempt, one tenant per delivery, new `webhook-id` on regroup, SNI and hostname verification on the pinned address; **no `visibility` call** (R46-22). Provisioning feed calls `visibility`, hides on failure | **Yes**: S-M2 (§7.1), S-M3 with R46-19 and R46-21 (§15 "signed by RFC-005's signing service" and "RFC-005 signs the delivery"; §7.1 "through RFC-005's signing service"), S-M4 (§15), S-M5 (§12.2, §14.3 ordering), R46-12 (§12.2 report path), R46-02, R46-18 and V56-1 (§13.2 DDL: the restrictive `restore_confined` policies; every other policy names its role, none `TO PUBLIC`, the truncation policy `FOR DELETE TO truncator`), placement's `operator_check` |
+| RFC-006 rev. 6 | Owner runtime; placement; notifier; provisioning feed; history | Placement serves `probeSetSummary(v)` and the region-disaster target (stated), with the common summary duties, **audit append before answering** | Placement verifies `declare_region_disaster`/`end_region_disaster` (four eyes) and **calls `operator_check` at apply** (R46-27) | — | Runtime: `chain`, audit changefeed, `integrity_stop`/`resume` → `Stopped` (stated); **on a head-chain mismatch, local hold and `integrity_report` to audit, no stop of its own** (R46-12); database: the forced RLS policies of §K over `placement_integrity_stops`, and the stop acknowledged only at the slot fence (C01, CC-2). Notifier: endpoint feed, the **delivery worker** holds secrets and computes the HMAC per attempt, one tenant per delivery, new `webhook-id` on regroup, SNI and hostname verification on the pinned address; **no `visibility` call** (R46-22). Provisioning feed calls `visibility`, hides on failure | **Yes**: S-M2 (§7.1), S-M3 with R46-19 and R46-21 (§15 "signed by RFC-005's signing service" and "RFC-005 signs the delivery"; §7.1 "through RFC-005's signing service"), S-M4 (§15), S-M5 (§12.2, §14.3 ordering), R46-12 (§12.2 report path), R46-02, R46-18 and V56-1 (§13.2 DDL: the restrictive `restore_confined` policies; every other policy names its role, none `TO PUBLIC`, the truncation policy `FOR DELETE TO truncator`), placement's `operator_check` |
 | RFC-005 rev. 5 (provider) | Identity, console, audit, edge, key service | Identity serves summaries for `registry_entry`, `data_subject`, `erasure_request`, `exporter_credential`, `exporters_period` (R46-27), with the common duties, **audit append before answering** | Identity verifies envelopes for `disclose_identity`, `end_disclosure`, `issue_share_exporter_credential`, `revoke_share_exporter_credential`, `record_non_user_erasure_request`, `refuse_erasure_request`, `open_legal_requirement_erasure`, `erase`, calling its own `operator_check` at apply | Audit query service and personal-data store as readers (stated) | `operator_check` returns keys and verifies before consuming (R46-01); `cancel` carries the signed action (R46-06); heartbeat fencing (R46-03); key-certification stream (R46-04); policy feed (R46-05); `audit_append` source from mTLS (R46-11); `integrity_report` intake (R46-12) | **Yes**: S-M4 (§8.3), S-M5 (§9.3), S-M6 (C3, §3.3), S-G1 and R46-07 (C3 snapshot and `since`), S-G3 with D3 (§7.3, §7.6), R46-01, R46-03 … R46-06, R46-11, R46-12 (C4, C5, C14, C15, §10); grant digest v2 (§7.6); key release to the notifier's delivery worker (§8.3, §10); V56-2 and V56-3 (§10, C14: certificate purpose and owner kind checked; `committed_at` in signed records; `slot` in policy bundles and receipts); V56-4 (C5: audit counts session-summary appends); V56-5 (C15: bind only on valid assertions) |
 
 Raised upstream by review 46, not decided here: **AR46-2** (RFC-000 §8 row for the policy
@@ -1422,3 +1417,9 @@ Every fix that review 56 proposes is applied as proposed. V56-7 takes the first 
 | V56-5 | Identity binds an identifier to its digest only on a call with all assertions valid | §F; P-12 |
 | V56-6 | The notifier is removed from the header's `visibility` consumers and from the Timeouts row | Header; Timeouts |
 | V56-7 | First option. `iam_fresh` is set when the catch-up entry commits. A new holder asks for the snapshot at once, but the snapshot is not a precondition. The holder may confirm when every partition has reported. This agrees with C05 S-2 and H4. C05 already has the µs → HLC rule, so no C05 erratum is added for it | §B; C-02; S-G1; Consumer obligations (RFC-002) |
+
+## Errata
+
+| Version | Id | Change | Where |
+|---|---|---|---|
+| 1.1 | CC-2 (RFC-000 4.5, binding) | Aligned with C01 v1, which is the authority. The restore role's row-level security reads placement's `placement_integrity_stops` (state `stopped`), not audit's table. Audit's table is the detection record only, without `acknowledged_at`. A stop is acknowledged only once it is enforced at the slot fence (`owner_slot.stops_version`), with `enforced_at` and `fenced_slots` in the acknowledgement. The role is named `restore`, as in C01 | §K schema, DDL and semantics; Ownership; S-M5; P-10; C-10 |
