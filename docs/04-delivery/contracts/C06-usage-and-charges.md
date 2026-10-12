@@ -4,8 +4,8 @@
 |---|---|
 | Contract ID | **C06** |
 | Name | Usage and charges: catalogue, unposted usage, usage-applied acknowledgement, charge lines, postings, ledger movements, metering reports, evidence |
-| Version | 1 (draft 4). Draft 4 applies review 55 (M1 … M9, m1 … m17, decisions D5 … D7). Draft 3 applied review 44 (F01 … F25, D1 … D4) and C05 v0.2. Draft 2 settled C06-M1 … C06-M12 |
-| Status | **Draft, for contract review.** There is no open mismatch. The orchestrator settled C06-M1 … C06-M14 and adopted reviews 44 and 55; these decisions are binding. "Consumer obligations" lists the RFC errata that follow from them. "Upstream issues" lists the issues that this contract raises. See "Settled", "Review 44 resolution" and "Review 55 resolution" at the end |
+| Version | **1.** Frozen text. History: draft 4 applied review 55 (M1 … M9, m1 … m17, D5 … D7) and the C05 v1 `LedgerPosition` names. Draft 3 applied review 44 (F01 … F25, D1 … D4) and C05 v0.2. Draft 2 settled C06-M1 … C06-M12. The final pass applied fix verification 63 (V63-1 … V63-7) |
+| Status | **Frozen.** Frozen at C4 on fix verification 63 ([review 63](../../reviews/63-contract-C06-fix-verification.md), V63-1 … V63-7 applied); errata owed listed below ([Consumer obligations](#consumer-obligations)). There is no open mismatch. The orchestrator settled C06-M1 … C06-M14 and adopted reviews 44, 55 and 63; these decisions are binding. "Upstream issues" lists the issues that this contract raises |
 | Provider | **RFC-003** (rating and metering) provides the Catalogue, the Unposted-usage feed, the Charge-line feed, the affected-mark feed, the Quarantine and Breach report feeds, the Evidence query, and the `resolve_parked` command. **RFC-004** (ledger and settlement) provides the Posting acknowledgement, the Ledger posting port and the Ledger movement feed. **RFC-002** (the account owner) provides the Usage-applied acknowledgement; RFC-004 §A4 F2 gives its semantics. C06 is the **canonical definition** of the usage-applied acknowledgement. C05 v1 refers to it, and C06 uses C05 v1's `LogPosition`, dedup key and recovery key without change |
 | Consumers | **Catalogue**: RFC-002, the account owner (locked prices, partner terms, price notices). RFC-004: settlement (weights) and the funds module (F3, F11). Network operations: edge policing of `usage_rate_cap`. **Unposted usage**: RFC-002, which applies it as F2. RFC-004 gives the semantics. **Usage-applied acknowledgement**: RFC-003. **Charge lines**: RFC-004 settlement. **Affected marks**: reporting. **Posting acknowledgement**: RFC-003. **Ledger posting port**: settlement, payments, payouts, receivables and reconciliation, all in RFC-004 (AI-44-2). **Ledger movement feed**: RFC-002, the account owner (F1). RFC-003, the cold re-rate. RFC-004 receivables, payouts, settlement's supplier partition and reconciliation. Reporting. RFC-006 history and audit. **Quarantine and breach reports**: the operator console, the notifier, reporting and RFC-006 alerting. **Evidence query**: operations, support and finance. **`resolve_parked`**: the operator console (finance) |
 | Not in C06 | **Link rows** stay on RFC-001's link-registry feed (RFC-001 §10). C03 consumes that feed by `(link_id, version)`. **Probe accounts** come from placement's account slot map (C01, settled M11). **Link validity rules** are AI-55-1 |
@@ -262,7 +262,8 @@ interface ChargeLine {
   weightsVersion?: string;            // necessary except for fee kinds; an amendment has the version that its original was posted with (D4)
   payee?: { supplier: SupplierId; partnerLink: LinkId };   // necessary iff lineKind ∈ {fee, share_borne_fee}
   minute?: Minute;                    // absent only for fee kinds
-  payer: "account" | "share";         // share for cost lines and Share-borne fees
+  payer: "account" | "share";         // share for cost lines, Share-borne fees and abandon postings
+  abandon?: { actionId: string };     // present iff this is the Share-paid posting of a parked line (V63-4)
   amount: MicroUsd;                   // signed. Original: the charge, ≥ 0. Amendment: C − E
   newTotal: MicroUsd;                 // C (C06-M3)
   priorTotal: MicroUsd;               // E before this line; "0" for an original
@@ -345,7 +346,8 @@ interface PostMovementRequest {
   cause: string;                       // the causing fact
   currency: "USD";
   batch?: { id: BatchId; kind: "reservation" | "usage";
-            lineCount: number };       // the number of lines that settlement sends in this request (M3)
+            lineCount: number };       // rating's batch.lineCount minus the lines that settlement excluded (V63-1);
+                                       // settlement copies it from the ChargeLineBatch and never counts what it sends
   conditionalOn?: LedgerPosition;      // M18 only: no movement touched B since
   lines: Array<{
     kind: MovementKind;                // a usage batch has mixed kinds
@@ -358,6 +360,7 @@ interface PostMovementRequest {
     cause?: Cause;
     lateCut?: { link: LinkId; reduction: ReductionId; extensionChunk: number };
     triggerRef?: string;
+    abandon?: { actionId: string };    // Share-paid posting of a parked line (V63-4)
     amendmentSeq?: number;
     priorTotal?: MicroUsd;             // "0" for an original
     newTotal?: MicroUsd;
@@ -377,10 +380,12 @@ type PostMovementResponse =
                      of?: string; ledgerPostedTotal?: MicroUsd; ledgerLastSeq?: number; ledgerPosition?: LedgerPosition }>;
       whole?: boolean;                 // usage batches only; always true when committed (D1)
       integrityAlert?: boolean }       // the request differed from the committed movement (M4)
-  | { result: "refused"; reason: "invalid" | "wrong_home" | "principal" | "stale" | "over_limit"; detail: string }
+  | { result: "refused"; reason: "invalid" | "wrong_home" | "principal" | "stale" | "over_limit"; detail: string;
+      integrityAlert?: boolean }       // a recorded over_limit answer returned for a different digest (V63-2)
   | { result: "refused_batch";         // a usage batch refused whole; nothing posted (D1)
       lines: Array<{ lineRef: SourceRef; problem: LineProblem; of?: string;
-                     ledgerPostedTotal?: MicroUsd; ledgerLastSeq?: number; ledgerPosition?: LedgerPosition }> }
+                     ledgerPostedTotal?: MicroUsd; ledgerLastSeq?: number; ledgerPosition?: LedgerPosition }>;
+      integrityAlert?: boolean }       // the recorded answer returned for a different digest (V63-2)
   | { result: "unavailable"; why: "not_owner" | "moving" | "stopped" | "overloaded" };   // retry rules: see Semantics
 ```
 
@@ -406,6 +411,7 @@ interface MovementPosted {
     amount?: MicroUsd;                 // buyer side (payer side for cost lines), signed; charge lines
     postedTotal?: MicroUsd;            // posted total of the line after this movement
     reason?: Reason; cause?: Cause; triggerRef?: string;   // as stored from the post (M1)
+    abandon?: { actionId: string };    // Share-paid posting of a parked line (V63-4); the buyer side is 0
     lateCut?: { link: LinkId; reduction: ReductionId; extensionChunk: number };
     payee?: { supplier: SupplierId; partnerLink: LinkId };   // fee kinds
     split?: { route: RouteId; weightsVersion: string; mode: "normal" | "own";
@@ -624,8 +630,8 @@ type ResolveParkedAnswer =
     acknowledged.
   - Settlement posts each batch as one **M4**. If one line has a problem, the ledger
     excludes only that line and posts the other lines.
-  - A reservation batch with more than 5,000 lines is refused whole (`over_limit`). Rating
-    then splits it again (m2).
+  - If a reservation batch has more than 5,000 lines, settlement refuses it whole, as the
+    Size rule below gives. Rating then splits it again (m2, V63-3).
 - **Usage batch.** It holds all other lines: usage originals and amendments,
   reservation-line amendments (including "late POL-07 cut"), fees, Share-borne fees, cost
   lines and their amendments. It holds not more than 5,000 lines.
@@ -652,11 +658,11 @@ type ResolveParkedAnswer =
     in the lifecycle feed, RFC-003 §5.4). It has no route and no weights, and settlement
     does not split it.
   - Probe accounts have no lines.
-- **Size.** Rating checks `lines.length ≤ 5,000` before it commits `emitted`. If a usage
-  batch is larger:
+- **Size.** Rating checks `lines.length ≤ 5,000` before it commits `emitted`. If **any
+  charge batch** (reservation or usage) is larger (V63-3):
   - Settlement refuses it whole: it posts nothing.
-  - Settlement acknowledges each line `excluded`, reason `batch_over_limit`, and sends an
-    alert.
+  - Settlement acknowledges each line `excluded`, reason `batch_over_limit`, directly, and
+    sends an alert.
   - Rating then makes new batches within the limit, with new `BatchId`s. Rating names each
     new batch in a new figure before it emits the batch.
 - **Settlement mapping** (RFC-004 §B2, §B3). This table gives the combinations that rating
@@ -680,6 +686,10 @@ type ResolveParkedAnswer =
 | usage | > 0 | price_correction or superseding_record, with `amount < 0` | supplier `f` | M9 (own mode) |
 | usage | > 0 | re_rate, `amount < 0` | share (C06-M8) | M8 |
 | carried_excess, dearer_path | > 0 | any reason above that is correct for the trigger | as given | M23 (a nil line if no party moves) |
+| reservation, usage | 0 | the parked line's reason; `abandon` present; payer share | — | **Share-paid posting (V63-4)**: as M12, with `v` = `amount`. `SH:costs −Σ s_i`; each supplier `S:earn +s_i` = `split(amount)` on the line's route and weights. The commission share is not posted. `B` is not touched. The line key is recorded as posted |
+| reservation, usage | > 0 | the parked line's reason; `abandon` present; payer share | — | If `amount > 0`: `SH:costs −Σ`, each supplier `+[split(newTotal) − split(priorTotal)]_i`; `B` is not touched. If `amount < 0`: M8 (cause share). The line key is recorded as posted |
+| fee, share_borne_fee | 0 | original; `abandon` present; payer share | — | M11, to `payee` |
+| carried_excess, dearer_path | any | the parked line's reason; `abandon` present | as given | The normal row for the line (M12, M13, M23) |
 
   All other combinations are **invalid**. Examples:
   - a value that is not in an enum;
@@ -707,7 +717,8 @@ type ResolveParkedAnswer =
   a committed movement. A line is `posted`, with the ledger position. A line with
   `duplicate: true` has the position of the original movement. A line of a reservation
   batch can also be `excluded`, with its problem. Settlement publishes, directly, the
-  acknowledgements of `refused_batch` and of its own line exclusions. The answers for the
+  acknowledgements of `refused_batch`, of `batch_over_limit` (V63-3) and of its own line
+  exclusions. The answers for the
   lines of one batch can be in more than one message. Together they answer each line
   exactly once (m1).
 - **Posted.** Rating marks a line as posted **only** when it gets `posted`. It records
@@ -745,16 +756,33 @@ type ResolveParkedAnswer =
   Headroom continues to cover each kind of parked line as follows (m4):
   - a usage line stays in `U`;
   - a fee stays in the hold through `fee_state = open` (RFC-004 §A3);
+  - a reservation original stays in the reservation hold, because `p_r` does not pass an
+    unposted minute (RFC-004 §A3, §A6) (V63-6);
   - a reservation amendment or a cost line is not in headroom. A reservation amendment is
     downward, or it is an upward `re_rate` of a minute that was already held. A cost line
     is a cost to Share, not to the buyer.
 - **Exit from parking (D5).** A finance operator sends `resolve_parked` to rating. The
   command has an operator envelope and is idempotent by `actionId`.
-  - **`re_emit`**: use it after a fix. Rating puts the line and its parked dependants back
-    into the next usage batches, in sequence.
-  - **`abandon`**: rating records a write-down. The line and its dependants leave `U` and
-    the parking. Reconciliation closes them. Share bears the abandoned charge. The buyer
-    pays nothing for the line.
+  - **`re_emit`**: use it after a fix. A parked reservation original goes in its own
+    reservation batch, with a new `BatchId`. This is an exception to the increasing-minute
+    rule (V63-5). Each other line goes in the next usage batches, in sequence.
+  - **`abandon`** (V63-4): rating posts the line as a **Share-paid posting**. Parked lines
+    come from Share-side defects, so Share bears the cost (D5). Rating does these steps:
+    1. It emits the parked line again with the same `SourceRef`, `payer: share`,
+       `abandon.actionId` set, and `triggerRef` = `actionId`. A reservation original goes
+       in its own reservation batch. Each other line goes in the next usage batches, in
+       sequence. Each parked dependant follows, in sequence.
+    2. Settlement posts it by the abandon rows of the mapping table. The buyer is not
+       charged. The suppliers get their normal shares.
+    3. The ledger records the line key as posted. The `posted` acknowledgement removes the
+       line from `U` and from the parking. F1 sees the posting: it sets
+       `fee_state = charged` for a fee, and it moves `p_r` past a reservation minute. Thus
+       the funds hold is released. The buyer-side amount of the line is 0, so key spending
+       does not change.
+    4. Reconciliation closes the line against the movement.
+
+    For a fee conflict, the ledger already has a posting of the fee key. `abandon` then
+    posts nothing. Rating takes the ledger's posting as final and closes the line.
 
 ### Ledger posting port
 
@@ -774,9 +802,12 @@ type ResolveParkedAnswer =
   - the partition is the home of `movementRef` (`wrong_home`);
   - an M18 is not stale (`stale`);
   - not more than 5,000 lines (`over_limit`);
-  - for a charge batch, `lines.length = batch.lineCount`. `lineCount` counts only the lines
-    that settlement sends in the request (M3). For a usage batch, it is equal to rating's
-    `lineCount`, because settlement removes no line from a usage batch (D1).
+  - for a charge batch, `lines.length = batch.lineCount`. On the port, `lineCount` is
+    rating's `lineCount` minus the number of lines that settlement excluded (V63-1).
+    Settlement copies rating's value and subtracts its exclusions. It never counts the
+    lines that it sends. For a usage batch settlement excludes no line (D1), so the value
+    is rating's `lineCount`. Thus the ledger refuses a usage batch from which settlement
+    dropped a line by mistake.
 - **Per-line checks, in this order (M2).** The ledger does these checks for charge,
   amendment, fee and cost lines:
   1. **Find the canonical `SourceRef`.** If the ledger finds it, it compares the content.
@@ -912,7 +943,7 @@ new owner starts again from that position.
 | `UnpostedUsageFigure` | (account, `ratingPosition`) | No effect | Not possible: a later position replaces it |
 | `UsageApplied` | At rating: **(account, `appliedThrough`)** (C05 v1). `entry` (`LogPosition`) identifies the F2 entry | No effect. Rating keeps the maximum `appliedThrough` | Not possible: one F2 entry has one content |
 | `ChargeLine` | Canonical `SourceRef` | Ledger: an idempotent repeat. The ledger posts nothing and acknowledges `posted` (`duplicate: true`). The ledger finds duplicates before the sequence and total checks (M2). A usage batch stays `whole` | Ledger: `conflict` and an integrity alert. Reservation batch: the ledger excludes the line (`content_conflict`) and posts the others. Usage batch: refused whole (`refused_batch`); the ledger posts nothing |
-| `ChargeLineBatch` / movement | `BatchId` = `movementRef`. The ledger stores the content digest of the movement with its answer, also for `refused_batch` and `over_limit` answers | The ledger returns the recorded answer | **If the reference has a committed answer**, the ledger returns that committed answer (each line deduplicated by line) with `integrityAlert: true`, and sends an integrity alert. It never refuses (M4). **If the recorded answer is not committed** (`refused_batch`, `over_limit`), the ledger answers `refused`/`invalid` and sends an integrity alert. A new batch from rating has a new `BatchId` |
+| `ChargeLineBatch` / movement | `BatchId` = `movementRef`. The ledger stores the content digest of the movement with its answer, also for `refused_batch` and `over_limit` answers | The ledger returns the recorded answer | **If the reference has a committed answer**, the ledger returns that committed answer (each line deduplicated by line) with `integrityAlert: true`, and sends an integrity alert. It never refuses (M4). **If the recorded answer is not committed** (`refused_batch`, `over_limit`), the ledger returns that **recorded answer** with `integrityAlert: true`, and sends an integrity alert (V63-2). Nothing moved, so this is safe. Settlement publishes the acknowledgements, and rating emits the lines again under a new `BatchId`. A new batch from rating has a new `BatchId` |
 | `PostingAck` | (`batchId`, line `sourceRef`) | No effect at rating | `posted` is final. A later answer never changes it |
 | `post` | For each movement, `movementRef` with its content digest. For each line, `lineRef` | The recorded answer | As in the two rows above |
 | `MovementPosted` | `EventId`, or (view key, `EventId`) on a view | Ignored | — |
@@ -985,8 +1016,8 @@ Kafka ACLs: each owner can produce only to its own topics (RFC-006 §5.2).
 All at `requirements-v1.10`:
 - P3-S10, P3-S12, P3-S13, P3-S15, P3-S17, P3-S26, P3-S27, P3-S32, P3-S35, P3-S37, P3-S39,
   P3-S41, P3-S56, P3-S58, P3-S59, P3-S61, P3-S62, P3-S64, P3-S65, P3-S66, P3-S69;
-- P4-S15, P4-S16, P4-S29, P4-S38, P4-S39, P4-S57, P4-S72, P4-S110, P4-S115, P4-S116,
-  P4-S117;
+- P4-S15, P4-S16, P4-S29, P4-S38, P4-S39, P4-S41, P4-S42, P4-S57, P4-S72, P4-S89,
+  P4-S110, P4-S115, P4-S116, P4-S117;
 - X1-S31;
 - X2-S13, X2-S22.
 
@@ -1007,7 +1038,7 @@ All at `requirements-v1.10`:
 | CT-R9 Moves and cost lines | P4-S110: dearer path `"4"`, route = the path. P4-S115: buyer amendment `"-1"`, cause share, and no dearer-path amendment. P4-S116: the rows as cost-line amendments with their causes | P4-S110, P4-S115, P4-S116 |
 | CT-R10 Sequence and parking | A price correction and a late-traffic amendment that are due together on one usage line go in two consecutive batches, never in one batch. A line acknowledged `invalid` parks its later sequences. A parked usage line stays in `U`. A parked line never causes the refusal of another batch | P3-S61, P4-S38 |
 | CT-R11 Fee payee | Each fee and Share-borne fee line names its `payee`, has no route or weights, and is never amended | P4-S57 |
-| CT-R12 `resolve_parked` | `re_emit` after a fix posts the line and its dependants in sequence. `abandon` removes them from `U` and from the parking, and reconciliation shows them closed. A repeated `actionId` returns the first answer. A caller that is not finance is refused | P3-S61, P4-S57 |
+| CT-R12 `resolve_parked` | `re_emit` after a fix posts the line and its dependants in sequence. A parked reservation original goes in its own reservation batch (V63-5). `abandon` of a usage line, a fee and a reservation original makes a Share-paid posting: `B` does not change, the suppliers get `split(amount)`, `U` loses the line, `fee_state` becomes `charged`, `p_r` moves past the minute, and reconciliation shows the line closed (V63-4). A repeated `actionId` returns the first answer. A caller that is not finance is refused | P3-S61, P4-S57 |
 | CT-R13 Late original | A late original from a quarantine attribution has reason `original` and the attribution in `triggerRef`. Settlement maps it to M5 | P3-S27 |
 
 **Provider side: RFC-002 (account owner).**
@@ -1025,10 +1056,11 @@ All at `requirements-v1.10`:
 | Test | Checks | Serves |
 |---|---|---|
 | CT-L1 Mapping | Each row of the settlement mapping table posts the movement that it names. Fee lines credit their `payee`. An invalid combination in a usage batch refuses the batch whole (`invalid` plus `batch_refused`) and sends an alert. In a reservation batch, settlement removes only the invalid line, and `lineCount` counts the lines that it sends | P4-S41, P4-S42, P4-S89 |
+| CT-L10 Abandon posting | An `abandon` line of each kind posts by its mapping row. `B` does not change. The ledger records the key, and a repeat is a duplicate | P4-S57, P4-S29 |
 | CT-L2 Late POL-07 cut | P4-S117: weights 3000/3333/2167/1500, line 1,500 → 900. M6 posts `B:b1 +600`, `S:A:earn −180`, `S:B:earn −200`, `S:C:earn −130`, `SH:commission −90`. There is no `SH:corrections` entry and no `fault` debt (m16) | P4-S117 |
-| CT-L3 Over limit | A usage batch of 5,001 lines posts nothing. Each line is acknowledged `excluded`, `batch_over_limit`. The ledger records the answer and returns it on a repeat. A reservation batch of 5,001 lines is refused whole, and rating splits it again | X2-S13 |
-| CT-L4 Whole | (1) A usage batch with one line already posted with the same content commits with `whole = true` and ignores that line. This includes an **amendment** that is sent again: the ledger finds the duplicate before the sequence and total checks (M2). (2) A line with the same id and different content refuses the batch whole, posts nothing, and sends an integrity alert. That line is acknowledged `content_conflict` and the other lines `batch_refused`. (3) The same for an invalid line. (4) A request with `lines.length ≠ lineCount` is refused `invalid` | P4-S16, P4-S57 |
-| CT-L5 Dedup | A batch sent again returns the recorded answer. After a **commit**, the same `movementRef` with a different digest returns the committed answer, with an integrity alert, and never a refusal (M4). Before a commit (a recorded `refused_batch`), it is refused `invalid` with an integrity alert. Two lines that differ only in `cause` (M8 versus M9) are a `conflict`, not a duplicate. A changed line in a reservation batch is excluded with `ledgerPostedTotal`, `ledgerLastSeq` and `ledgerPosition`. A line acknowledged `invalid` gets an alert at once and shows as unresolved in the next daily reconciliation | P4-S57, P4-S29 |
+| CT-L3 Over limit | A usage batch of 5,001 lines posts nothing. Each line is acknowledged `excluded`, `batch_over_limit`. The ledger records the answer and returns it on a repeat. A reservation batch of 5,001 lines is refused whole the same way: settlement acknowledges each line `batch_over_limit` directly, and rating splits the batch again (V63-3) | X2-S13 |
+| CT-L4 Whole | (1) A usage batch with one line already posted with the same content commits with `whole = true` and ignores that line. This includes an **amendment** that is sent again: the ledger finds the duplicate before the sequence and total checks (M2). (2) A line with the same id and different content refuses the batch whole, posts nothing, and sends an integrity alert. That line is acknowledged `content_conflict` and the other lines `batch_refused`. (3) The same for an invalid line. (4) A request with `lines.length ≠ lineCount` is refused `invalid`. A settlement that drops a line from a usage batch by mistake is refused `invalid`, because `lineCount` comes from rating (V63-1) | P4-S16, P4-S57 |
+| CT-L5 Dedup | A batch sent again returns the recorded answer. After a **commit**, the same `movementRef` with a different digest returns the committed answer, with an integrity alert, and never a refusal (M4). Before a commit (a recorded `refused_batch` or `over_limit`), it returns the recorded answer with `integrityAlert: true` and an integrity alert, and the account does not stall (V63-2). Two lines that differ only in `cause` (M8 versus M9) are a `conflict`, not a duplicate. A changed line in a reservation batch is excluded with `ledgerPostedTotal`, `ledgerLastSeq` and `ledgerPosition`. A line acknowledged `invalid` gets an alert at once and shows as unresolved in the next daily reconciliation | P4-S57, P4-S29 |
 | CT-L6 Order and totals | For a new reference: an amendment whose predecessor is not posted is `out_of_sequence`. A wrong `priorTotal` is `prior_total_mismatch`. Entries that do not agree with the template are `invalid`. A `weightsVersion` that is not the original's is `invalid`. In a usage batch, each of these refuses the batch whole | P4-S38, P4-S39 |
 | CT-L7 Feed | Each committed movement shows once for each `EventId`, with `batch`, and with the per-line `amount`, `postedTotal`, `reason`, `cause`, `triggerRef`, `lateCut` and `payee`. The by-buyer view is equal to the full feed filtered by home = buyer, including batches that hold only cost lines. The supplier and external views are equal to their filters. A movement that touches two suppliers is in both supplier views, and dedup by (view key, `EventId`) keeps both copies | P4-S72, P3-S35 |
 | CT-L8 Principal | If the workload identity of a caller is not one of the five posting principals, or the caller posts a kind that is not permitted for it, the ledger refuses it with `principal`. Settlement holds that account's batches and tries again every 30 s (est.). It parks no lines | P4-S29 |
@@ -1063,8 +1095,8 @@ lists the RFC changes that follow from them.
 | C06-M8 | Downward re-rate amendment | Rating sets cause **share**, and settlement posts **M8**. Thus supplier earnings stay final (POL-23). An upward re-rate posts M6/M7. `re_rate` is used only for the residual of a cold re-rate and for the restatement of a problem original |
 | C06-M9 | Late POL-07 cut on an own-mode line | M7 posts `−split(−Δ)` for each party |
 | C06-M10 | Event identity of feeds | The substrate's `EventId`: (partition, stream, stream sequence) with (generation, epoch). On a view: (view key, `EventId`) |
-| C06-M11 | Lines that the ledger cannot post | **D5.** A line-level `invalid` line, a fee conflict, and each later sequence of such a line are **parked**. They stay unposted. Rating sends an **alert at once**. They **show in daily reconciliation as unresolved**. Rating never emits them again automatically. They never cause the refusal of another batch. A finance operator ends the parking with `resolve_parked`: `re_emit` or `abandon` (Share bears an abandoned charge). **Movement-level refusals are not parked**: settlement holds the account's batches and tries again every 30 s (est.) |
-| C06-M12 | Wholeness of usage batches | **D1.** If one line of a usage batch cannot be posted, for any reason, the ledger refuses the full batch. The reasons are a ledger conflict, `prior_total_mismatch`, `out_of_sequence`, `invalid` (from settlement or the ledger) or size. Only the problem lines have their own reason; the others are `batch_refused`. A repeated line id with the same content is an idempotent repeat: the ledger ignores it, before the sequence checks, and the batch stays whole. The same line id with different content refuses the batch, with an **integrity alert**. `lineCount` counts the lines that settlement sends (M3). If a movement is committed, a later request for it with a different digest gets the committed answer and an integrity alert (M4). A committed usage-batch movement is always `whole` |
+| C06-M11 | Lines that the ledger cannot post | **D5.** A line-level `invalid` line, a fee conflict, and each later sequence of such a line are **parked**. They stay unposted. Rating sends an **alert at once**. They **show in daily reconciliation as unresolved**. Rating never emits them again automatically. They never cause the refusal of another batch. A finance operator ends the parking with `resolve_parked`: `re_emit` (a reservation original in its own reservation batch, V63-5) or `abandon`. `abandon` is a Share-paid posting of the line key: the buyer is not charged, the suppliers get their normal shares, and the funds hold (`fee_state`, `p_r`) is released (V63-4). **Movement-level refusals are not parked**: settlement holds the account's batches and tries again every 30 s (est.) |
+| C06-M12 | Wholeness of usage batches | **D1.** If one line of a usage batch cannot be posted, for any reason, the ledger refuses the full batch. The reasons are a ledger conflict, `prior_total_mismatch`, `out_of_sequence`, `invalid` (from settlement or the ledger) or size. Only the problem lines have their own reason; the others are `batch_refused`. A repeated line id with the same content is an idempotent repeat: the ledger ignores it, before the sequence checks, and the batch stays whole. The same line id with different content refuses the batch, with an **integrity alert**. On the port, `lineCount` is rating's `lineCount` minus settlement's exclusions (V63-1). If a movement is committed, a later request for it with a different digest gets the committed answer and an integrity alert (M4). If the recorded answer is not committed, it gets the recorded answer and an integrity alert (V63-2). Any charge batch over 5,000 lines is acknowledged `batch_over_limit` (V63-3). A committed usage-batch movement is always `whole` |
 | C06-M13 | Timing of split weights | **D4.** Lead time at least 1 min. Never retroactive. Positive integers. An amendment has the `weightsVersion` of its original. An incorrect weight is fixed forward only. The deviation report (RFC-004 §B3.5) shows its past effect. Finance can settle that effect with an M22 |
 | C06-M14 | Writers of the catalogue and probe accounts | **D7.** Only the RFC-003 catalogue writes `catalogue.v1`. Link rows stay on RFC-001's link-registry feed. Only placement's account slot map designates probe accounts (C01 M11). The catalogue has no account designation. `link_rules` is not in v1 (AI-55-1) |
 
@@ -1114,7 +1146,9 @@ RFCs.
   - `out_of_sequence` emits again without a re-base.
   - Park line-level `invalid` lines, fee conflicts and their later sequences (D5).
   - Add the `resolve_parked` command (finance, envelope, idempotent by `actionId`), with
-    `re_emit` and `abandon` (D5).
+    `re_emit` and `abandon` (D5). `re_emit` sends a reservation original in its own
+    reservation batch (V63-5). `abandon` emits the line again as a Share-paid posting with
+    `abandon.actionId` (V63-4).
 - **§5.10.**
   - A downward "re-rate" has cause Share.
   - The cold re-rate reads `triggerRef` from the movement feed and skips each trigger that
@@ -1147,7 +1181,7 @@ RFCs.
   - Default cap 100 Mbps (m7).
 - **§B1.2.**
   - `whole` is always true for a committed usage-batch movement. The ledger keeps the field
-    as a check, with `lineCount` (the lines that settlement sends) (M3).
+    as a check, with `lineCount` (rating's count minus settlement's exclusions, V63-1).
   - A duplicate with the same content is ignored and `whole` stays true.
 - **§B1.4.**
   - Do the duplicate lookup by canonical `SourceRef` **before** the sequence, total,
@@ -1155,18 +1189,25 @@ RFCs.
   - Compare the fields that this contract names, `triggerRef` included.
   - Store the content digest of the movement with its answer.
   - After a commit, a different digest returns the committed answer with an integrity
-    alert. Before a commit, it is refused `invalid` (M4).
+    alert (M4). Before a commit, it returns the recorded answer with an integrity alert
+    (V63-2).
 - **§B2.**
   - M10 and M11 credit the `payee` of the line. The key of M11 has no reason. M23 is not
     used for Share-borne fees.
   - A downward re-rate is M8. M7 for a negative `Δ` is `−split(−Δ)`.
   - Amendments have the `weightsVersion` of the original (D4).
+  - Add the abandon rows: a Share-paid posting of the line key, `B` not touched, suppliers
+    paid `split`, commission share not posted; fee kinds as M11; the key recorded as posted
+    (V63-4).
 - **§B3.1.**
   - The `whole` column says "always (D1)".
   - A batch made again with a changed line is refused whole.
   - Settlement's line exclusions refuse a usage batch whole.
-  - In a reservation batch, settlement removes the line and `lineCount` counts only the
-    lines that it sends (M3).
+  - In a reservation batch, settlement removes the line. The port's `lineCount` is rating's
+    `lineCount` minus settlement's exclusions; settlement copies it and never counts what it
+    sends (V63-1).
+  - Settlement refuses any charge batch over 5,000 lines and acknowledges each line
+    `batch_over_limit` directly (V63-3).
   - The input contract adds `newTotal`, `priorTotal`, `payee`, `lineCount` and
     `triggerRef`.
   - The ledger outbox publishes acknowledgements of committed movements. Settlement
@@ -1177,7 +1218,10 @@ RFCs.
 - **§B3.5.** The deviation report shows the past effect of an incorrect weight. Finance can
   fix it with an M22 (D4).
 - **§B6.** Daily reconciliation shows parked lines as unresolved until `resolve_parked`
-  closes them. Rating alerts them at once. Reconciliation closes an abandoned line (D5).
+  closes them. Rating alerts them at once. Reconciliation closes an abandoned line against
+  its Share-paid movement (D5, V63-4).
+- **§A3, §A6, F1.** An abandon posting releases the funds hold: F1 sets `fee_state = charged`
+  and moves `p_r` past the minute. Its buyer-side amount is 0 for KP (V63-4).
 - **§B9.**
   - Posting row: "reservation batch: the line is excluded and the others are posted; usage
     batch: refused whole, with an integrity alert".
@@ -1204,6 +1248,18 @@ RFCs.
   - Use backoff for `overloaded`.
   - On `stopped`, send an alert and hold. Try again not more often than once every 30 s,
     for each account (C4-7, M8).
+
+### C05 (v1, frozen; erratum)
+
+- **F2 in-flight reduction (V63-7a).** C05's F2 has one `reduction`, but C06's `Δ_b` is per
+  product. Change F2 to `inFlight: { batch; reductions: { product; reduction }[] }`. Fill it
+  from C06's `usageReduction` for each product. The account owner then sets
+  `U[product] = U(X) − reduction[product]`.
+- **F3 admission RTO (V63-7b).** After D6, no catalogue entity carries `rtoAdm`. The account
+  owner fills C05's F3 `rtoAdm` with the formula constant 60,000 ms, or C05 removes the
+  field. The enforcement term is also the constant 60,000 ms.
+- **F1 abandon postings (V63-4).** F1 counts the buyer-side amount of an abandon posting as 0
+  for KP. F1 treats the line key as posted for `fee_state` and `p_r`.
 
 ### RFC-006 (rev. 6)
 
@@ -1300,3 +1356,17 @@ Draft 3 applied these. Some notes show where draft 4 changed the result.
 | D5, D6, D7 | Decisions | Applied as given above |
 | C05 v1 `LedgerPosition` | Coordinator, binding | `LedgerPosition` uses C05 v1's field names `ledgerPartition` (string) and `sequence`, not `partition` and `seq`, everywhere in C06 |
 | AI-55-1, AI-55-2 | Architecture issues | Listed under "Upstream issues" |
+
+## Fix verification 63 resolution
+
+| Defect | Resolution |
+|---|---|
+| V63-1 | On the port, `lineCount` is rating's `lineCount` minus settlement's exclusions. Settlement copies it and never counts what it sends. The ledger keeps `lines.length = lineCount`. CT-L4(4) |
+| V63-2 | For an uncommitted recorded answer and a different digest, the ledger returns the recorded answer (`refused_batch` or `over_limit`) with `integrityAlert: true` and an integrity alert. CT-L5, idempotency row, RFC-004 §B1.4 erratum |
+| V63-3 | Settlement refuses any charge batch over 5,000 lines and acknowledges each line `batch_over_limit` directly. Producers list updated. CT-L3 |
+| V63-4 | Binding: `abandon` is a Share-paid posting of the line key. The buyer is not charged. The suppliers get their normal shares. The funds hold (`fee_state`, `p_r`) is released. Share bears the cost (D5). New `abandon` field, mapping rows, CT-R12, CT-L10, errata |
+| V63-5 | `re_emit` sends a parked reservation original in its own reservation batch, as an exception to the increasing-minute rule. CT-R12 |
+| V63-6 | The headroom list includes the reservation original (`p_r` holds the minute) |
+| V63-7 | C05 erratum: F2 reductions for each product; F3 `rtoAdm` from the formula constant 60,000 ms (D6) |
+| Nit | P4-S41, P4-S42 and P4-S89 added to "Scenarios relied on" |
+| Status | Frozen at C4 on fix verification 63, version 1 |
