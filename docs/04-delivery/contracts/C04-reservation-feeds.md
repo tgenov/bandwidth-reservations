@@ -3,7 +3,7 @@
 | | |
 |---|---|
 | Contract ID | C04 |
-| Version | 2.3. Frozen at C4 on fix verification 61; errata owed listed below. Version 2.3 applies the C04 items of [review 61](../../reviews/61-contracts-C02-C03-C04-fix-verification.md) (V61-5, V61-6). Version 2.2 renames `pending_answered` to `pendingAnswered` and states the covered-parts rule of C02 draft.3. Version 2.2 renames `pending_answered` to `pendingAnswered` and states the covered-parts rule of C02 draft.3. Version 2 revised version 1 per [review 43](../../reviews/43-contract-C04-review.md). Version 2.1 revises version 2 per [review 58](../../reviews/58-contract-C04-review.md). See [Review 43 resolution](#review-43-resolution) and [Review 58 resolution](#review-58-resolution) |
+| Version | 2.3.1. v1.1 erratum: probe source (CC-1); no interface removed. Version 2.3: Frozen at C4 on fix verification 61; errata owed listed below. Version 2.3 applies the C04 items of [review 61](../../reviews/61-contracts-C02-C03-C04-fix-verification.md) (V61-5, V61-6). Version 2.2 renames `pending_answered` to `pendingAnswered` and states the covered-parts rule of C02 draft.3. Version 2.2 renames `pending_answered` to `pendingAnswered` and states the covered-parts rule of C02 draft.3. Version 2 revised version 1 per [review 43](../../reviews/43-contract-C04-review.md). Version 2.1 revises version 2 per [review 58](../../reviews/58-contract-C04-review.md). See [Review 43 resolution](#review-43-resolution) and [Review 58 resolution](#review-58-resolution) |
 | Status | **Frozen.** Frozen at C4 on fix verification 61; errata owed listed below (see [Consumer obligations](#consumer-obligations-errata-required-by-settled-points)). Tag `contract-C04-v1` |
 | Provider | RFC-002 (the account owner: the booking module, and RFC-004 Part A's funds module, writing to the same log) |
 | Consumers | RFC-006 (the notifier, alerting and history), RFC-003 (rating, and the catalogue's locked-price read model), RFC-004 (Part A owns the release-after-grace rule; Part B settlement reads this feed only through RFC-003's charge lines), RFC-005 (envelope verification on the command port), the operator console, reporting |
@@ -212,7 +212,7 @@ type EndCause =
   | "window_end";            // ended at its window's end, as booked or as last changed
 
 interface LifecycleBase extends PayloadBase {   // headers: stream "lifecycle"
-  account_is_probe: boolean;                // cross-check only; the catalogue designation is the source of truth (m-05)
+  account_is_probe: boolean;                // a copy of the designation from placement's slot map at the entry; not a decision (CC-1)
   reservation: ReservationId | null;        // null only for residue events of a booking request
   change_id: ChangeId | null;               // the E11's id for E11 events; null otherwise
 }
@@ -781,7 +781,7 @@ the same identity. The owner records only a definitive failure.
 | `account.lifecycle.v1` events | Only the account owner's outbox | Rating, the catalogue read model (AI3-7), history, notifier, reporting. Supplier-facing reporting applies RFC-005's supplier-visibility query |
 | `ResolvedMarker` | Only the closure emitter (C01) | Every lifecycle consumer |
 | Termination E11 and refusal audit entries | Only the account owner | History, audit |
-| Probe designation | Catalogue (RFC-003 §6.1), the source of truth. `account_is_probe` is a cross-check that rating alerts on when it differs | Rating, the account owner (F9) |
+| Probe designation | Placement's account slot map (RFC-006, C01 M11) is the only source. `account_is_probe` is a copy of the designation from the slot map. It is not a decision (CC-1) | Rating, the account owner (F9) |
 
 ## Timeouts and deadlines
 
@@ -854,7 +854,7 @@ X1-S12, X1-S16, X1-S17, X1-S36, P4-S23, P4-S97.
 | PL-4 | Both orders. A move final before `t_eff` moves the full rate, and a later target gives `cut` `left_link`. A move final after a recorded target carries the cut rate and `applies`. A move final after `t_eff` but before the target arrives carries the full rate, and the later `cut` lowers the moved parts. **N-03 case:** an offer made Final with `move_at` = `t_eff` + 5 min, its offer-scoped target arriving after the move's entry, gives `cut` lowering the moved parts from `move_at`, and C02 answers `APPLIED` | P1-S84 |
 | PL-5 | Fees: shown fees on `confirmed` and `moved.legs`. Due and payer at each end, shorten and move per RFC-002 §9.5. A move with a cancelled old partner leg gives `fees_due` paid by Share. A fee due on the new path after the move has a distinct `fee_id`. At most once per `fee_id`. A leg has at most one shown fee (D58-2). A termination or release after `term_end` makes no minimum-term fee due (N-06) | P3-S43, P3-S44, P3-S63, P3-S74 |
 | PL-6 | Only `cut`, `ended(revoked)` in a cut's E11, and `ended(window_end)` have an effective minute below `floor_min(ts)`. `part_added` has `part.window.start` ≥ `floor_min(ts)`. A late cause sets `delay_min` and raises the alarm | P3-S08, P3-S45 |
-| PL-7 | `account_is_probe` matches the catalogue designation | X2-S20 |
+| PL-7 | `account_is_probe` agrees with the designation in placement's slot map at the entry (CC-1) | X2-S20 |
 | PL-8 | Window end: a renewal admitted at 17:59:30 for a reservation ending 18:00, confirmed at 18:00:20, gives `part_added` and no `ended`. The same renewal failing gives `ended(window_end)` effective 18:00, written after the outcome | P2-S84 |
 | PL-9 | A late-found partner booking for a tombstoned request gives one `pol28_residue` (`found_by` `late_answer` or `reconciliation`) | P2-S91 |
 | PC-1 | Network-abuse termination with withhold gives `TERMINATED`, `withhold_refused`. Compliance legal order with withhold and approval gives `withheld` and records `order_ref`. There is no later withhold on the port | X1-S36 |
@@ -877,7 +877,7 @@ X1-S12, X1-S16, X1-S17, X1-S36, P4-S23, P4-S97.
 | CR-3 | Rating | Any `cut`, or `ended(revoked)`, that covers already-closed minutes gives downward "late POL-07 cut" amendments, keyed by (link, reduction) and the target revision. The originals do not change. This includes a late offer-scoped cut, which has no extension chunk (V61-6) | P3-S08, P4-S117 |
 | CR-4 | Rating | Fee lines as named, alerted against RFC-003 §5.4. `moved.fees_due` gives Share-borne fee lines. Each `fee_id` is charged once, and a new path's fee is not dropped | P3-S60, P3-S63, P3-S74 |
 | CR-5 | Rating | `moved`: route relabelled from `move_at`, price `min(price, shown_price)`. `price_step`: re-price from `effective` | P3-S59, P3-S64 |
-| CR-6 | Rating | Probe accounts per the catalogue give no lines. A differing `account_is_probe` is alerted. An unknown `kind` without `rating_ignorable` stops the partition, as does a feed-event identity with different content | X2-S20 |
+| CR-6 | Rating | Probe accounts, as designated by placement's slot map, give no lines. If `account_is_probe` does not agree with the slot map, rating alerts (CC-1). An unknown `kind` without `rating_ignorable` stops the partition, as does a feed-event identity with different content | X2-S20 |
 | CR-7 | Rating | A reservation with `ended(revoked)` effective at a later minute, then cancelled by the buyer at `nb(ts)`: two `ended` events. Accrual stops at the least `effective`. The fee follows `cancelled_after_cut` (payer Share) (N-07, D58-3) | P3-S08, P3-S44 |
 | CH-1 | History | "As known at T" = events with `ts` ≤ T, rebuilt from the archive | — |
 | CC-1 | Console | Handles every `TerminateAnswer` and `RoutingRefusal`. Sends the command again with the same identity on routing refusals, `UNAVAILABLE`, a deadline expiry and a dropped connection, until it gets an answer, also after `not_after` (N-08). Records only the recorded answer | X1-S16 |
@@ -890,7 +890,7 @@ Review 43's amendments are folded into the rows.
 
 | # | Point | Provider side (RFC-002 rev. 5) | Consumer side | Settled as |
 |---|---|---|---|---|
-| MM-1 | Probe-account flag | Not listed. F9 designation | RFC-003 §7 consumes it | `account_is_probe` on every lifecycle event. The catalogue designation is the source of truth, and the flag is a cross-check alerted on mismatch (m-05) |
+| MM-1 | Probe-account flag | Not listed. F9 designation | RFC-003 §7 consumes it | `account_is_probe` on every lifecycle event. Placement's slot map is the only source of the designation. The flag is a copy of it, not a decision (amended by CC-1, RFC-000 4.5; C01 M11, C06 D7) |
 | MM-2 | Fee identifier | None (due once per reservation and leg) | RFC-003 §5.4 charges a fee ID once | `fee_id = "<reservation>/<path>/<leg index>"`, with `path` `0` for the booked path and the offer ID after a move (amended by review 43 D-2). A leg has at most one shown fee, and a minimum term is charged as its cancellation fee (amended by review 58 D58-2) |
 | MM-3 | Target revision on `cut` (C4-2) | No revision | RFC-001 and C02 carry one. RFC-003 holds closure until the cut is final | `cut` carries the applied `target_revision`. **Every revision above the highest recorded writes one `cut`, even with the same content. A revision at or below it writes nothing and never supersedes** (review 43 M-02, review 52 V52-1). **An offer-scoped target on a Final offer whose new path includes the link applies as a normal `cut` from `max(t_eff, move_at)` and never becomes `offer_cut_kept`** (review 58 N-03, which replaces the `move_at ≤ t_eff` condition of V52-2). `hold_2` releases at the highest applied revision, equal to the highest `CUT_DECIDED` revision seen before `REDUCTION_FINAL` (C03 M2) |
 | MM-4 | Effective minute of release after grace | Written in F7 at `ts` ≥ `grace_end`; effective ≥ `nb(ts)` | RFC-003 §5.2 expects it recorded in advance | Effective `nb(ts)` of the F7 entry. `delay_min` = `nb(ts)` − `nb(grace_end)`, alerted when > 0. The normal case is 0 and unalerted (amended by review 43 D-6) |
@@ -916,7 +916,7 @@ needs the errata below.
 | RFC-002 | §8.1 and §8.3: the outcome event carries `answered_pending` (`pending` sent before the entry was formed). The owner decides a final answer or `pending` atomically per request. The first marker covering a request lists it in `pendingAnswered` if `pending` was sent. After an acquisition (not an `adopt`), the first marker lists every covered event above the predecessor's `report_through` in the same slot. Markers carry `prevReportPosition` | B-01, MM-10, N-02 |
 | RFC-002 | §9.7, §13.1: one lifecycle `cut` per `cut_target` revision above the highest recorded, even with the same content, carrying `target_revision`. Nothing for a revision at or below it: a recorded repeat gets its recorded reply; a never-recorded lower revision gets the highest recorded revision's reply, echoing its own revision; neither supersedes (V52-1). An offer-scoped target on a Final offer whose new path includes the link is applied as a normal cut from `max(t_eff, move_at)` and emitted as `cut` (V52-2 as widened by review 58 N-03). `ended(revoked)` in the same E11 when every part is 0 to the end | MM-3, M-02, MM-12 |
 | RFC-002 | §9.5, §9.6: `fee_id = "<reservation>/<path>/<leg index>"`. The move's E11 records the old partner leg's fees due at `move_at`, paid by Share, and `moved` carries them | MM-2, M-03 |
-| RFC-002 | §13.1: `account_is_probe` on lifecycle events, as a cross-check of the catalogue designation | MM-1 |
+| RFC-002 | §13.1: `account_is_probe` on lifecycle events, a copy of the designation in placement's slot map | MM-1, CC-1 |
 | RFC-002 | §9.1, §9.5: the timer-driven window-end E11, effective at the window end, deferred while an addition starting at the window end is undecided | MM-5, M-07 |
 | RFC-002 | §13.1: the change event with the E11, and `leg_changes_durable` with the E12 | MM-6 |
 | RFC-002 | §9.6, §13.1, §2.5: `offer_*` and `offer_cut_kept` lifecycle events. Drop the separate "notices" outbox feed | MM-7 |
@@ -930,7 +930,7 @@ needs the errata below.
 | RFC-002 | §8.3: markers chain within one slot (`prevReportPosition` from that slot's `report_through`). Only an acquisition lists every covered event, not an `adopt`. A list over 5,000 ids (est.) is split into chunks with the same `reportPosition` | N-02, N-12 |
 | RFC-003 | §5.6 `hold_2`: released when `REDUCTION_FINAL` is held and the applied `cut` revision equals the highest `CUT_DECIDED` revision before it. A `cut` with `part_rates: []` counts. A lower revision keeps the hold. §7: the revision is on the consumed `cut` | MM-3, M-02 |
 | RFC-003 | §5.2, §7: the allowed early-effective events are `cut`, `ended(revoked)` in a cut's E11 (held by `hold_2`, amended late with "late POL-07 cut"), and `ended(window_end)`. A release ends accrual at `nb(ts)` of its F7 entry and is late only when `delay_min` > 0. An added part accrues from `part.window.start`. When a reservation has two `ended` events, accrual stops at the least `effective`, and the fee follows the end that took effect (D58-3) | M-06, MM-4, MM-5, m-14, N-07 |
-| RFC-003 | §5.4, §7: `fee_id = "<reservation>/<path>/<leg index>"`. `moved.fees_due` gives Share-borne fee lines. §7: the catalogue is the probe source of truth, and `account_is_probe` is alerted on mismatch. Ignore `offer_*`, `offer_cut_kept` and `leg_changes_durable`. Skip kinds with `rating_ignorable`. Stop the partition on a feed-event identity with different content | MM-1, MM-2, M-03, MM-7, m-03, m-05, m-06 |
+| RFC-003 | §5.4, §7: `fee_id = "<reservation>/<path>/<leg index>"`. `moved.fees_due` gives Share-borne fee lines. §7: placement's slot map is the only probe source, and `account_is_probe` is a copy of it (CC-1). Ignore `offer_*`, `offer_cut_kept` and `leg_changes_durable`. Skip kinds with `rating_ignorable`. Stop the partition on a feed-event identity with different content | MM-1, MM-2, M-03, MM-7, m-03, m-05, m-06 |
 | RFC-004 | §A7, JR-2: release E11s effective `nb(ts)` of the F7 entry. Lateness is alerted per `delay_min`. Part A's release notice is not delivered (the lifecycle `ended(released)` is the notice). A fee due carries its payer, so the funds module never drains a buyer's hold for a Share-paid fee (revoked, cancelled after a cut, a move's old partner leg) | MM-4, MM-9, m-09 |
 | RFC-004 | Traceability: cite P4-S117 (the late POL-07 cut, §B3.4) | m-10 |
 | RFC-001 | Traceability: cite P1-S84 (a move final after the cut carries the cut rate) | m-10 |
@@ -967,7 +967,7 @@ Every fix review 43 proposes is accepted with its decisions D-1 … D-6 (binding
 | m-02 | Minor | C01 types and names used verbatim (`HlcTs`, `Epoch`, `StreamSeq`, `PartitionKey` as headers, `ReportMarker` with `generation: 0` and `reportPosition`, `report_through`) |
 | m-03 | Minor | C01's rule (security alert, keep the first), plus rating stops the partition. C01 erratum |
 | m-04 | Minor | The guarantee is reworded to "no row with a new identity". Duplicates may follow |
-| m-05 | Minor | The catalogue designation is the source of truth. `account_is_probe` is a cross-check, alerted |
+| m-05 | Minor | Superseded by CC-1 (v2.3.1): placement's slot map is the only source. `account_is_probe` is a copy of it |
 | m-06 | Minor | A new kind goes to `.v2` unless it carries `rating_ignorable: "true"` |
 | m-07 | Minor | `moved` carries the cuts recorded before its entry. Later targets give `cut`. PL-4 tests both orders |
 | m-08 | Minor | `change_ids: ChangeId[]`, `[]` = none, the E11's own id |
@@ -1004,3 +1004,4 @@ Every fix that review 58 proposes is applied. Its decisions D58-1 to D58-4 are b
 | v2.2 edit | Orchestrator | `pending_answered` is renamed to `pendingAnswered` everywhere, to agree with C01, which owns the `ReportMarker` schema. The Cut section and `covered_parts` now state the C02 draft.3 rule: revision 1 sets the covered parts, a later revision can only omit ended parts, and a revision that adds a part gets `MISMATCH` |
 | V61-5 | Review 61 (Minor) | The Cut section now defines an ended part, word for word as the orchestrator gave it. A later revision that drops an ended part never raises the rate of any part |
 | V61-6 | Review 61 (Minor) | The "Late extension" bullet is now "Late cuts". It applies to any `cut` or `ended(revoked)` that covers closed minutes. The amendment key is (link, reduction) and the target revision, not the extension chunk. This agrees with C03 rule 5, V52-4 and CR-3. CR-3 is aligned |
+| CC-1 (v2.3.1 erratum) | RFC-000 4.5 (binding) | Placement's account slot map is the only source of the probe-account designation (C01 M11, C06 D7). `account_is_probe` is a copy of that designation, not a decision. MM-1, Ownership, PL-7, CR-6, the RFC-002 and RFC-003 errata and the m-05 row now say this. No field or interface is removed. Status stays Frozen |
