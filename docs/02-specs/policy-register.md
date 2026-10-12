@@ -12,7 +12,8 @@ business must ratify them. Each entry answers a Decision question from the
 finding), and later questions from the requirements gates (`GA-nn`, `GB-nn`, gate A
 `D-nn`, gate B `Dn`) and the final gates (final gate A `D-n`, final gate B `Dn`), and
 issues the [architecture overview](../03-rfcs/RFC-000-architecture.md) raised against the
-requirements (`RI-n`).
+requirements (`RI-n`), and the requirements issues raised by the
+[review of that overview](../reviews/06-rfc-000-review.md) (`RQ-n`, with its decision D3).
 
 **How to read an entry.** Each entry states the **current** rule, self-contained: the
 decision as rules, its parameters with their current defaults, why, and the alternatives
@@ -46,9 +47,9 @@ the provenance line under each heading lists the questions it answers.
 | POL-03 | Interrupted route requests | Resume within the deadline; otherwise fail, release, notify |
 | POL-04 | Buyer interaction | An answer within `ack_budget`: final if ready, otherwise `pending`, then poll or webhook; each outcome is decided at one point, and a status read lags it by at most `status_staleness`, never contradicting it |
 | POL-05 | Authority over a link | One schedule owner per link; a single-link booking is a one-leg route; contended requests wait unless `wait = false` |
-| POL-06 | Non-functional targets | 99.99% admission and ingestion, 99.9% wallet, payouts, reporting, in each serving region; funds holds and headroom checks for bookings held to admission's targets; ×50 design load; RPO 0; RTO per capability (1 min to 30 min on node or zone loss, 1 h on region loss); a declared region disaster is outside the availability and timeliness measurements; probes use a designated account with no business side effects |
-| POL-07 | Loss of supply | Never revoke silently; stop new sales at once; an outage affects only the minutes it overcommits, all holders alike; maintenance on free capacity only; permanent reductions by notice, newest Mbps first, with an equivalent-path offer at the lower price |
-| POL-08 | Changing a reservation | Cancel or shorten any time; extend or increase by a new admission of the difference; decrease last in, first out; partner fees go wholly to the partner |
+| POL-06 | Non-functional targets | 99.99% admission and ingestion, 99.9% wallet, payouts, reporting, in each serving region; funds holds and headroom checks for bookings held to admission's targets; ×50 design load; RPO 0; RTO per capability (1 min to 30 min on node or zone loss, 1 h on region loss); a declared region disaster is outside the availability, latency and timeliness measurements, while RPO 0 still applies; probes use a designated account, on a credit limit set by finance, with no business side effects |
+| POL-07 | Loss of supply | Never revoke silently; stop new sales at once; an outage affects only the minutes it overcommits, all holders alike; maintenance on free capacity only; permanent reductions by notice, newest Mbps first, with a firm equivalent-path offer at the lower price, all-Share paths first, its Share-leg capacity held for `offer_window` and any partner leg booked at acceptance |
+| POL-08 | Changing a reservation | Cancel or shorten any time; extend or increase by a new admission of the difference; decrease last in, first out; partner fees go wholly to the partner; Share pays to cancel a partner booking left without its confirmation |
 | POL-09 | Selling horizon | Rolling 12 months; open-ended bookings guaranteed as the horizon rolls |
 | POL-10 | Rejections | Actionable counter-offers from the requested start; two top-up amounts; never disclose other buyers |
 | POL-11 | Money unit and rounding | Micros per currency; each charge line rounded down once; fees exact; residues carried, never taken |
@@ -66,9 +67,9 @@ the provenance line under each heading lists the questions it answers.
 | POL-23 | Bad debt | Share bears buyer credit risk and its own errors; supplier earnings are final once charged |
 | POL-24 | Regulation | Hold funds through a licensed payment partner; daily signed reconciliation matching every partner transaction, Share's own deposits and withdrawals included; Share's own balance covers the receivables it funds (a treasury obligation, never a gate on movements) |
 | POL-25 | AI-agent controls | Administrator-set per-key spending and in-flight limits, rate limits; funds held before capacity |
-| POL-26 | Route deadline | Chosen per request, 1 s to 60 s (11 s with a partner leg), default 30 s; failed as of the deadline if not confirmed; every hold, a partner's included, expires at the deadline by itself |
+| POL-26 | Route deadline | Chosen per request, 1 s to 60 s (11 s with a partner leg), default 30 s; failed as of the deadline if not confirmed, and never confirmed after it; Share-link holds released at the deadline, or within `release_grace` after it if the decision record is unavailable then; a partner's hold expires at the deadline by itself |
 | POL-27 | Price changes | On minute boundaries only; a booked reservation keeps its price; open-ended ones change with notice |
-| POL-28 | Partners without holds | Includes partners whose holds are too short or cannot be set to expire at the deadline; booked last; at most one per route; Share bears the cancellation cost; reconciled at once and daily |
+| POL-28 | Partners without holds | Includes partners whose holds are too short or cannot be set to expire at the deadline; booked last; at most one per route; any partner booking left without Share's confirmation, with or without holds, is cancelled at once at Share's cost; reconciled at once and daily |
 | POL-29 | Idempotency | Per account; a different principal is refused; 24 h for bookings, 7 years for money |
 | POL-30 | Termination by Share | On Share's own decision, only for fraud, legal order or network abuse, recorded; support acting at an account's request is the account's own change |
 | POL-31 | Reserved rate precision | Whole Mbps, at least 1 Mbps |
@@ -114,7 +115,7 @@ metering); minimum charges per period (a commitment by another name); idle-relea
 
 ## POL-02. Contention: the oldest request wins
 
-*Answers D-02 (R-04); gate A D-01, D-02, D-12; final gate A D-1, D-2.*
+*Answers D-02 (R-04); gate A D-01, D-02, D-12; final gate A D-1, D-2; RFC-000 review RQ-2.*
 
 **Decision.**
 - When requests compete for the same capacity, the request that arrived first has
@@ -143,7 +144,8 @@ metering); minimum charges per period (a commitment by another name); idle-relea
 - **Partner refusals.** When a partner definitely refuses a leg while another Share
   request holds overlapping capacity at that partner, or has booked overlapping capacity
   there for a request not yet decided (a final-only booking at a partner without holds,
-  POL-28), the refusal is treated as contention. The refused request waits within its
+  or a partner's confirmation of a held leg before Share's decision, POL-28), the
+  refusal is treated as contention. The refused request waits within its
   deadline, as on a Share link, until that request's outcome and, if it is not
   confirmed, Share's cancellation of its partner booking; then it asks the partner
   again. Other definite refusals by a partner still reject.
@@ -255,7 +257,7 @@ wins").
 
 ## POL-06. Non-functional targets
 
-*Answers D-06 (R-10); GB-23, GB-39; gate B D6, D7; round 6; final gate B D1, D9; architecture review RI-2, RI-4, RI-5.*
+*Answers D-06 (R-10); GB-23, GB-39; gate B D6, D7; round 6; final gate B D1, D9; architecture review RI-2, RI-4, RI-5; RFC-000 review RQ-3, D3.*
 
 **Availability.**
 
@@ -277,9 +279,11 @@ wins").
   at least 90% of its probes succeed. Planned maintenance is not excluded.
 - Every target is per **serving region**: each region whose edge answers buyers,
   suppliers, exporters or payment providers. A region that only keeps copies of state
-  and answers none of them has no targets of its own. Node or zone loss is transparent
-  and counts against availability. Region loss is a declared disaster, outside the
-  availability measurement.
+  and answers none of them has no targets of its own. The topology assumed today (two
+  serving regions and a third region that only keeps copies) is stated in X2's
+  constraints. Node or zone loss is transparent and counts against availability. Region
+  loss is a declared disaster, outside the availability measurement. A **declared region
+  disaster** lasts from its declaration until the lost region is restored or replaced.
 - **Funds holds and headroom checks for bookings are part of admission.** The funds
   hold (or credit hold) and the headroom check that a booking or change needs are part
   of the admission capability, and meet its targets (99.99%, RTO 1 min on node or zone
@@ -290,6 +294,11 @@ wins").
   region.
   Their bookings, holds and records run end to end through the real path, but they are
   excluded from rating, settlement, supplier reports and quarantine reports.
+- **The probe account books on credit.** It is a Share-internal account with a
+  `credit_limit` (POL-15) set by an operator in finance (POL-32); being Share's own, it
+  counts as having passed know-your-business checks. Its credit holds are real and gate
+  its bookings as any account's do, but it is never invoiced, since nothing it does is
+  rated.
 
 **Recovery and durability.**
 
@@ -323,6 +332,14 @@ wins").
 | Charge timeliness | A minute's reservation charge is posted within 2 min of the minute's end; usage-priced charges within `max_lateness` + 2 min. Met when at least 99.99% of a month's minutes have their charges posted within target, and every charge is posted within the node-or-zone RTO plus the target (at worst 7 min for a reservation charge after a zone loss). On a declared region disaster, the affected minutes are outside the 99.99% measurement, and each of their charges is posted within its target plus the 1 h regional RTO (at worst 1 h 2 min for a reservation charge); the RPO stays 0, so no charge is lost or posted twice |
 | Retention | Ledger, payment events, reservation history and raw usage: 7 years |
 
+- **During a declared region disaster the latency targets are suspended.** From the
+  declaration until the lost region is restored or replaced, the latency targets above
+  (every "Latency, …" row) are not measured. Everything else still applies: RPO 0, with a
+  fact acknowledged only once it is durable in two regions; every request has its
+  outcome by its deadline (POL-26); a breach of the usage exposure bound is still
+  reported (POL-14). Availability and charge timeliness during the disaster are treated
+  as stated above.
+
 | Parameter | Default |
 |---|---|
 | `standing_notice_time` | 10 s |
@@ -336,6 +353,11 @@ the booking budget because a booking depends on it; for the same reason the fund
 and headroom checks a booking needs are held to admission's availability and recovery,
 since a booking cannot be answered without them. Scoping targets to serving regions
 measures what buyers, suppliers and exporters reach, not regions that only keep copies.
+Suspending the latency targets during a declared region disaster accepts slower answers
+while one region is lost: keeping every fact durable in two regions then forces every
+write to reach the remaining far region, and keeping RPO 0 matters more than the 200 ms
+target. A credit limit lets the probe account exercise the real funds path with no money
+movements.
 Bounding the time from a record's acceptance to its effect on headroom makes the usage
 exposure bound (POL-14) cover the whole interval in which traffic is carried but not yet
 counted. Giving ingestion admission's RTO and
@@ -348,7 +370,7 @@ across the planned markets; legal must confirm it per market (POL-24).
 
 ## POL-07. Loss of supply: never revoke silently
 
-*Answers D-07 (R-11); GA-08, GA-15, GA-33; gate A D-04, D-05, D-10; gate B D10; final gate B D5.*
+*Answers D-07 (R-11); GA-08, GA-15, GA-33; gate A D-04, D-05, D-10; gate B D10; final gate B D5; RFC-000 review RQ-4.*
 
 **Decision.**
 
@@ -395,6 +417,28 @@ the reduced capacity. A reservation is never revoked silently.
    latency and SLA class no worse. It is offered for the whole reservation at its full
    rate, even when only part of it is affected. Finding equivalent paths belongs to
    routing, which is out of scope here; this policy fixes only the terms of the offer.
+   **Which path is offered.** An equivalent path whose every leg is a Share link is
+   offered first. A path with a partner leg is offered only when no such all-Share path
+   exists.
+   **The offer is firm on Share legs.** While it is open (until it is accepted, declined
+   or lapses, at most `offer_window`), the capacity of every Share leg of the path is
+   held for the reservation: its full rate, from when the offer is made to the
+   reservation's end. A partner leg is not held: it is booked only when the offer is
+   accepted, and the buyer is told when the offer is made that the partner leg is
+   confirmed only at acceptance.
+   - If that partner booking fails, the outcome is as for a declined offer (step 7: the
+     affected Mbps are removed when `revocation_notice` ends, with no charge for what is
+     removed), the capacity held on the path's Share legs is released at once, and the
+     buyer is offered any other equivalent path still available, on these same terms.
+   - The hold is Share's, made for the offer, not a booking request's: it needs no
+     funds hold of its own, since the buyer pays no more than the original price
+     (step 4), and it costs the buyer nothing until the move.
+   - For new sales on the path's links, the held capacity counts as committed: a request
+     that fits only without it is rejected with a counter-offer (POL-10), not left
+     waiting for it.
+   - On acceptance (and, on a path with a partner leg, once the partner has confirmed
+     its booking) it becomes the reservation's capacity on the path. On a decline or a
+     lapse it is released at once.
 4. The buyer pays the lower of the original price and the new path's price. The new
    path's parties are split on what is charged (POL-12). Only when the new path is
    dearer does Share bear the difference (POL-23): the difference is split by Webster
@@ -423,18 +467,26 @@ every holder at an overcommitted minute is affected alike, and only those minute
 keeps the most capacity sold and the most of each guarantee, and the buyer can walk
 away. Maintenance on free capacity only keeps buyer guarantees and notice terms intact,
 and the supplier bears the consequences of its own works. Offering the whole reservation
-keeps a route one unit at one rate. Charging the lower price means Share never profits
+keeps a route one unit at one rate. A firm offer is one the buyer can act on without
+racing other buyers for the path, at the cost of up to `offer_window` of unsold capacity
+on the path, a rare event that only a supplier's exit triggers; counting the held
+capacity as committed means no buyer waits on it for an answer that may take days.
+Offering all-Share paths first, and booking a partner leg only at acceptance, means Share
+never pays for up to 7 days of partner capacity on a speculative offer; the cost is that
+such an offer is firm on Share legs only, which the buyer is told when it is made.
+Charging the lower price means Share never profits
 from a supplier's exit, which supports carrier neutrality. Paying the suppliers' shares
 of a dearer path's difference, without a commission share, pays them as if the buyer had
 paid, with no circular movement to Share itself. The 60 s notice matches the
 enforcement target.
 
 **Rejected.** Pro-rata degradation (breaks every buyer's guarantee to spare one);
-newest-first on an unplanned outage (the network cannot choose).
+newest-first on an unplanned outage (the network cannot choose); an equivalent-path offer
+subject to availability (the path could be gone when the buyer accepts).
 
 ## POL-08. Changing a reservation
 
-*Answers D-08 (R-12); GA-12, GB-10; gate B D8; final gate A D-4.*
+*Answers D-08 (R-12); GA-12, GB-10; gate B D8; final gate A D-4; RFC-000 review RQ-2.*
 
 | Change | Rule |
 |---|---|
@@ -444,7 +496,7 @@ newest-first on an unplanned outage (the network cannot choose).
 | Decrease the rate | Any time, from the next minute boundary. Removes the most recently added part first (last in, first out) |
 | Renew | An extension |
 | Part of a route | Not allowed; a route is one unit. Cancel and book again. A change or cancellation of a route applies to every leg; partner legs follow the partner's terms shown at booking |
-| Withdraw a pending request | It fails as "withdrawn" and releases what it holds; a final-only partner leg already booked is cancelled at Share's cost (POL-28) |
+| Withdraw a pending request | It fails as "withdrawn" and releases what it holds; a partner leg already booked for it, at a partner with or without holds, is cancelled at once at Share's cost (POL-28) |
 
 **Admission of a change.**
 - A change is admitted like a new booking: capacity, funds (the hold grows with the
@@ -470,7 +522,9 @@ newest-first on an unplanned outage (the network cannot choose).
     (POL-16), and on a termination by Share (POL-30);
   - Share, when a reservation is revoked (POL-07), when the holder of a reservation whose
     rate was cut under POL-07 cancels (that exit stays free to the buyer), and when a
-    pending request is withdrawn or fails after a final-only leg was booked (POL-28).
+    partner booking is left without Share's confirmation, because the request is
+    withdrawn or fails after a partner leg was booked, at a partner with or without
+    holds (POL-28).
 - A cancellation fee goes wholly to the partner that imposed it: not split, no
   commission. It is posted as a fee charge line (POL-11).
 
@@ -1054,7 +1108,7 @@ capacity.
 
 ## POL-26. Route deadline
 
-*Answers D-26 (R-42); GA-36; gate A D-11; final gate A D-1; architecture review RI-1.*
+*Answers D-26 (R-42); GA-36; gate A D-11; final gate A D-1; architecture review RI-1; RFC-000 review RQ-1, RQ-2.*
 
 **Decision.**
 - A route request carries a deadline chosen by the buyer, from `route_deadline_min` to
@@ -1066,8 +1120,16 @@ capacity.
   than deadline − `commit_margin`. `commit_margin` applies only to requests with a
   partner leg.
 - A request not confirmed by its deadline has failed as of its deadline, whatever
-  Share's state, and later status reports that. Capacity held for it lapses at the
-  deadline on every leg: holds must expire on their own.
+  Share's state, and later status reports that. A request is never confirmed after its
+  deadline.
+- **Holds end at the deadline.** For a request not confirmed by its deadline:
+  - On a Share link, the capacity held for it is released at the deadline. If Share's
+    record of the request's decision (POL-04) is unavailable at the deadline, the
+    capacity is released within `release_grace` after the deadline instead. The request
+    has still failed as of its deadline, and the case is an operational alert.
+  - At a partner, its hold lapses at the deadline by itself (below).
+  - A partner booking for it (a leg the partner has confirmed, at a partner with or
+    without holds) is cancelled at once, at Share's cost (POL-28).
 - A request still pending at its deadline is an operational alert: by design it cannot
   happen.
 - `commit_margin` is also the completion margin that scopes the contention guarantee
@@ -1079,6 +1141,7 @@ capacity.
 | `route_deadline_min` | 1 s |
 | `route_deadline_max` | 60 s |
 | `commit_margin` | 10 s |
+| `release_grace` | 1 min |
 
 - A partner counts as offering holds only if both are true:
   - its holds can last at least `route_deadline_max` + `commit_margin`; and
@@ -1087,18 +1150,27 @@ capacity.
   Otherwise it is a partner without holds (POL-28).
 - Share sets every partner hold to expire at the request's deadline. So capacity held
   at a partner lapses at the deadline by itself, even if Share is unavailable then.
-  Share also releases every hold of a request, partner holds included, at the request's
-  deadline.
+  Share also releases, at the request's deadline, every hold the request still has,
+  partner holds included (a Share-link hold within `release_grace` if the decision
+  record is unavailable then, as above).
 
 **Why.** Fast single-link agents keep short deadlines; nobody can choose a deadline that
 could never be met. Failing as of the deadline means capacity is never stranded by an
 outage of Share's own booking process; the price is that holds must expire on their own.
 A partner hold expires on its own at the deadline only if Share can set its expiry; a
 partner that cannot is booked as final-only (POL-28), at Share's risk, rather than let
-its hold outlive the deadline whenever Share is down.
+its hold outlive the deadline whenever Share is down. A Share-link hold can be released
+safely only once the request is known not to be confirmed; while Share's record of the
+decision is unavailable that cannot be known, so the hold is kept, for at most
+`release_grace` (admission's 1 min recovery time on node or zone loss, POL-06), rather
+than risk a release followed by a confirmation, which would oversell the link. The
+request still never ends confirmed after its deadline. A partner booking confirmed for a
+request that is then not confirmed is the same residue POL-28 accepts for partners
+without holds, and is handled the same way.
 
 **Rejected.** A margin after the deadline (deadline plus `commit_margin`), which left
-outcomes undecided at the deadline.
+outcomes undecided at the deadline; releasing a Share-link hold at the deadline whatever
+the state of the decision record (a confirmation could follow the release).
 
 ## POL-27. Price changes
 
@@ -1128,7 +1200,7 @@ mid-minute and mid-window pricing questions. A buyer facing a price change had
 
 ## POL-28. Partners without holds
 
-*Answers D-28 (R-46); gate A D-06; architecture review RI-1.*
+*Answers D-28 (R-46); gate A D-06; architecture review RI-1; RFC-000 review RQ-2.*
 
 **Decision.**
 - A partner leg that can only be booked immediately and finally, or whose holds do not
@@ -1137,6 +1209,12 @@ mid-minute and mid-window pricing questions. A buyer facing a price change had
 - A route may include at most one such leg.
 - If a later step fails, or the request is withdrawn, Share cancels the partner booking
   and bears its cost.
+- **Any partner booking left without Share's confirmation** is cancelled at once, at
+  Share's cost (POL-08). This applies to every partner leg, at a partner with holds or
+  without: a partner with holds confirms its leg before Share's decision (Share never
+  confirms a leg the partner has not confirmed), so a failure, a withdrawal or the
+  deadline after that point leaves a partner booking behind a request that is not
+  confirmed, as a later step's failure does for a partner without holds.
 - Commercially, holds are preferred as a listing condition.
 - **Reconciliation with partners.** Any partner call with an unknown result is
   reconciled for that booking at once, by idempotent re-query. Every partner is fully
@@ -1147,7 +1225,10 @@ mid-minute and mid-window pricing questions. A buyer facing a price change had
 
 **Why.** Booked last, a final-only leg is committed only when everything else is
 secured, so the buyer still gets all or nothing; Share bears the cost if it fails after
-that point. Two such legs cannot be made all-or-nothing. Reconciliation bounds
+that point. The partner is confirmed before Share decides, on every partner leg, so the
+same residue exists for partners with holds; cancelling it at once, at Share's cost,
+keeps the buyer whole and bounds how long a partner holds capacity for a request that
+was not confirmed. Two such legs cannot be made all-or-nothing. Reconciliation bounds
 divergence, and the buyer is never charged for Share's or the partner's error, at the
 cost of a daily batch per partner and the occasional partner fee Share pays.
 
@@ -1351,3 +1432,9 @@ administrator, keeps disclosure a deliberate account decision that an agent cann
 | 2026-10-11 | Architecture review: RI-3 (POL-04, POL-25): each request's outcome is decided at one point, against which "still pending" is judged (a key's revocation fails only requests not yet decided); a status read lags the decision by at most `status_staleness` (1 s) and never reports an outcome contrary to it | RFC-000 RI-3: "pending when suspended" had two readings once the decision and its status are kept apart |
 | 2026-10-11 | Architecture review: RI-4 (POL-06): the funds holds and headroom checks a booking needs are part of the admission capability (99.99%, RTO 1 min), whatever the wallet's own targets | RFC-000 RI-4: sizing could have followed the wallet's looser targets |
 | 2026-10-11 | Architecture review: RI-5 (POL-06): "per region" means each serving region, one whose edge answers buyers, suppliers, exporters or payment providers | RFC-000 RI-5: "region" was undefined for state spanning three regions |
+| 2026-10-12 | RFC-000 review: RQ-1 (POL-26): on a Share link, capacity held for a request not confirmed is released at its deadline, or within `release_grace` (1 min) after it if Share's record of the request's decision is unavailable at the deadline (an operational alert); a request is never confirmed after its deadline; partner holds unchanged | RFC-000 review RQ-1: an all-or-nothing commit cannot also release every Share-link hold at the deadline while the decision record has no quorum without risking a release followed by a confirmation |
+| 2026-10-12 | RFC-000 review: RQ-2 (POL-28, POL-26, POL-08, POL-02): a partner booking left without Share's confirmation, at a partner with or without holds, is cancelled at once at Share's cost; POL-08's Share-pays list and POL-02's partner-refusal rule cover it | RFC-000 review RQ-2: a partner with holds is confirmed before Share's decision, so a failure after that point left a partner booking that no rule covered |
+| 2026-10-12 | RFC-000 review: RQ-3 (POL-06): during a declared region disaster, from its declaration until the lost region is restored or replaced, the latency targets are not measured; RPO 0 and acknowledgement only once durable in two regions still apply | RFC-000 review RQ-3: after a region loss every commit must reach the remaining far region, so `ack_budget` at p99 cannot hold |
+| 2026-10-12 | RFC-000 review: RQ-4 (POL-07): an equivalent-path offer is firm: the path's capacity is held for the reservation while the offer is open (at most `offer_window`), as Share's own hold with no funds hold, counted as committed for new sales, and released at once on a decline or lapse | RFC-000 review RQ-4: whether the offered path's capacity was held was unstated |
+| 2026-10-12 | RFC-000 review: D3 (POL-06): the probe account is a Share-internal account with a `credit_limit` set by finance, counted as vetted and never invoiced; the assumed topology of serving regions is stated in X2's constraints | RFC-000 review decision D3; the coordinator's topology decision |
+| 2026-10-12 | RFC-000 review: RQ-4 follow-up (POL-07): all-Share equivalent paths are offered first, as firm offers; a path with a partner leg is offered only when no all-Share path exists, firm on its Share legs, its partner leg booked only at acceptance (the buyer told so at offer time); if that booking fails, the outcome is as for a declined offer and any other equivalent path still available is offered | Coordinator decision on the open point of review 07: no partner hold lasts `offer_window` |

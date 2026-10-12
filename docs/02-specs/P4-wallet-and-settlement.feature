@@ -674,7 +674,7 @@ Feature: Wallet, funds holds, ledger and supplier settlement
 
       Examples:
         | cost                                                                                 | payee                                   |
-        | the cancellation of a booking on a partner without holds after a later step failed (POL-28) | that partner                    |
+        | the cancellation of a partner booking left without Share's confirmation, at a partner with or without holds (POL-28) | that partner |
         | the price difference of an accepted equivalent path dearer than the original price (POL-07) | each supplier of the equivalent path, its share of the Webster split of the difference among the path's parties (POL-12); the commission share is not posted |
         | a partner fee that was not shown at booking (POL-08)                                 | that partner                            |
         | a cancellation fee on a reservation revoked under POL-07                             | that partner                            |

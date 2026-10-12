@@ -73,6 +73,13 @@ Feature: Non-functional targets
         | sends a flow record from a probe exporter and it is accepted |
         | asks for the probe account's balance and headroom            |
 
+    @X2-S24 @need-X2-N1 @POL-06 @POL-15 @POL-32
+    Scenario: The probe account books on a credit limit set by finance, and is never invoiced
+      Given the designated Share probe account has a `credit_limit` (POL-15) set by an operator in finance (POL-32)
+      When a probe books a single probe link
+      Then a real credit hold is taken for the booking against the probe account's `credit_limit`, as for any account
+      And the probe account is never invoiced
+
     @X2-S21 @need-X2-N1 @need-X2-N5 @POL-06 @POL-15 @POL-18
     Scenario Outline: The funds holds and headroom checks bookings need are held to admission's targets, not the wallet's
       When the funds holds and headroom checks that bookings and changes need are measured for <measure>, in each serving region
@@ -179,6 +186,14 @@ Feature: Non-functional targets
         | charge                                                          | bound                       |
         | reservation accrual                                             | 1 h 2 min                   |
         | usage-priced charge whose records arrive within `max_lateness` (POL-14) | `max_lateness` + 1 h 2 min |
+
+    @X2-S23 @need-X2-N3 @need-X2-N4 @POL-06 @POL-26
+    Scenario: During a declared region disaster the latency targets are suspended, and no acknowledged fact may be lost
+      Given a region is lost, and the loss is declared a disaster
+      When requests, notifications and records are handled from the declaration until the lost region is restored or replaced
+      Then they are left out of the measurement of every latency target (X2-S05, X2-S15, X2-S06, X2-S07, X2-S22, X2-S17 and X2-S08)
+      And every request still has its outcome by its deadline (POL-26)
+      And every fact is acknowledged only once it is durable in two regions, and no acknowledged fact is lost
 
   Rule: No acknowledged fact is ever lost
 

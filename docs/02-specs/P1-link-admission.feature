@@ -101,9 +101,9 @@ Feature: Selling capacity on one link without overselling
       Then that booking is neither confirmed nor rejected while the pending request holds its capacity
       And it waits, pending, within its own deadline (POL-05)
 
-    @P1-S08 @need-P1-N3 @need-P1-N7 @POL-05
+    @P1-S08 @need-P1-N3 @need-P1-N7 @POL-05 @POL-26
     Scenario Outline: Capacity held for a request that ends without confirmation is free again at once
-      Given the pending request ends <outcome>
+      Given the pending request ends <outcome>, its decision record being available when it ends (POL-26)
       When another buyer books 10 Mbps on the link for [10:00, 11:00)
       Then that booking is confirmed at once, without waiting
 
@@ -202,9 +202,9 @@ Feature: Selling capacity on one link without overselling
       And it is 09:00
       And the link has no reservations
 
-    @P1-S18 @need-P1-N7 @POL-15
+    @P1-S18 @need-P1-N7 @POL-15 @POL-26
     Scenario Outline: A request that was not confirmed leaves the link as if it had never been made
-      Given a booking request for 4 Mbps on the link for [10:00, 11:00) ended <outcome>
+      Given a booking request for 4 Mbps on the link for [10:00, 11:00) ended <outcome>, its decision record being available when it ended (POL-26)
       When a buyer books 10 Mbps on the link for [10:00, 11:00)
       Then the booking is confirmed at once
 
@@ -213,6 +213,14 @@ Feature: Selling capacity on one link without overselling
         | rejected for insufficient funds   |
         | failed                            |
         | invalid                           |
+
+    @P1-S54 @need-P1-N7 @need-P1-N3 @POL-26
+    Scenario: A request failed at its deadline while its decision record is unavailable frees its capacity on the link within release_grace
+      Given a pending booking request holds 4 Mbps on the link for [10:00, 11:00)
+      And its decision record becomes unavailable before its deadline and stays unavailable until after it
+      When its deadline arrives
+      Then the request has failed as of its deadline (POL-26), and it is never confirmed
+      And from `release_grace` (POL-26: 1 min) after its deadline at the latest, a buyer's booking of 10 Mbps on the link for [10:00, 11:00) is confirmed at once
 
   Rule: A request must be well formed: its window within the selling horizon, its rate a whole number of Mbps
 
@@ -470,6 +478,64 @@ Feature: Selling capacity on one link without overselling
       When the holder asks to move from 10:00 on day D + 10, before `revocation_notice` (POL-07) has passed
       Then from 10:00 on day D + 10 B is on the equivalent path, at the lower of its original price and the path's price
       And from that minute B holds no capacity on the link
+
+    @P1-S55 @need-P1-N8 @need-P1-N1 @POL-07
+    Scenario: An equivalent-path offer is firm: the path's capacity is held for the reservation while the offer is open
+      Given an equivalent path exists for B, every leg of it a Share link
+      When the link's supplier announces a permanent reduction of its capacity to 4 Mbps
+      Then the holder of B is offered the equivalent path for `offer_window` (POL-07)
+      And from the offer until it is accepted, declined or lapses, 4 Mbps are held for B on every leg of the path, for the rest of B
+      And no capacity on the path is sold to anyone else while it is held for B
+      And the holder of B is not charged for the held capacity before B moves
+
+    @P1-S56 @need-P1-N8 @need-P1-N2 @POL-07 @POL-10
+    Scenario: Capacity held for an open equivalent-path offer counts as committed for new sales
+      Given the holder of B has been offered an equivalent path after a permanent reduction to 4 Mbps announced on day D, and the offer is open
+      And link M of that path has a capacity of 10 Mbps, with 6 Mbps confirmed for [10:00, 11:00) on day D + 1 besides the 4 Mbps held for B
+      When a buyer books 1 Mbps on M for [10:00, 11:00) on day D + 1, with `wait` at its default
+      Then the booking is rejected at once with a counter-offer (POL-10), and is not left waiting for the offer's answer
+
+    @P1-S57 @need-P1-N8 @POL-07
+    Scenario Outline: The capacity held for an equivalent-path offer becomes the reservation's on acceptance, and is released at once otherwise
+      Given the holder of B has been offered an equivalent path, every leg of it a Share link, after a permanent reduction to 4 Mbps announced on day D, and 4 Mbps are held for B on every leg of the path
+      When <answer>
+      Then <result>
+
+      Examples:
+        | answer                                            | result                                                                                         |
+        | the holder accepts the offer                      | the 4 Mbps on the path become B's capacity on the path, and are not released                    |
+        | the holder declines the offer                     | the 4 Mbps held on the path are released at once, and can be sold to other buyers               |
+        | `offer_window` (POL-07) passes without an answer  | the offer lapses as declined, and the 4 Mbps held on the path are released at once              |
+
+    @P1-S58 @need-P1-N8 @POL-07
+    Scenario: An equivalent path over Share links only is offered before one with a partner leg
+      Given two equivalent paths exist for B: one whose every leg is a Share link, and one with a partner leg
+      When the link's supplier announces a permanent reduction of its capacity to 4 Mbps
+      Then the holder of B is offered the path whose every leg is a Share link (POL-07)
+      And the path with a partner leg is not offered
+
+    @P1-S59 @need-P1-N8 @POL-07
+    Scenario: A path with a partner leg is offered only when no all-Share path exists, firm on its Share legs only
+      Given the only equivalent path for B runs over Share link M and partner link P
+      When the link's supplier announces a permanent reduction of its capacity to 4 Mbps
+      Then the holder of B is offered that path for `offer_window` (POL-07), and told that the leg on P is confirmed only at acceptance
+      And 4 Mbps are held for B on M while the offer is open
+      And nothing is held or booked for B at P while the offer is open
+
+    @P1-S60 @need-P1-N8 @POL-07
+    Scenario: Accepting an offer with a partner leg books that leg, and the reservation moves when it is confirmed
+      Given the holder of B has been offered the equivalent path over Share link M and partner link P after a permanent reduction to 4 Mbps announced on day D, and 4 Mbps are held for B on M
+      When the holder accepts the offer, and the partner confirms the booking of 4 Mbps on P for B
+      Then the 4 Mbps on M and the booking on P are B's capacity on the path
+      And from the end of `revocation_notice` (POL-07) after the announcement, B continues on the path at the lower of its original price and the path's price
+
+    @P1-S61 @need-P1-N8 @POL-07
+    Scenario: If the partner leg cannot be booked at acceptance, the outcome is as for a declined offer, and any other path still available is offered
+      Given the holder of B has been offered the equivalent path over Share link M and partner link P after a permanent reduction to 4 Mbps announced on day D, and 4 Mbps are held for B on M
+      When the holder accepts the offer, and the booking of 4 Mbps on P for B fails
+      Then the 4 Mbps held for B on M are released at once
+      And B is revoked when `revocation_notice` (POL-07) after the announcement has passed, as for a declined offer, with no charge for the removed period
+      And the holder of B is offered any other equivalent path for B still available, on the same terms
 
   Rule: What was known to be reserved at any past time can be retrieved
 

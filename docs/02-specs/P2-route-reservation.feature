@@ -170,6 +170,7 @@ Feature: Booking, changing and ending route reservations, all or nothing
     @P2-S93 @need-P2-N3 @need-P2-N7 @POL-26
     Scenario: Share releases every hold of a request at its deadline, a partner hold included
       Given a pending route booking over Share link L1 and partner link P, with a deadline of 30 s, holds capacity on both
+      And the request's decision record is available at its deadline
       When the request's deadline arrives and it has not been confirmed
       Then the request has failed as of its deadline
       And at its deadline Share releases its hold on L1 and its hold at P, without waiting for either to lapse by itself
@@ -186,7 +187,17 @@ Feature: Booking, changing and ending route reservations, all or nothing
       And Share's booking process becomes unavailable before the deadline and stays unavailable until after it
       When the request's deadline arrives
       Then the request has failed as of its deadline
-      And from its deadline no capacity is held for it on L1 or at P
+      And from its deadline no capacity is held for it at P
+      And no capacity is held for it on L1 later than `release_grace` (POL-26) after its deadline
+
+    @P2-S104 @need-P2-N3 @need-P2-N10 @POL-26 @POL-04
+    Scenario: A request whose decision record is unavailable at its deadline is never confirmed, and its Share-link holds are released within release_grace
+      Given a pending route booking over Share links L1 and L2, with a deadline of 30 s, holds capacity on both
+      And the request's decision record becomes unavailable before its deadline and stays unavailable until after it
+      When the request's deadline arrives
+      Then the request has failed as of its deadline (POL-26), and it is never confirmed, even once its decision record is available again
+      And its holds on L1 and L2 are released no later than `release_grace` (POL-26: 1 min) after its deadline
+      And operations is alerted, with the request and the legs concerned
 
     @P2-S56 @need-P2-N3 @POL-08
     Scenario: A buyer may withdraw a pending request
@@ -360,7 +371,7 @@ Feature: Booking, changing and ending route reservations, all or nothing
       When Share's booking process crashes and does not restart before the deadline
       Then the request has failed as of its deadline (POL-26), with a reason saying it was interrupted by an internal failure
       And any status asked for after the restart reports that outcome
-      And no capacity is held for it on any leg after its deadline
+      And no capacity is held for it at a partner after its deadline, or on a Share link later than `release_grace` (POL-26) after it
 
   Rule: Retrying a request with the same idempotency key never books twice
 
@@ -459,6 +470,21 @@ Feature: Booking, changing and ending route reservations, all or nothing
       When the partner says B's leg does not fit, while A's hold at P overlaps B's window
       Then B is not rejected, and waits, pending, within its own deadline, as on a Share link
       And once A's hold at P is confirmed or released, Share asks the partner for B's leg again, within B's deadline
+
+    @P2-S105 @need-P2-N7 @need-P2-N3 @POL-28 @POL-08 @POL-26
+    Scenario Outline: A partner booking left without Share's confirmation is cancelled at once, at Share's cost, whatever the partner
+      Given a pending route booking over L1 and P, a partner with holds
+      And the partner has confirmed its leg on P for the request, which Share has not yet confirmed
+      When <event>
+      Then the request is not confirmed
+      And Share cancels the booking on P at once, bearing its cost (POL-28)
+      And the buyer is not charged for the request
+
+      Examples:
+        | event                                                   |
+        | a later step of the request fails                       |
+        | the buyer withdraws the request                         |
+        | the request's deadline passes before Share confirms it  |
 
     @P2-S32 @need-P2-N7 @POL-28
     Scenario: Every partner is fully reconciled daily, and each mismatch alerts operations

@@ -10,8 +10,10 @@ The matrix is regenerated whenever scenarios change; it reflects the specs as al
 with the consolidated [policy register](policy-register.md) of 2026-10-11 (see also the
 requirements-gate resolution records [02](../reviews/02-requirements-gate-resolution.md)
 and [03](../reviews/03-requirements-gate-resolution.md), the final-gate resolution
-record [04](../reviews/04-requirements-final-resolution.md), and the amendments from the
-architecture review [05](../reviews/05-requirements-amendments-from-architecture.md)). Rows are in file order, which is Rule order; new IDs are numbered after each
+record [04](../reviews/04-requirements-final-resolution.md), the amendments from the
+architecture review [05](../reviews/05-requirements-amendments-from-architecture.md), and
+the amendments from the RFC-000 review
+[07](../reviews/07-requirements-amendments-from-rfc-000-review.md)). Rows are in file order, which is Rule order; new IDs are numbered after each
 file's previous highest ID.
 
 The `.feature` files never carry verification status, test names or defect notes; they
@@ -50,6 +52,7 @@ plan, not in the scenario.
 | P1-S17 | A rejection discloses nothing about other buyers | TBD | — | not assessed |
 | P1-S38 | When nothing fits, the rejection says so | TBD | — | not assessed |
 | P1-S18 | A request that was not confirmed leaves the link as if it had never been made | TBD | `test/sql.test.ts` › "SQL: touching intervals and the A/B example" *(prior evidence, to be re-validated)*<br>`test/sql.test.ts` › "property: tree, SQL and brute-force array agree on every decision" *(prior evidence, to be re-validated)* | not assessed |
+| P1-S54 | A request failed at its deadline while its decision record is unavailable frees its capacity on the link within release_grace | TBD | — | not assessed |
 | P1-S19 | A malformed request is invalid, not a capacity answer | TBD | — | not assessed |
 | P1-S20 | A window that reaches the edge of what is sold is valid | TBD | — | not assessed |
 | P1-S39 | A rate above the link's capacity is rejected with a counter-offer, not invalid | TBD | — | not assessed |
@@ -81,6 +84,13 @@ plan, not in the scenario.
 | P1-S47 | Only just enough Mbps are taken from the newest part, and its holder may then cancel without fee | TBD | — | not assessed |
 | P1-S52 | When part of a reservation is affected, the equivalent path is offered for all of it | TBD | — | not assessed |
 | P1-S53 | The holder of an accepted offer may move before the notice ends, from a minute boundary it chooses | TBD | — | not assessed |
+| P1-S55 | An equivalent-path offer is firm: the path's capacity is held for the reservation while the offer is open | TBD | — | not assessed |
+| P1-S56 | Capacity held for an open equivalent-path offer counts as committed for new sales | TBD | — | not assessed |
+| P1-S57 | The capacity held for an equivalent-path offer becomes the reservation's on acceptance, and is released at once otherwise | TBD | — | not assessed |
+| P1-S58 | An equivalent path over Share links only is offered before one with a partner leg | TBD | — | not assessed |
+| P1-S59 | A path with a partner leg is offered only when no all-Share path exists, firm on its Share legs only | TBD | — | not assessed |
+| P1-S60 | Accepting an offer with a partner leg books that leg, and the reservation moves when it is confirmed | TBD | — | not assessed |
+| P1-S61 | If the partner leg cannot be booked at acceptance, the outcome is as for a declined offer, and any other path still available is offered | TBD | — | not assessed |
 | P1-S33 | The schedule as known at a past time includes reservations changed since | TBD | — | not assessed |
 | P2-S01 | A route whose every leg fits is confirmed on every leg | TBD | `test/routes.test.ts` › "a route across our links and the partner is confirmed; every leg becomes a fact" *(prior evidence, to be re-validated)* | not assessed |
 | P2-S02 | A route with a leg that does not fit is rejected, naming that leg, and holds nothing | TBD | `test/routes.test.ts` › "a leg that cannot fit rejects the route, names the link, and releases every hold" *(prior evidence, to be re-validated)* | not assessed |
@@ -102,6 +112,7 @@ plan, not in the scenario.
 | P2-S93 | Share releases every hold of a request at its deadline, a partner hold included | TBD | — | not assessed |
 | P2-S100 | Share sets a partner hold to expire at the request's deadline | TBD | — | not assessed |
 | P2-S101 | Capacity held at a partner lapses at the deadline even when Share is unavailable then | TBD | — | not assessed |
+| P2-S104 | A request whose decision record is unavailable at its deadline is never confirmed, and its Share-link holds are released within release_grace | TBD | — | not assessed |
 | P2-S56 | A buyer may withdraw a pending request | TBD | — | not assessed |
 | P2-S57 | Withdrawing a request after its partner leg without holds was booked cancels that leg at Share's cost | TBD | — | not assessed |
 | P2-S15 | Competing requests that wait do not all lose | TBD | `test/routes.test.ts` › "randomised contention (seed 11/12/13): never oversold, competitors never all lose, all sagas finish" *(prior evidence, to be re-validated)* | not assessed |
@@ -135,6 +146,7 @@ plan, not in the scenario.
 | P2-S30 | A transient partner refusal does not end the request before its deadline | TBD | — | not assessed |
 | P2-S31 | A definite partner refusal rejects the route, naming the partner link, when no other Share request holds capacity there | TBD | — | not assessed |
 | P2-S89 | A partner refusal while Share's own request holds overlapping capacity at that partner is contention: the refused request waits and asks again | TBD | — | not assessed |
+| P2-S105 | A partner booking left without Share's confirmation is cancelled at once, at Share's cost, whatever the partner | TBD | — | not assessed |
 | P2-S32 | Every partner is fully reconciled daily, and each mismatch alerts operations | TBD | — | not assessed |
 | P2-S90 | A partner call whose result is unknown is reconciled for that booking at once | TBD | — | not assessed |
 | P2-S91 | A mismatch found in reconciliation is resolved without charging the buyer for it | TBD | — | not assessed |
@@ -385,6 +397,7 @@ plan, not in the scenario.
 | X2-S16 | A minute is available only if at least 90% of its probes succeed | TBD | — | not assessed |
 | X2-S18 | Each capability is probed by its own operation, against its own per-probe limit | TBD | — | not assessed |
 | X2-S20 | Probes run end to end as a designated probe account, without business side effects | TBD | — | not assessed |
+| X2-S24 | The probe account books on a credit limit set by finance, and is never invoiced | TBD | — | not assessed |
 | X2-S21 | The funds holds and headroom checks bookings need are held to admission's targets, not the wallet's | TBD | — | not assessed |
 | X2-S02 | Ingestion may lag but never loses an accepted record | TBD | — | not assessed |
 | X2-S03 | Admission sustains the design load, on the hottest link too, within its latency targets | TBD | — | not assessed |
@@ -398,6 +411,7 @@ plan, not in the scenario.
 | X2-S08 | Suspension is enforced within 60 s of the decision | TBD | — | not assessed |
 | X2-S13 | Charges are posted within their timeliness target, and never later than recovery allows | TBD | — | not assessed |
 | X2-S19 | On a declared region disaster, the affected minutes' charges are posted within their target plus the regional recovery time | TBD | — | not assessed |
+| X2-S23 | During a declared region disaster the latency targets are suspended, and no acknowledged fact may be lost | TBD | — | not assessed |
 | X2-S09 | An acknowledged fact survives the loss of a node or a zone | TBD | — | not assessed |
 | X2-S12 | No acknowledged fact is lost on the loss of a region | TBD | — | not assessed |
 | X2-S14 | A fact is acknowledged only once it is durable in two regions | TBD | — | not assessed |
