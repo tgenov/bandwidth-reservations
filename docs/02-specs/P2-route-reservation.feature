@@ -113,7 +113,7 @@ Feature: Booking, changing and ending route reservations, all or nothing
       Given a booking request's outcome has been decided
       When the buyer reads its status at any time after the decision
       Then the status read reports either pending or the decided outcome, never another outcome
-      And every status read from `status_staleness` (POL-04) after the decision reports the decided outcome
+      And every status read from `status_staleness` (POL-04) after the decision reports the decided outcome, unless the request's decision record is unavailable at its deadline (P2-S106)
 
   Rule: A request has its outcome by its deadline
 
@@ -160,11 +160,12 @@ Feature: Booking, changing and ending route reservations, all or nothing
       Then the booking is not confirmed
       And by its deadline it has failed, with the reason that its deadline passed, and holds nothing on L1 or P
 
-    @P2-S14 @need-P2-N3 @need-P2-N7 @POL-26
-    Scenario: Capacity held for a request that is not confirmed is free on Share links at once, and at a partner by the deadline
+    @P2-S14 @need-P2-N3 @need-P2-N7 @POL-26 @POL-04
+    Scenario: Capacity held for a request that is not confirmed is free on Share links once the outcome is reported, and at a partner by the deadline
       Given a pending route booking over Share link L1 and partner link P holds capacity on both
       When the request ends rejected or failed, for any reason
-      Then its capacity on L1 is available to other buyers from the moment of the outcome
+      Then its hold on L1 is durably released before that outcome is reported (POL-04)
+      And its capacity on L1 is available to other buyers from the moment the outcome is reported
       And its capacity held at P is released no later than the request's deadline
 
     @P2-S93 @need-P2-N3 @need-P2-N7 @POL-26
@@ -193,10 +194,22 @@ Feature: Booking, changing and ending route reservations, all or nothing
     @P2-S104 @need-P2-N3 @need-P2-N10 @POL-26 @POL-04
     Scenario: A request whose decision record is unavailable at its deadline is never confirmed, and its Share-link holds are released within release_grace
       Given a pending route booking over Share links L1 and L2, with a deadline of 30 s, holds capacity on both
+      And no confirmation of the request was decided before its deadline less its completion margin
       And the request's decision record becomes unavailable before its deadline and stays unavailable until after it
       When the request's deadline arrives
       Then the request has failed as of its deadline (POL-26), and it is never confirmed, even once its decision record is available again
       And its holds on L1 and L2 are released no later than `release_grace` (POL-26: 1 min) after its deadline
+      And operations is alerted, with the request and the legs concerned
+
+    @P2-S106 @need-P2-N3 @need-P2-N2 @need-P2-N10 @POL-26 @POL-04
+    Scenario: A confirmation decided in time may become known after the deadline, within release_grace, if the decision record was unavailable
+      Given a pending route booking over Share links L1 and L2, with a deadline of 30 s, holds capacity on both
+      And its confirmation was decided by an entry in its decision record timestamped before its deadline less its completion margin (POL-26)
+      And the decision record becomes unavailable before that confirmation is reported, and stays unavailable until after the deadline
+      When the decision record is available again, no later than `release_grace` (POL-26: 1 min) after the deadline
+      Then the request is confirmed, and its holds on L1 and L2 are its reservation, never released
+      And until then every status read reports pending, never failed (POL-04)
+      And no confirmation of any request is decided after its deadline
       And operations is alerted, with the request and the legs concerned
 
     @P2-S56 @need-P2-N3 @POL-08

@@ -101,9 +101,9 @@ Feature: Selling capacity on one link without overselling
       Then that booking is neither confirmed nor rejected while the pending request holds its capacity
       And it waits, pending, within its own deadline (POL-05)
 
-    @P1-S08 @need-P1-N3 @need-P1-N7 @POL-05 @POL-26
+    @P1-S08 @need-P1-N3 @need-P1-N7 @POL-05 @POL-26 @POL-04
     Scenario Outline: Capacity held for a request that ends without confirmation is free again at once
-      Given the pending request ends <outcome>, its decision record being available when it ends (POL-26)
+      Given the pending request ends <outcome>, its decision record being available when it ends (POL-26), and the outcome is reported (POL-04)
       When another buyer books 10 Mbps on the link for [10:00, 11:00)
       Then that booking is confirmed at once, without waiting
 

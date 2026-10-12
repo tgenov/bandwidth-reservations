@@ -108,11 +108,12 @@ plan, not in the scenario.
 | P2-S86 | A deadline at the edge of its bounds is valid | TBD | — | not assessed |
 | P2-S13 | A request whose partner never answers has failed by its deadline and holds nothing | TBD | — | not assessed |
 | P2-S55 | A request with a partner leg does not begin committing later than its deadline less commit_margin | TBD | — | not assessed |
-| P2-S14 | Capacity held for a request that is not confirmed is free on Share links at once, and at a partner by the deadline | TBD | — | not assessed |
+| P2-S14 | Capacity held for a request that is not confirmed is free on Share links once the outcome is reported, and at a partner by the deadline | TBD | — | not assessed |
 | P2-S93 | Share releases every hold of a request at its deadline, a partner hold included | TBD | — | not assessed |
 | P2-S100 | Share sets a partner hold to expire at the request's deadline | TBD | — | not assessed |
 | P2-S101 | Capacity held at a partner lapses at the deadline even when Share is unavailable then | TBD | — | not assessed |
 | P2-S104 | A request whose decision record is unavailable at its deadline is never confirmed, and its Share-link holds are released within release_grace | TBD | — | not assessed |
+| P2-S106 | A confirmation decided in time may become known after the deadline, within release_grace, if the decision record was unavailable | TBD | — | not assessed |
 | P2-S56 | A buyer may withdraw a pending request | TBD | — | not assessed |
 | P2-S57 | Withdrawing a request after its partner leg without holds was booked cancels that leg at Share's cost | TBD | — | not assessed |
 | P2-S15 | Competing requests that wait do not all lose | TBD | `test/routes.test.ts` › "randomised contention (seed 11/12/13): never oversold, competitors never all lose, all sagas finish" *(prior evidence, to be re-validated)* | not assessed |

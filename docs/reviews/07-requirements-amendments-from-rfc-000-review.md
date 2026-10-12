@@ -13,12 +13,13 @@
 
 All four issues, decision D3 and the topology are now current rules. The mechanical checks
 find no new problems (see below). The coordinator's later decision on the open point
-(equivalent paths with a partner leg) is also applied. The baseline now has **386
-scenarios**: P1 61, P2 105, P3 62, P4 104, X1 30 and X2 24. Twelve scenarios are new. No ID was renumbered, reused or
+(equivalent paths with a partner leg) is also applied, as are RQ-5 and RQ-6, raised by
+the revised RFC-000. The baseline now has **387 scenarios**: P1 61, P2 106, P3 62, P4 104,
+X1 30 and X2 24. Thirteen scenarios are new. No ID was renumbered, reused or
 removed. The new IDs continue each file's numbering:
 
 - **P1-S54 to P1-S61**;
-- **P2-S104 and P2-S105**;
+- **P2-S104 to P2-S106**;
 - **X2-S23 and X2-S24**.
 
 There is one new parameter, `release_grace` (POL-26, 1 min). There are two new glossary
@@ -139,6 +140,43 @@ centres. R3 GCP Johannesburg is the third voting region.
 | Glossary | "Serving region" names the assumed topology |
 | Scenarios | None. This is an assumption, not behaviour |
 
+## RQ-5 and RQ-6, from the revised RFC-000
+
+These two issues come from the "Requirements issues" section of the revised RFC-000 (only
+that section was read). The coordinator decided them; the decisions are binding. Each has
+an Amendments row, "RFC-000 revision: RQ-n …".
+
+### RQ-5. A confirmation decided in time may become known after the deadline (POL-26, POL-04)
+
+Decision: a request is confirmed only by a decision entry timestamped before the deadline
+less the completion margin. Such a confirmation may become known (reported) up to
+`release_grace` after the deadline if the decision record was unavailable, and until then
+status reads report pending. No confirmation is ever decided after the deadline.
+
+| Where | Change |
+|---|---|
+| POL-26 | New bullet, "When a confirmation can be decided". It states the rule, with the completion margin of POL-02 (`commit_margin` with a partner leg, `ack_budget` otherwise). It replaces "a request is never confirmed after its deadline". The Share-link case of "Holds end at the deadline" adds that a confirmation decided in time makes the hold the reservation's. The Why gives the reason: no consensus log bounds when a proposed entry becomes durable, and voiding the entry could contradict a confirmation already reported |
+| POL-04 | Status reads gain one exception: while the decision record is unavailable at the deadline, they report `pending` until it is available again, at most `release_grace` after the deadline |
+| Summary | The POL-04 and POL-26 lines are updated |
+| P2-N2, P2-N3, P2 C20 | Each states the rule; the measures are updated to match |
+| Glossary | "Outcome", "Decision record" and "Status read" state the rule |
+| P2-S99 | The last Then makes an exception for an unavailable decision record (P2-S106) |
+| P2-S104 | A Given is added: "no confirmation of the request was decided before its deadline less its completion margin" |
+| New | **P2-S106** `@need-P2-N3 @need-P2-N2 @need-P2-N10 @POL-26 @POL-04`. A confirmation is decided in time, and the decision record then becomes unavailable across the deadline. When the record returns, within `release_grace`, the request is confirmed and its holds are its reservation. Status reads report pending until then, never failed, and operations is alerted |
+
+### RQ-6. Capacity is free from the moment the outcome is reported (POL-04)
+
+Decision: capacity is free from the moment the outcome is reported, and its release is
+durable before the outcome is reported. It is not free from the instant of the decision.
+
+| Where | Change |
+|---|---|
+| POL-04 | New bullet, "Capacity is free once the outcome is reported". The Why is extended |
+| P1-N3, P1-N7, P2-N2, P2-N3 | "the moment it has its outcome" now reads "from the moment its outcome is reported", in the need and in its measure |
+| Glossary | "Capacity hold" states the rule |
+| P2-S14 | Retitled "… free on Share links once the outcome is reported, and at a partner by the deadline". A Then is added: the hold on L1 is durably released before the outcome is reported. The capacity is available from the moment the outcome is reported. `@POL-04` is added |
+| P1-S08 | The Given adds "and the outcome is reported (POL-04)", and `@POL-04` is added |
+
 ## Choices made in applying the decisions
 
 These follow from the decisions, or from the review's proposed wording. The coordinator
@@ -191,18 +229,18 @@ window notation, and one match of "horizon" in P1-S19.
 | Every `.feature` parses as Gherkin (one Feature; Backgrounds and scenarios only in Rules) | 6 of 6 |
 | Every scenario has a `When` and a `Then`; no step text starts with punctuation | Pass |
 | Every Outline placeholder has its column; at most one unused column, and it is the last; no plain Scenario with Examples | Pass |
-| Scenario IDs: exactly one per scenario, unique, prefixed by its file | 386 IDs, 386 unique |
+| Scenario IDs: exactly one per scenario, unique, prefixed by its file | 387 IDs, 387 unique |
 | Every `@need-` tag names a need in a Needs table; every need cited | 66 needs, all cited, no dangling tag |
 | Every `@POL-nn` exists in the register (33 entries) | Pass |
 | Every `POL-nn` named in a scenario's title, steps, Examples or Rule Background is tagged | Pass |
 | Glossary-term rule on a scenario's own steps and Examples | No new findings |
 | Every backticked identifier in the specs, problem statements and glossary is a register parameter or a register-defined value | Pass (46 parameters, including `release_grace`); no new findings |
 | Register: no round markers inside entries; every `POL-nn` reference exists | Pass |
-| Conformance: one row per scenario, in file order, titles matching | 386 rows: 12 added, none retitled or removed, every existing Design, Tests and Status cell kept |
+| Conformance: one row per scenario, in file order, titles matching | 387 rows: 13 added, one retitled (P2-S14), none removed, every existing Design, Tests and Status cell kept |
 
 ## Not changed
 
 - RFC-000 and the other RFCs are not edited. Their "Requirements issues" sections can point
   to this record.
 - No new policy entry was needed. Every rule fits an existing entry.
-- No scenario title changed, and no arithmetic in any scenario depends on the new rules.
+- Only one scenario title changed (P2-S14, for RQ-6). No arithmetic in any scenario depends on the new rules.
