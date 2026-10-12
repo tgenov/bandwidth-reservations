@@ -3,8 +3,8 @@
 | | |
 |---|---|
 | Contract ID | C05 |
-| Version | 0.2 (review 45 applied) |
-| Status | **Draft**, for contract review. The orchestrator settled the original mismatches and the gap fills. [Review 45](../../reviews/45-contract-C05-review.md) (ACCEPT WITH CHANGES) is applied with its decisions D-1 … D-6; see [Review 45 resolution](#review-45-resolution), [Settled](#settled) and [Consumer obligations](#consumer-obligations-rfc-errata) |
+| Version | 1 |
+| Status | **Frozen.** Frozen at C4 on fix verification 53 ([review 53](../../reviews/53-contract-C05-fix-verification.md), V53-1 … V53-4 applied), after [review 45](../../reviews/45-contract-C05-review.md); errata owed listed below ([Consumer obligations](#consumer-obligations-rfc-errata): RFC errata, C06's `entry` field and C08's row are owed by those owners and contracts). See also [Settled](#settled) and [Review 45 resolution](#review-45-resolution) |
 | Provider | RFC-004 Part A: the funds-and-standing module (§A1 … §A11), a library linked into the account owner. RFC-004 also defines the semantics of the standing feed, the standing query, the standing enforcement acknowledgement and the headroom and balance query (§A8, §A9, §B12) |
 | Emitter and host | RFC-002: the account owner. It calls the module, appends every entry, serves the queries from its status replicas, and publishes the standing feed and the usage-applied acknowledgement from its outbox (§2.3, §2.4, §2.5, §13.1) |
 | Consumers | RFC-002, the account owner's booking module (every in-process call). Network operations: standing feed and standing query (RFC-005 §2: mTLS client). Network operations is also the **producer** of the enforcement acknowledgement. Edge (RFC-005; buyer API, permission matrix §4.2) and probes (RFC-006 §17, wallet probe): the headroom and balance query. RFC-003 rating: the usage-applied acknowledgement |
@@ -29,6 +29,11 @@ commit timestamp only through its wall time:
   `ceil(t.wallNanos / 10⁶) + offset_ms`. For example, the enforcement check fires at
   `ceil(since.wallNanos / 10⁶) + 60,000`.
 - A minute is `floor(ts.wallNanos / (60 × 10⁹))`.
+- **Identity instants in µs** (C08 `EpochMicros`: `committed_at`, `resolved`,
+  `read_timestamp`, snapshot `position`; V53-4) are compared through their wall time:
+  `µs × 10³ ≤ ts.wallNanos`. `iamFresh` is held as wall nanoseconds (`µs × 10³`). The E5
+  and F5 freshness gate is `ctx.ts.wallNanos ≤ iamFresh + 45 × 10⁹`. F4 `commitTs` and the
+  snapshot `position` carry C08's µs value as `wallNanos = µs × 10³`, `logical = 0`.
 
 **The lateness bound in integers** (review 45 m3). This is the only rounding of `LB`:
 
@@ -246,7 +251,7 @@ type Alert =                                   // routed by the owner to the ope
   | { code: 'ENFORCEMENT_ACK_MISSING'; stdSeq: bigint; target: EpochMs }            // operations, at since + 60 s (D-3)
   | { code: 'LATE_ENFORCEMENT'; stdSeq: bigint; target: EpochMs; enforcedAt?: EpochMs } // operations and finance, once per stdSeq (D-3)
   | { code: 'ENFORCEMENT_ACK_CONFLICT'; stdSeq: bigint; first: EpochMs; second: EpochMs }
-  | { code: 'ENFORCEMENT_ACK_UNEXPECTED'; stdSeq: bigint; enforcedAt: EpochMs }     // unknown, future or superseded stdSeq (m14)
+  | { code: 'ENFORCEMENT_ACK_UNEXPECTED'; stdSeq: bigint; enforcedAt: EpochMs }     // unknown or future stdSeq only (m14, V53-2)
   | { code: 'KEY_ABSENT_FROM_SNAPSHOT'; key: KeyId };                                // applied key missing from a catch-up snapshot (m8)
 
 /** Rows the owner writes to its outbox in the same transaction (RFC-002 §2.5 "events"). */
@@ -317,7 +322,9 @@ type F5 = { kind: 'F5' } & (
                    designatedAtMapVersion: bigint };                  // from the applied F9 that designated the account
       iamFreshUsed: HlcTimestamp }                                    // S-3: required (m6)
   | { variant: 'removed_by_operator'; principal: PrincipalId; reason: string; actionId: string }
-  | { variant: 'removed_invoice_written_off'; invoice: InvoiceId; rcvPos: FeedPosition; ledgerPos: LedgerPosition } );
+  | { variant: 'removed_invoice_written_off'; invoice: InvoiceId; rcvPos: FeedPosition; ledgerPos: LedgerPosition;
+      decidedAt: HlcTimestamp;                                        // C07 decided_at: receivables' deciding entry
+      superseded?: boolean } );                                       // C07 R37-03: true when a later F5 'set' is in force
 
 type F6 = { kind: 'F6'; rcvPos: FeedPosition; ledgerPos: LedgerPosition } & (
   | { variant: 'overdue'; invoice: InvoiceId; unpaid: Micros; dueDate: UtcMinute }
@@ -332,7 +339,7 @@ type F7 = { kind: 'F7'; instant: EpochMs } & (
   | { variant: 'exposure_step'; product: ProductId } );
 
 interface F8 { kind: 'F8'; feed: FeedPosition; stdSeq: bigint; enforcedAt: EpochMs }
-interface F9 { kind: 'F9'; excluded: boolean; mapVersion: bigint }
+interface F9 { kind: 'F9'; excluded: boolean; mapVersion: bigint /* the designating slot-map version (C07 S1) */ }
 interface F10 { kind: 'F10'; rules: RulesVersion }
 interface F11 { kind: 'F11'; priceVersion: PriceVersion; route: RouteId; newPrice: Picos /* per Mbps-minute */;
   effectiveMinute: UtcMinute; catalogueRef: string; reservations: ReservationId[] }
@@ -533,10 +540,10 @@ booking records its outcomes require.
 | F2 | — | A rating figure has arrived **and** the applied `ledger_pos` ≥ X. Only the latest figure per account in a batch is applied | `U[product] = U(X) − Δ_b` if an applied F1 at or below the current position reports `b` posted whole, else `U(X)`. Reservation batches never enter `U`. Standing is evaluated. The outbox gets C06's `UsageApplied` |
 | F3 | — | An account-product term changes (at its effective minute), or a `usage_price` change is **announced** | Recomputes `LB` by the integer formula under Units (Λ = 430 s at the defaults, `hp*` over `[ts − (Λ − 60 s), ts + 60 s]`) and arms the exposure steps |
 | F4 | `push`, `catch_up`, `snapshot` | Push or catch-up, **only for an actual status change** of a key (status, limits) or of KYB. Never for an event-free heartbeat or catch-up. A C08 snapshot answer gives one F4 `snapshot` per account that has a difference | Updates keys and `kyb`. An event already applied, by (identity partition, sequence), is a no-op. Per key, an event whose version is not above the applied version is a no-op. There is **no timestamp skip** (M3). `revoked` is terminal. `snapshot` replaces the account's applied state with the snapshot: keys in it are applied by version; an applied key absent from it is **revoked as applied**, with `KEY_ABSENT_FROM_SNAPSHOT` alerted (m8). `revokedKeys` lists every key whose applied status becomes revoked, including one first applied as revoked (from absent, D-4) |
-| F5 | `set`, `removed_by_operator`, `removed_invoice_written_off` | `set` and `removed_by_operator`: the credit-limit command. `removed_invoice_written_off`: the invoice-status feed, behind the gate | `set` and `remove`, in C07's order: (1) envelope; (2) scope, set-scoped only: `member` is this account **and** its applied F9 has `excluded` on. The signed v is recorded in `setScope.mapVersion` with `designatedAtMapVersion`, and is **not** checked (D-2, C07 S1). Otherwise `out_of_scope`. (3) Dedupe by (`actionId`, account): a repeat answers the first outcome, even while the slot is stale. (4) Freshness gate, `set` only: if `ts > iamFresh + 45 s` or `iamFresh` is unset, nothing is appended and the answer is C07's `temporarily_unavailable` (S-3). (5) Validity. (6) KYB, `set` only: refused `kyb_not_vetted` unless `kyb = passed`. A refusal is recorded and changes nothing. Otherwise `set` sets `CL` and `mode`, relabels holds, and may suspend |
+| F5 | `set`, `removed_by_operator`, `removed_invoice_written_off` | `set` and `removed_by_operator`: the credit-limit command. `removed_invoice_written_off`: the invoice-status feed, behind the gate | `set` and `remove`, in **C07's frozen order** (Operation 2, R37-01; V53-1): (1) authenticity, C08 checks 1–2; (2) dedupe by (`actionId`, account): a repeat answers the recorded first outcome, whatever changed since (F9, `not_after`, the operator's role, freshness); the same `actionId` with different content is `refused{conflict}`; (3) operator freshness, C08 checks 3, 5 and 6 for a single target; (4) scope, set-scoped only: `member` is this account **and** its applied F9 has `excluded` on; the signed v is recorded in `setScope.mapVersion` with `designatedAtMapVersion` and is **not** checked (D-2, C07 S1); otherwise `out_of_scope`; (5) validity, otherwise `refused{invalid}`, recorded; (6) KYB, `set` only: **first the `iamFresh` gate**, so if `ctx.ts.wallNanos > iamFresh + 45 × 10⁹` or `iamFresh` is unset, nothing is appended and the answer is C07's `temporarily_unavailable{identity_stale}` (S-3); then `refused{kyb_not_vetted}` unless `kyb = passed`. A refusal is recorded and changes nothing. Otherwise `set` sets `CL` and `mode`, relabels holds, and may suspend. `removed_invoice_written_off`: removes `CL`, but is **recorded as superseded, with no change**, if the `CL` in force was set by an F5 `set` committed after the event's `decidedAt` (C07 R37-03) |
 | F6 | `overdue`, `paid`, `written_off` | The invoice-status feed, behind the gate, in `rcvPos` order | `overdue` adds to `OD`. `paid` and `written_off` remove from `OD` (a no-op if the M19's F1 already did) |
 | F7 | `fee_term_ended`, `grace_ended`, `enforcement_check`, `price_effective`, `exposure_step` | The owner's timer from `due(S)`, committed only with `ts ≥ instant` | Each variant's time-driven change. `grace_ended` yields `releaseDue` (JR-2). `enforcement_check` (suspensions only, D-3) at 60 s: no check if a later standing transition has committed. Otherwise, if no F8 for that `stdSeq` has been applied, raise `ENFORCEMENT_ACK_MISSING` (operations). At 120 s, if there is still no F8 and no later transition, raise `LATE_ENFORCEMENT` (operations and finance) |
-| F8 | — | An `EnforcementAck` is consumed | Recorded. For a suspension's `stdSeq`: `LATE_ENFORCEMENT` is raised if `enforcedAt > ceil(since.wallNanos / 10⁶) + 60,000`, unless the 120 s check already raised it (once per `stdSeq`, D-3; P4-S27). An ack at or before the target is on time however late it is delivered. An ack for an unknown or future `stdSeq`, or one superseded by a later transition, is recorded with `ENFORCEMENT_ACK_UNEXPECTED` and changes no state and no other `stdSeq`'s check (m14) |
+| F8 | — | An `EnforcementAck` is consumed | Recorded. For a suspension's `stdSeq`: `LATE_ENFORCEMENT` is raised if `enforcedAt > ceil(since.wallNanos / 10⁶) + 60,000`, unless the 120 s check already raised it (once per `stdSeq`, D-3; P4-S27). An ack at or before the target is on time however late it is delivered. An ack for a **recorded** `stdSeq` lower than the current one (a fast suspend → resume) is recorded with no alert and no late check, because a later transition has committed (D-3, V53-2). Only an ack for an unknown or future `stdSeq` is recorded with `ENFORCEMENT_ACK_UNEXPECTED`. Neither changes state or another `stdSeq`'s check (m14) |
 | F9 | — | Placement's probe designation | `excluded`: never rated; `p_r` follows the clock; `H_r` is re-evaluated at every apply (§A3, J-11) |
 | F10 | — | Deployment of a new rules version | Later entries are evaluated with it, and replay uses the version recorded |
 | F11 | — | The catalogue announces a price change for open-ended reservations, `price_notice` ahead. Idempotent by (account, price version) | No state change. The outcome is the `PriceNotice`. The booking module writes, in the same entry, the one price-change E11 with `PriceTookEffect` per reservation (JR-4) |
@@ -567,10 +574,12 @@ booking records its outcomes require.
 - **E5 commits only if `ctx.ts ≤ iamFresh + 45 s`.** The `iamFresh` used is recorded in
   the E5, and an unset watermark fails the check. A confirm that fails the check is
   deferred, and the request may reach its deadline.
-- An F5 `set` (single or set-scoped) is composed only under the same condition, with
-  `iamFreshUsed` recorded. When the slot is stale, nothing is appended and the answer is
-  C07's `temporarily_unavailable`, which is never final (S-3). A repeated `actionId` still
-  answers its first outcome.
+- An F5 `set` (single or set-scoped) is composed only under the same condition, applied
+  inside the KYB step of C07's order, with `iamFreshUsed` recorded. When the slot is stale,
+  nothing is appended and the answer is C07's `temporarily_unavailable{identity_stale}`,
+  which is never final (S-3). A repeated `actionId` is deduplicated earlier and answers its
+  recorded first outcome. An invalid `set` on a stale slot gets the recorded
+  `refused{invalid}`.
 - The funds module neither reads nor computes `iamFresh`. F4 records no timestamp
   watermark (M3).
 
@@ -662,10 +671,10 @@ accounts, which get no figures. Rating relies on it for two things:
 | F1 | (ledger partition, epoch, sequence) per movement | No effect | Not possible: the ledger is single-writer |
 | F2 | Rating position | No effect. An older figure is ignored | — (absolute values; the latest wins) |
 | F4 | (identity partition, sequence); per key, the highest version wins. No timestamp skip (M3). A snapshot is applied by version | No effect | The lower version is ignored |
-| F5 command variants | (`actionId`, account), checked before the freshness gate (C07 order) | The first entry's outcome is answered, even when the slot is stale | Refused as a conflict, recorded |
+| F5 command variants | (`actionId`, account), checked second, after authenticity and before operator freshness, scope, validity and KYB (C07 order, V53-1) | The recorded first outcome is answered, even when the slot is stale, F9 changed or the envelope's `not_after` passed | Refused as a conflict, recorded |
 | F5 feed variant, F6 | (receivables partition, epoch, sequence), in `rcvPos` order | No effect | — |
 | F7 | (variant, instant, subject) | Re-arming after takeover finds the tick already applied | — |
-| F8 | (account, `stdSeq`) | No effect | First applied wins; `ENFORCEMENT_ACK_CONFLICT` alerted (C-6). An unknown, future or superseded `stdSeq`: recorded, `ENFORCEMENT_ACK_UNEXPECTED` (m14) |
+| F8 | (account, `stdSeq`) | No effect | First applied wins; `ENFORCEMENT_ACK_CONFLICT` alerted (C-6). A recorded earlier `stdSeq`: recorded, no alert. An unknown or future `stdSeq`: recorded, `ENFORCEMENT_ACK_UNEXPECTED` (m14, V53-2) |
 | F11 | (account, price version) | No effect | — |
 | `StandingEvent` at consumers | (partition, stream, `stream_seq`); semantically `stdSeq` | No effect | — |
 | `UsageApplied` at rating | Per C06: (account, `appliedThrough`) | No effect | Not possible |
@@ -749,7 +758,7 @@ X2-S24, X2-S27.
 | P9 | Standing machine: every RFC-004 §A7 worked example (P4-S22, S92, S93, S94, S97, S101, S105, S108, S114 rows 1 and 2); `RA` itemised equals the least resuming top-up found by search | P4-S18, P4-S22, P4-S114 |
 | P10 | F2 pairing: figures and F1s in every interleaving, with `Δ_b` posted whole and not whole; `U` never counts a posted usage line twice, and headroom equals the exact value at every applied pair | P3-S61, P4-S16 |
 | P11 | F7 deferral: `apply(F7)` with `instant × 10⁶ > ctx.ts.wallNanos` (including an instant 1 ns of wall time after `ts`) returns `Deferred` and leaves the state unchanged; at `instant × 10⁶ = ts.wallNanos` it applies | P4-S27, P4-S96 |
-| P12 | Enforcement (D-3): `enforcedAt` = `ceil(since.wallNanos/10⁶) + 60,000` exactly (on time) and `+ 1 ms` (late); an on-time ack delivered after the 60 s check; missing at 60 s (`ENFORCEMENT_ACK_MISSING` only), then at 120 s (`LATE_ENFORCEMENT` once); suspend → resume within seconds with only the resume acknowledged (no report); a resumption (no check); a duplicate with a different `enforcedAt`; an ack for an unknown, future or superseded `stdSeq` | P4-S27, X2-S08 |
+| P12 | Enforcement (D-3): `enforcedAt` = `ceil(since.wallNanos/10⁶) + 60,000` exactly (on time) and `+ 1 ms` (late); an on-time ack delivered after the 60 s check; missing at 60 s (`ENFORCEMENT_ACK_MISSING` only), then at 120 s (`LATE_ENFORCEMENT` once); suspend → resume within seconds with only the resume acknowledged (no report); a resumption (no check); a duplicate with a different `enforcedAt`; an ack for a recorded earlier `stdSeq` delivered after the next transition (recorded, no alert); an ack for an unknown or future `stdSeq` (`ENFORCEMENT_ACK_UNEXPECTED`) | P4-S27, X2-S08 |
 | P13 | F4 without a timestamp skip: events of one account delivered out of commit order, a revocation with a lower commit timestamp arriving after a later event, duplicates from push and catch-up; every status change is applied, none twice. Snapshot: an applied key absent from it is revoked, and a key first applied as revoked is in `revokedKeys` | X1-S06, P2-S72 |
 | P14 | `LB` integer formula: random `usage_rate_cap`, Λ and `hp*`; the module's `LB` equals `ceil(cap × Λ_ms × hp / 8×10¹²)` exactly | P4-S16, P3-S37 |
 | P15 | `checked` in every verdict equals the headroom and key headroom used by checks 4 and 5 | P2-S38, P2-S39 |
@@ -786,7 +795,7 @@ Nothing in this section blocks Frozen.
 |---|---|---|---|
 | S-1 (was M1) | **A key not yet applied by F4** | RFC-004 §A10: `rate_check` and `Ask` carry no key limits. RFC-002 §3.1 and RFC-005 C3: such a key is admitted under its identity-signed key record's limits, held provisionally | `Ask.provisionalKey` and `PrincipalCtx.provisionalKey` carry **C08's `SignedKeyRecord` as its exact signed bytes**, recorded in E1/E1′. Replay is then exact, and the signature and tenant are auditable (review 45 M4, D-4). The record is refused, as unauthenticated, if its `status` is `revoked` or its tenant is not the account. It is used only while the key is absent from applied state, and the F4 that applies the key supersedes it. `revokedKeys` lists a key first applied as revoked |
 | S-2 (was M2) | **Holder and definition of `iam_fresh`** | RFC-002 and RFC-004: the booking module holds it, "advanced by every heartbeat". RFC-005 C3: "F4 keeps `iam_fresh`", defined as the minimum over the partitions | The booking module holds it, in owner memory. `iam_fresh = max( min over the identity-push partitions feeding the slot of R_applied(p), the read timestamp of the last catch-up whose entry has committed )`. `R_applied(p)` is the latest resolved timestamp up to which every event of p is applied, with no gap below it (review 45 M2, D-6). It is unset after any acquisition until the catch-up commits, or until every partition has reported |
-| S-3 (was M3) | **Freshness at the KYB check of F5 `set`** | RFC-004 §A4 and RFC-002 §7.3: no freshness condition. RFC-005 §3.6 and C10: checked with `iam_fresh` within 45 s, both recorded | If `ts > iamFresh + 45 s`, or `iamFresh` is unset, nothing is appended and the answer is C07's **`temporarily_unavailable`**, never final (the console retries). Otherwise the F5 records `iamFreshUsed` (required). The order follows C07: envelope → scope → dedupe → freshness → validity → KYB (review 45 M5). The KYB refusal rule is unchanged |
+| S-3 (was M3) | **Freshness at the KYB check of F5 `set`** | RFC-004 §A4 and RFC-002 §7.3: no freshness condition. RFC-005 §3.6 and C10: checked with `iam_fresh` within 45 s, both recorded | If `ts > iamFresh + 45 s`, or `iamFresh` is unset, nothing is appended and the answer is C07's **`temporarily_unavailable`**, never final (the console retries). Otherwise the F5 records `iamFreshUsed` (required). The order is C07's frozen one: authenticity → dedupe → operator freshness → scope → validity → KYB, with the `iamFresh` gate inside the KYB step (V53-1). A `CreditLimitRemoved` is superseded by an F5 `set` committed after its `decided_at` (C07 R37-03). The KYB refusal rule is unchanged |
 | S-4 | **Gap fills C-1 … C-7** | — | C-1 … C-6 are accepted as written. C-7 is **replaced**: a view and index on RFC-002's outbox for rating would be a cross-owner table read, which RFC-000 forbids. Rating recovers by topic replay (retention ≥ 7 days) and by `usage_applied_since` beyond that. Amended by review 45 (M6, m10, D-5): C06 owns the acknowledgement's wire form, and the query returns C06's events and is served by RFC-002's status readers, off the write path |
 | S-5 (review 45 m11) | **E11 effective before `nb(ts)`** | RFC-004 §A4: "a POL-07 cut **or revocation** at `T_eff`". RFC-002 §2.2 E11: "a POL-07 cut" only | A POL-07 revocation is a cut to 0 (RFC-002 §9.7, `r = 0`), so both readings mean the same. The contract reads it as "a POL-07 cut at `T_eff`, a revocation included". RFC-002 erratum |
 | S-6 (D-1) | **Price of an Increase ahead** | — (missing from both) | `QueuedChange.lockedPrice` and `priceVersion` for an Increase. ρ⁺ prices each part at max(locked price, recorded step in force) |
@@ -800,13 +809,14 @@ The RFC owners must apply these errata. None of the RFCs is edited by this contr
 | Owner | Erratum or change |
 |---|---|
 | RFC-000 §8 | Identity status push and catch-up row: replace "advanced by every push heartbeat's resolved timestamp and every catch-up's read timestamp" with S-2's applied, gap-free definition (AI-45-1). Usage-applied acknowledgement row: topic retention ≥ 7 days and `usage_applied_since`, served by RFC-002's status readers (AI-45-2) |
-| RFC-004 Part A | §A10: `Ask` gains `provisionalKey?` (C08's signed record bytes), and `rate_check` takes it in the principal context (S-1). §A5.1: checks 0, 2 and 5 and the rate limits read a provisional key's status and limits from that record, only while the key is absent from applied state. `admit` returns `checked` (m13). §A5.2: `QueuedChange` carries `lockedPrice` and `priceVersion` for an Increase; ρ⁺ prices at max(locked, stepped) (S-6). §A2, §A4 F4 row, §B12 consumed identity row, JR-11 and revision 5 item 1: S-2's definition; **delete the `id_ts` skip rule** and dedupe F4 by (identity partition, sequence) plus key version (M3); add the `snapshot` source; an applied key absent from a snapshot is revoked as applied; `revoked_keys` includes keys first applied as revoked. §A4 F5 and §B12: C07's check order; scope = `member` plus applied F9, v recorded only (S-7); freshness gate with `temporarily_unavailable` and `iam_fresh` recorded (S-3). §A8 and F7/F8: S-8. §A9: `position.ts` and `evaluatedAt`; `answer` reads applied state; `NOT_FOUND` (m4, m5). §A3: the integer `LB` formula (m3). Traceability: cite P4-S117 and P4-S118, which the tool reports uncited (m12) |
+| RFC-004 Part A | §A4 F5 (with C07): C07's check order and the supersession of a `CreditLimitRemoved` by a later `set` (R37-03). §A10: `Ask` gains `provisionalKey?` (C08's signed record bytes), and `rate_check` takes it in the principal context (S-1). §A5.1: checks 0, 2 and 5 and the rate limits read a provisional key's status and limits from that record, only while the key is absent from applied state. `admit` returns `checked` (m13). §A5.2: `QueuedChange` carries `lockedPrice` and `priceVersion` for an Increase; ρ⁺ prices at max(locked, stepped) (S-6). §A2, §A4 F4 row, §B12 consumed identity row, JR-11 and revision 5 item 1: S-2's definition; **delete the `id_ts` skip rule** and dedupe F4 by (identity partition, sequence) plus key version (M3); add the `snapshot` source; an applied key absent from a snapshot is revoked as applied; `revoked_keys` includes keys first applied as revoked. §A4 F5 and §B12: C07's check order; scope = `member` plus applied F9, v recorded only (S-7); freshness gate with `temporarily_unavailable` and `iam_fresh` recorded (S-3). §A8 and F7/F8: S-8. §A9: `position.ts` and `evaluatedAt`; `answer` reads applied state; `NOT_FOUND` (m4, m5). §A3: the integer `LB` formula (m3). Traceability: cite P4-S117 and P4-S118, which the tool reports uncited (m12) |
 | RFC-002 | §2.2 E1/E1′: record `provisionalKey` (signed bytes) and `checked` (S-1, m13); E11: "a POL-07 cut at `T_eff`, a revocation (r = 0) included" (S-5). §1.2, §1.3, §2.4 table and item 14: S-2's definition, applied and gap-free, set after acquisition only by a committed catch-up or by every partition reporting. §3.1: refuse a provisional record with `status = revoked` or the wrong tenant. §7.3 and §13.1 credit-limit row: C07's order and `temporarily_unavailable` (S-3, S-7). §8.2: status readers re-check the principal context and answer `NOT_FOUND` (m5). §13.1: usage-applied in C06's form; `usage_applied_since` on the status readers, rebuilt from the log by `emits`; topic retention ≥ 7 days (S-4) |
 | RFC-003 | §5.9 and §7: consume C06's `UsageApplied`. On a gap, replay the topic, then call `usage_applied_since`. Never read the owner's outbox (S-4) |
 | RFC-005 | C3 and §3.3: `iam_fresh` is held by the booking module, with S-2's applied, gap-free definition. C3: a provisional key record is used only while the key is absent from applied state (stricter than "a version lower than the applied one is ignored", D-4); the snapshot answer as C08 S-G1. §7.4 and the console's set-scoped fan-out (with RFC-004 §B12): `temporarily_unavailable` is no answer, and the console retries the member |
 | RFC-006 | §5.4: `account.usage-applied.v1` retained at least 7 days, sized as in "Gap recovery" (est.). §5.5: for this stream, the outbox follower-read gap path is replaced by `usage_applied_since` (S-4) |
 | C06 | §4 `UsageApplied`: add `entry: LogPosition` (the F2 entry); name `usage_applied_since` as the recovery path beyond retention (D-5) |
-| C07 | `CreditLimitAnswer`: add `{ outcome: "temporarily_unavailable" }`, stated never final, at the freshness step after dedupe (M5) |
+| C08 | §B freshness watermark and consumer test C-02: S-2's applied, gap-free `R_applied(p)`; after an acquisition set only by a **committed** catch-up or once every partition has reported, replacing "unset … until the first marker or catch-up"; a catch-up's `read_timestamp` and a snapshot's `position` count only once their F4 entry commits (or at once with no change). §B snapshot (S-G1): an applied key absent from the snapshot is revoked as applied (m8). (V53-3) |
+| C07 | Already carried by C07: `temporarily_unavailable{identity_stale}`, never final, inside the KYB step; the F5 supersession rule (R37-03). No change owed (M5, V53-1) |
 | Requirements | RQ-45-1 (raised): whose clock measures "blocked within 60 s"; this contract assumes network operations' clock is within `max_offset` |
 
 ## Clarifications made by this contract (no conflict between the RFCs; accepted, S-4)
@@ -840,7 +850,7 @@ The RFC owners must apply these errata. None of the RFCs is edited by this contr
 | M2 (D-6) | `iamFresh` counts only applied, gap-free resolved timestamps and committed catch-ups. After acquisition it is set only by the catch-up or by every partition reporting. S-2 amended; H4 cases |
 | M3 | `completeThrough` and the `id_ts` skip deleted. F4 dedupe by (identity partition, sequence) plus key version; P13 |
 | M4 (D-4) | `ProvisionalKeyRecord` = C08 `SignedKeyRecord` signed bytes plus parsed record. Refused if revoked or the wrong tenant. `revokedKeys` includes keys first applied as revoked; S-1 amended; H6 cases |
-| M5 (D-2) | Set-scoped scope = `member` plus applied F9; v and `designatedAtMapVersion` recorded only. C07's order, with dedupe before the freshness gate. Stale answer is C07's `temporarily_unavailable`; S-3 amended; S-7 |
+| M5 (D-2) | Set-scoped scope = `member` plus applied F9; v and `designatedAtMapVersion` recorded only. Stale answer is C07's `temporarily_unavailable{identity_stale}`; S-3 amended; S-7. Order corrected by V53-1 to C07's frozen order: authenticity → dedupe → operator freshness → scope → validity → KYB, with the `iamFresh` gate inside KYB; C07's F5 supersession rule (R37-03) adopted |
 | M6 (D-5) | C06 owns the acknowledgement's wire form. `UsageAppliedAck` removed in favour of C06 `UsageApplied`; topic `account.usage-applied.v1`; `usage_applied_since` returns C06 events; C06 obligation adds `entry` |
 | m1 (D-3) | Enforcement checks for suspensions only, at 60 s and 120 s; `ENFORCEMENT_ACK_MISSING`; `LATE_ENFORCEMENT` once; S-8; P12, Q3 |
 | m2 | ms ↔ HLC conversion rules under Units; F7 and `due` instants restated; P11, P12 boundaries |
@@ -855,7 +865,16 @@ The RFC owners must apply these errata. None of the RFCs is edited by this contr
 | m11 | S-5: a revocation is a POL-07 cut to 0; RFC-002 E11 erratum |
 | m12 | P4-S117 cited (F1 credit re-evaluates standing); the RFC-004 traceability gap (P4-S117, P4-S118) listed under obligations |
 | m13 | `Verdict.checked` (headroom, key headroom), recorded in E1/E1′; P15 |
-| m14 | F8 for an unknown, future or superseded `stdSeq`: recorded, `ENFORCEMENT_ACK_UNEXPECTED`, no effect |
+| m14 | F8 for an unknown or future `stdSeq`: recorded, `ENFORCEMENT_ACK_UNEXPECTED`, no effect. An ack for a recorded earlier `stdSeq`: recorded without alert (V53-2) |
 | m15 | H4 extended (lagging partition, gap-buffered revocation, uncommitted catch-up, `adopt` and re-home) |
 | RQ-45-1, AI-45-1, AI-45-2 | Listed under Consumer obligations (requirements; RFC-000 §8) |
 
+## Fix verification 53 resolution
+
+| Finding | Change in v1 |
+|---|---|
+| V53-1 | F5 row, Idempotency F5 row, freshness section, S-3 and resolution row M5 restated to C07's frozen order (authenticity → dedupe → operator freshness → scope → validity → KYB, with the `iamFresh` gate inside KYB). C07's F5 supersession rule (R37-03) adopted, with `decidedAt` and `superseded` on F5 `removed_invoice_written_off`. F9 `mapVersion` annotated as the designating version |
+| V53-2 | An ack for a recorded earlier `stdSeq` is recorded without alert. `ENFORCEMENT_ACK_UNEXPECTED` only for an unknown or future `stdSeq`. F8 row, Idempotency, `Alert` comment, P12 and resolution row m14 adjusted |
+| V53-3 | C08 obligation row added: applied-only `iam_fresh`; a catch-up counts after its F4 commits; absent-key revocation in the snapshot rule; test C-02 |
+| V53-4 | µs → HLC rule under Units: `µs × 10³ ≤ ts.wallNanos`; `iamFresh` held as wall ns; gate `ctx.ts.wallNanos ≤ iamFresh + 45 × 10⁹`; C08 µs values carried as `wallNanos = µs × 10³`, `logical = 0` |
+| Status | Frozen, version 1. Errata owed: the RFC rows under Consumer obligations, C06's `entry` field and C08's row |
