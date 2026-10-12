@@ -2,10 +2,10 @@
 
 | | |
 |---|---|
-| Status | **Draft, revision 2.** Revision 2 rewrites the platform for RFC-000 revision 4's substrate (CockroachDB at 2 + 2 + 1, NestJS owner services with epoch-fenced owner leases, Kafka fed by a transactional outbox) and applies the `requirements-v1.6` decisions on RQ-A … RQ-F. Revision 1 specified a custom multi-group Raft platform (`etcd-io/raft` in a Go partition host); it is now a rejected alternative (Competition). See "Revision 2 resolution" at the end |
-| Satisfies | X2-S01 … X2-S28 (all 28 X2 scenarios, as primary RFC), including the new X2-S25 … X2-S28 and the amended X2-S05, X2-S06, X2-S07, X2-S15, X2-S20, X2-S23, X2-S24. Contributes the platform, history, notifier, alerting and backup contracts to P1-S26, P1-S33, P1-S40, P1-S50, P1-S54, P1-S62, P1-S63, P1-S72, P1-S75, P2-S04, P2-S09, P2-S10, P2-S22, P2-S23, P2-S51, P2-S53, P2-S93, P2-S99, P2-S104, P2-S106, P2-S107, P2-S108, P2-S111, P3-S31, P3-S36, P3-S39, P4-S23, P4-S54, P4-S71, P4-S72, P4-S80, P4-S81, P4-S90, P4-S91, P4-S104, X1-S11, X1-S14, X1-S15, X1-S24, X1-S31, X1-S34, X1-S37, whose primary RFC is named in the traceability table |
-| Policies | POL-04 (`ack_budget`, `status_staleness`, `webhook_retry`, "told"), POL-06 (targets, available minute, probe accounts and probe supplier, p99 per calendar month and serving region, declared region disaster with four eyes and counted from the recorded loss, go-live fibre condition), POL-07 (`affected_notice_time`), POL-14 (`attribution_lag_max`, `max_lateness`), POL-15 (each probe account's `credit_limit`), POL-16 (notices), POL-18, POL-19, POL-24 (retention pending legal confirmation), POL-26 (`release_grace`, the deadline), POL-29 (7-year identities), POL-32 (network operations declares and ends disasters with four eyes; `approval_expiry`) |
-| Builds on | [RFC-000](RFC-000-architecture.md) **revision 4**: §1 principles A1 … A11, §2 components (placement and time, history, notifier, probes), §3 latency budget and leader placement, §4.3 the confirm fence, `ε` and the monitored quantities, §4.5 closed timestamps, §4.6 positions, read leases and status replicas, §5.1 topology, §5.2 owner leases and fencing, §5.3, §5.4, **§5.5 (the substrate mapping and its list of what RFC-006 must change)**, §6 sizing, §8 the substrate-conventions contract, R1, R2, R4, R13, R14, R16, R18 … R21, and its "Revision 4 resolution". The requirements at tag **`requirements-v1.6`**, including the decisions on RQ-A … RQ-F ([review 11](../reviews/11-requirements-amendments-from-detailed-rfcs.md)) |
+| Status | **Draft, revision 3.** Revision 3 rebases revision 2 on `requirements-v1.7` (the decisions on RQ6-1 … RQ6-3 in [review 12](../reviews/12-requirements-amendments-from-rfc-revision-2.md): `erasure_max`, account-slot probing, declaration on probe evidence, X2-S29) and on RFC-000 **revision 4.1** (its errata AI6-1 … AI6-5, AI3-11 slot batch transactions, AI-R1-12 link hot standbys, AI5-8 the truncation watermark, B-AI-8 per-slot report markers, AI-R1-11 the link displacement read, AI5-11 the personal-data store's backups). Revision 2 rewrote the platform for RFC-000 revision 4's substrate (CockroachDB at 2 + 2 + 1, NestJS owner services with epoch-fenced owner leases, Kafka fed by a transactional outbox) and applies the `requirements-v1.6` decisions on RQ-A … RQ-F. Revision 1 specified a custom multi-group Raft platform (`etcd-io/raft` in a Go partition host); it is now a rejected alternative (Competition). See "Revision 2 resolution" at the end |
+| Satisfies | X2-S01 … X2-S29 (all 29 X2 scenarios, as primary RFC), including X2-S29 (new in `requirements-v1.7`) and X2-S27 (retitled). Contributes the platform, history, notifier, alerting and backup contracts to P1-S26, P1-S33, P1-S40, P1-S78, P3-S71, X1-S39, P1-S50, P1-S54, P1-S62, P1-S63, P1-S72, P1-S75, P2-S04, P2-S09, P2-S10, P2-S22, P2-S23, P2-S51, P2-S53, P2-S93, P2-S99, P2-S104, P2-S106, P2-S107, P2-S108, P2-S111, P3-S31, P3-S36, P3-S39, P4-S23, P4-S54, P4-S71, P4-S72, P4-S80, P4-S81, P4-S90, P4-S91, P4-S104, X1-S11, X1-S14, X1-S15, X1-S24, X1-S31, X1-S34, X1-S37, whose primary RFC is named in the traceability table |
+| Policies | POL-04 (`ack_budget`, `status_staleness`, `webhook_retry`, "told"), POL-06 (targets, available minute, probe accounts and probe supplier, p99 per calendar month and serving region, declared region disaster with four eyes, counted from the recorded loss or, with none, from the first failing probe minute after `disaster_probe_minutes` of failing admission probes, every account slot probed every minute, go-live fibre condition), POL-07 (`affected_notice_time`), POL-14 (`attribution_lag_max`, `max_lateness`), POL-15 (each probe account's `credit_limit`), POL-16 (notices), POL-18, POL-19 (`erasure_max`, erasure complete in every copy), POL-24 (retention pending legal confirmation), POL-26 (`release_grace`, the deadline), POL-29 (7-year identities), POL-32 (network operations declares and ends disasters with four eyes; `approval_expiry`) |
+| Builds on | [RFC-000](RFC-000-architecture.md) **revision 4.1** (revision 4 and its "Revision 4.1 errata"): §1 principles A1 … A11, §2 components (placement and time, history, notifier, probes), §3 latency budget and leader placement, §4.3 the confirm fence, `ε` and the monitored quantities, §4.5 closed timestamps, §4.6 positions, read leases and status replicas, §5.1 topology, §5.2 owner leases and fencing, §5.3, §5.4, **§5.5 (the substrate mapping and its list of what RFC-006 must change)**, §6 sizing, §8 the substrate-conventions contract, R1, R2, R4, R13, R14, R16, R18 … R21, and its "Revision 4 resolution" and "Revision 4.1 errata" (§5.5 item 10). The requirements at tag **`requirements-v1.7`**, including the decisions on RQ-A … RQ-F ([review 11](../reviews/11-requirements-amendments-from-detailed-rfcs.md)) and on RQ6-1 … RQ6-3 ([review 12](../reviews/12-requirements-amendments-from-rfc-revision-2.md)) |
 
 Terms are used in the sense of the [glossary](../02-specs/glossary.md). "Reserved rate" is
 capacity and "traffic" is bytes. Every round-trip time, latency, volume, size, rate and
@@ -35,6 +35,19 @@ measurement only, needs two network-operations operators, and counts from the lo
 system recorded (§8.2, §8.3). Probes, history, the notifier and the measurement method
 are kept and re-based (§13 … §18); capacity, bandwidth and 7-year storage are re-costed
 (§19); backups are CockroachDB backups to GCS and Ceph beside the write-once archive (§14).
+
+**Revision 3 in one paragraph.** The substrate is unchanged. The owner runtime now commits
+**one batch transaction per slot** (every partition of the slot with entries pending, each
+with its own head row; §4.3, RFC-000 AI3-11), link slots get **two hot standbys** fed by the
+holder's push (§4.4, AI-R1-12), and report positions travel as **per-slot markers** on a
+slot-keyed outcome topic (§4.6, §5.3, B-AI-8). The account owner's role may read the link
+owners' displacement markers and nothing else of theirs (§3.7, AI-R1-11); the truncator
+deletes only below audit's verified sealed-through watermark (§13.2, AI5-8). A region with
+no recorded loss may be declared on **probe evidence**, `disaster_probe_minutes` (5)
+consecutive minutes in which admission was not available there, counted from the first of
+them (§8.2, §8.3, X2-S29). The personal-data store is backed up apart, tagged with its key
+generation and deleted with it, so an erasure reaches every copy within **`erasure_max`**
+(30 days) of the request (§14.4).
 
 ## Need
 
@@ -319,7 +332,7 @@ RFC's declaration:
 
 | Table | Primary key | Columns | Writes |
 |---|---|---|---|
-| `<kind>_log` | (`slot` INT2, `partition` BYTES, `seq` INT8) | `epoch` INT8; `kind` INT2; `schema_v` INT2; `ts` DECIMAL (the commit timestamp, below); `identity` BYTES (the command's idempotency identity, A6); `audit` (pseudonymous principal, role, reason code: RFC-005's field set, A11); `retention` INT2 (§13.1); `key_id` BYTES; `payload` BYTES (owner-compressed, then encrypted, RFC-005) | **Insert only.** No role is granted UPDATE or DELETE except the truncator (§13.2) |
+| `<kind>_log` | (`slot` INT2, `partition` BYTES, `seq` INT8) | `epoch` INT8; `kind` INT2; `schema_v` INT2; `ts` DECIMAL (the commit timestamp, below); `identity` BYTES (the command's idempotency identity, A6); `audit` (pseudonymous principal, role, reason code: RFC-005's field set, A11); `retention` INT2 (§13.1); `key_id` BYTES; `payload` BYTES (owner-compressed, then encrypted, RFC-005) | **Insert only.** No application role is granted UPDATE or DELETE; the truncator role alone has DELETE, used only below audit's verified sealed-through watermark (§13.2; RFC-000 AI5-8) |
 | `<kind>_head` | (`slot`, `partition`) | last `seq`, last `ts`, last `epoch` | Upserted in the batch transaction |
 | `<kind>_<projection>` | Owner-defined | Current state derived from the log (A4), payload columns encrypted likewise | Upserted in the batch transaction |
 | `<kind>_outbox` | (`slot`, `partition`, `seq`, `n`) | destination topic, key, headers, ciphertext payload, `ts` | Inserted in the batch transaction; expired by row-level TTL |
@@ -337,7 +350,16 @@ RFC's declaration:
 - **Grants.** Each owner service's database role may INSERT and SELECT on its own kind's
   log and outbox, UPSERT on its own head and projections, and SELECT on the session and
   slot tables; nothing on any other owner's tables except SELECT where a contract makes
-  them readable (RFC-000 A1). Status readers, the sealer and the relay are read-only.
+  them readable (RFC-000 A1). The only such read **inside an owner's own transaction** is
+  RFC-000 §8's **link displacement read** (revision 4.1, AI-R1-11): the account owner's role
+  has SELECT on `link_displacement` (the link owner's marker projection, keyed by link slot,
+  link and request, written only in the reduction's own batch) and on no other link table;
+  the confirm transaction makes one point read per Share leg (RFC-002). The read joins the
+  confirm's serialisable read set, so a reduction that commits after the read and before the
+  confirm aborts the confirm with a retry error, which re-reads and finds the marker; the
+  reduction is never blocked by it. Status readers, the sealer and the relay are read-only.
+  Grants are checked by the conformance job (§20.3): any UPDATE or DELETE on a log table by
+  an application role, or any cross-owner SELECT not named in RFC-000 §8, fails it.
 - **Encryption.** The runtime calls RFC-005's library to compress and encrypt every
   payload before the insert, with the partition, `seq` and `kind` as associated data, and
   data keys wrapped by keys held only in the Kenyan HSMs (RFC-000 AI5-3). Clear columns
@@ -371,10 +393,10 @@ RFC-000 §6).
 
 #### 4.2 Sessions, slot leases and epochs
 
-RFC-000 §5.2 states the owner lease as a row (slot → holder, epoch, expiry). RFC-006
-implements it as two tables, so that renewing costs one row per **process**, not one per
-slot (about 5,000 slots renewed twice a second would be 10,000 two-region writes a second
-for nothing; Architecture issue AI6-1):
+RFC-000 §5.2 (revision 4.1, AI6-1) states the owner lease as a slot row naming its holder
+session and epoch, valid while that session is live. RFC-006 implements it as two tables,
+so that renewing costs one row per **process**, not one per slot (about 5,000 slots renewed
+twice a second would be 10,000 two-region writes a second for nothing):
 
 | Table | Key | Columns | Written by |
 |---|---|---|---|
@@ -414,23 +436,51 @@ for nothing; Architecture issue AI6-1):
   increments the epoch in one transaction; the successor starts at once, without waiting
   for an expiry.
 
-#### 4.3 The epoch-guarded batch transaction
+#### 4.3 The epoch-guarded slot batch transaction
 
-Each partition has **one batch transaction in flight** (RFC-000 §3); entries that arrive
-while it commits form the next batch. A slot's partitions commit independently and in
-parallel.
+**One batch transaction in flight per slot** (RFC-000 §3 and §5.5, revision 4.1, AI3-11).
+The runtime keeps, per slot, a queue of pending `append` calls. When no transaction of the
+slot is in flight, it takes **every** pending call, of every partition of the slot, into one
+transaction; calls that arrive while it commits form the next. So each partition still has
+at most one transaction in flight, and its sequence stays contiguous and its `ts`
+monotone, because each partition reads and writes its own head row in the transaction.
 
 ```sql
 BEGIN;  -- SERIALIZABLE, statement timeout 2 s
 SELECT epoch FROM owner_slot WHERE kind = $kind AND slot = $slot;            -- must equal mine
-SELECT seq, ts FROM account_head WHERE slot = $slot AND partition = $p;      -- predecessor
-SELECT cluster_logical_timestamp();                                          -- this batch's ts
-INSERT INTO account_log (slot, partition, seq, epoch, kind, ts, ...) VALUES ($seq + 1, ...), ...;
-INSERT INTO account_outbox (...) VALUES (...), ...;
-UPSERT INTO account_head (...) VALUES ($slot, $p, $seq + n, $ts, $epoch);
-UPSERT INTO account_requests (...) VALUES (...);                             -- projections
+SELECT partition, seq, ts FROM account_head
+ WHERE slot = $slot AND partition = ANY($partitions);                        -- one row per partition in the batch
+SELECT ...;                                                                  -- each call's condition reads (own slot; the
+                                                                             -- displacement read where §3.7 names it)
+SELECT cluster_logical_timestamp();                                          -- this batch's ts, shared by its partitions
+INSERT INTO account_log (slot, partition, seq, epoch, kind, ts, ...) VALUES ...;  -- every partition's entries, seq per partition
+INSERT INTO account_outbox (...) VALUES ...;                                 -- incl. a report marker (§4.6) if due
+UPSERT INTO account_head (...) VALUES ...;                                   -- one per partition in the batch
+UPSERT INTO account_requests (...) VALUES ...;                               -- projections
 COMMIT;
 ```
+
+- **Per-call conditions.** Every read precedes every write. The runtime evaluates each
+  call's conditions on the rows read; a call whose condition fails contributes no write and
+  is answered `ConditionFailed(which)`; the others commit. One call's failure never aborts
+  another's.
+- **Size limits.** A batch carries at most `slot_batch_max_entries` (2,000) entries or
+  `slot_batch_max_bytes` (4 MB); the rest wait for the next. Per-partition order is the
+  order of calls.
+- **Batching wait.** An idle slot commits a call at once. A busy slot (the hottest links,
+  each on a slot of its own; an account near `account_rate_limit`) makes a call wait for up
+  to one commit: about 15 ms at p50 and 30 ms at p99 (est., RFC-000 R19). If the spike finds
+  this eats the admission margin, the first lever is a second in-flight batch for dedicated
+  link slots, which have one partition each, with the sequence assigned by the runtime and
+  the second batch's head read conditional on the first's (R19); the second is to give more
+  hot links dedicated slots.
+- **Crash points.** Before `COMMIT` is sent: nothing committed; the callers get "not known
+  to be committed" only if the process dies, otherwise the runtime retries. After `COMMIT`
+  is sent and before the answer: `Ambiguous` for **every** call in the batch; the runtime
+  reloads every partition of the batch (below). After the answer and before the outbox
+  publish: the changefeed relays the rows; a takeover republishes them (§4.4). After the
+  publish and before the callers are answered: callers retry with the same identities and
+  are answered from the deduplicated entries (A6).
 
 - The epoch read is the fence: if a successor's acquisition commits after this read and
   before this commit, this transaction cannot commit (its read is invalidated) and fails
@@ -441,21 +491,25 @@ COMMIT;
   decision row's primary key is the request, so a second deciding entry cannot commit
   (RFC-000 §5.5). The fence reads `τ` from the `platform_timing` row (§6.4) in the same
   transaction.
-- **Results** the runtime returns to the owner:
+- **Results** the runtime returns to each call in the batch:
 
   | Result | Meaning | Owner's action |
   |---|---|---|
   | `Committed(seq range, ts)` | Durable on a majority spanning two regions | Apply to memory; acknowledge; publish outbox rows (§5.3) |
-  | `Retry` (SQLSTATE 40001) | Not committed | Re-read epoch, head and rows; re-evaluate conditions; retry (up to `batch_retries` = 5, then `Overloaded`) |
+  | `ConditionFailed(which)` | This call's condition failed; nothing of it committed (the rest of the batch may have) | Owner decides (for example, answer "already decided") |
+  | `Retry` (SQLSTATE 40001) | Not committed (the whole batch) | Re-read epoch, heads and rows; re-evaluate every call's conditions; retry the batch (up to `batch_retries` = 5, then `Overloaded`) |
   | `StaleEpoch` | The epoch read differs from the holder's | Stop: the slot is lost (§4.4) |
-  | `Ambiguous` (SQLSTATE 40003, or a lost connection after COMMIT was sent) | May or may not have committed | **Reload** the partition from the log at the present timestamp; the batch committed if its first identity is there; never re-decide before that |
+  | `Ambiguous` (SQLSTATE 40003, or a lost connection after COMMIT was sent) | May or may not have committed (all or nothing, for the whole batch) | **Reload** every partition of the batch from the log at the present timestamp; the batch committed if its first identity is there; never re-decide before that |
   | `Overloaded(retry_after)` | Admission control or timeout | Back-pressure to callers, mapped by the owner RFC to its POL-04 answer |
 
 - **An owner's memory is a cache of its log** (RFC-000 §5.2): after any result other than
-  `Committed` the partition's memory is rebuilt from the head, the projections and the log
+  `Committed` or `ConditionFailed` the memory of each partition in the batch is rebuilt from the head, the projections and the log
   since the last projection checkpoint before the next decision.
 - The fence's epoch read goes to the slot row's leaseholder in R1, about 1 ms within the
-  metro (est.), inside RFC-000 §3's 2 to 5 ms of per-transaction overhead.
+  metro (est.), inside RFC-000 §3's 2 to 5 ms of per-transaction overhead. A batch of `n`
+  partitions adds one head point read and one head upsert per partition (batched
+  statements, about 0.1 ms each, est.); a slot's ranges are contiguous (§3.7), so most
+  batches touch one range per table.
 
 #### 4.4 Takeover, standbys and reload
 
@@ -466,12 +520,25 @@ Every slot has, besides its holder, two standbys that tail it (RFC-000 §5.1, AI
 | **In-region hot standby** | The other facility of the preferred region | Holder process, host or facility loss |
 | **Cross-region warm standby** | The other Kenyan region, spread over its two facilities | Region-wide failover (§7.4) |
 
+**Link slots have two hot standbys** (RFC-000 §5.1 and §5.4, revision 4.1, AI-R1-12): one
+in the other facility of the preferred region and one in the second Kenyan region, each
+holding the link's state **a fraction of a second behind**, so a takeover never rebuilds a
+hot link cold, even region-wide. Rating and attribution slots keep the hot in-region
+standby of AI3-9 and a warm cross-region one.
 - **Tailing.** A standby reads its slot's new log rows every `standby_poll` (250 ms) by
   follower reads from its own facility's replicas (`AS OF SYSTEM TIME
   follower_read_timestamp()`, so about 1.5 s behind, est.) and applies them to its memory
   exactly as the holder did. For rating and attribution, whose state is largely derived
   from their input feeds, the standby also consumes the same Kafka partitions as the
   holder, without acting on them.
+- **Push to link standbys.** A link slot's holder pushes every `Committed` batch (entries,
+  `seq` range, `ts`) to both its hot standbys over gRPC, as it does to status readers
+  (§4.6), without waiting for an acknowledgement; each standby applies a push only if its
+  `seq` continues what it holds for the partition, and fills a gap by reading the missing
+  rows at the present timestamp. The `standby_poll` tail still runs as the backstop. Lag:
+  about 1 to 5 ms in-region and 5 to 10 ms cross-region (est.); a lost push costs at most
+  one `standby_poll`. Cost: about 2 × 20,000 pushed batches a second at the design load
+  (est., §19.2), on the owner hosts' network, not the database.
 - **Takeover.** A standby watches its holder's `owner_session.expires_at` (read with the
   tail). When the session has expired by the database's clock, the in-region standby
   acquires the slot (§4.2); the cross-region standby does so only if the slot is still free
@@ -543,7 +610,16 @@ The logic is RFC-000 §4.6's; RFC-006 gives the mechanism.
   "every later majority holds it" (RFC-000 V-02 as restated in revision 4). Delay: about
   10 ms steady (the farthest reader is in R2), about 5 ms when only one region's readers
   remain (est., RFC-000 §3).
-- **Read leases.** A reader asks the holder for a read lease; the holder grants one only
+- **Report markers per account slot** (RFC-000 §4.6 and §8, revision 4.1, B-AI-8). The
+  report position is a property of the **slot**, not of a partition. Each time it advances
+  past the last marker, the runtime adds a marker outbox row (slot, epoch, report position)
+  to the **next batch** of the slot (§4.3), whatever partition that batch carries; if no
+  batch is due within `marker_max_wait` (20 ms), it commits a **marker-only transaction**
+  (the epoch read, the marker row in the slot's `_outbox` under a reserved partition `''`
+  with its own head and `seq`, nothing else). An idle account's outcome therefore never
+  waits for its own next entry. Marker-only transactions are about 10,000 a second at the
+  design load (est., RFC-002; §19.2). A marker is never written for a position the slot has
+  not reached, and never by a holder whose epoch is stale (the fence aborts it).- **Read leases.** A reader asks the holder for a read lease; the holder grants one only
   within its own owner lease (§4.2) and only if the reader has applied through its current
   report position. A lease lasts `read_lease` = 400 ms from the reader's **send** time of
   the request, and the reader treats it as expired `ε` (100 ms) before that. The holder does
@@ -588,7 +664,7 @@ majority, and every partition stops until an operator forces a reconfiguration. 
 in-sync-replica model lets a partition continue on the surviving region's two replicas
 once the controller (whose quorum includes R3's metadata-only controller) removes the lost
 ones from the in-sync set, with no unclean election. Redpanda would need a broker in R3
-holding data, which AI5-3 rules out (Architecture issue AI6-2).
+holding data, which AI5-3 rules out (RFC-000 revision 4.1, AI6-2).
 
 #### 5.2 Cluster topology and broker configuration
 
@@ -625,10 +701,13 @@ epoch, seq) (§5.5). The **takeover republish** (§4.4) adds a third copy only f
 `republish_window` of a slot that changed holder. Nothing in Kafka is a fact: a lost topic
 or cluster is rebuilt from the database (§5.6).
 
-**Report markers.** The request outcome feed carries the slot's report position as markers,
-written as outbox rows of the holder's next batch once the position advances (RFC-000
-§4.6); the notifier and every other consumer that reports outcomes acts only on outcome
-events at or below a marker it has seen.
+**Report markers.** The request outcome feed carries the slot's report position as
+**per-slot markers** (slot, epoch, report position), written as outbox rows of the slot's
+next batch or of a marker-only transaction (§4.6; RFC-000 B-AI-8). The outcome topic is
+**keyed by slot**, so a marker follows, in the same Kafka partition, every outcome it
+covers, by both publish paths. The notifier and every other consumer that reports
+outcomes acts only on outcome events at or below a marker of the same slot and an epoch
+at least the event's.
 
 #### 5.4 Topic conventions
 
@@ -636,7 +715,9 @@ events at or below a marker it has seen.
   `ingestion.handoff.v1`, `account.standing.v1`, `notifier.delivery.v1`); relay topics
   `cdc.<owner kind>`.
 - **Keys**: the producing partition, so one partition's events stay in order in one Kafka
-  partition. Kafka partition counts are a power of two at least the producer's slot count
+  partition; **except the request outcome feed, keyed by account slot** (B-AI-8), which
+  keeps every partition of a slot, and its markers, in one Kafka partition (order per
+  account partition is unchanged, since a slot's events are produced in commit order). Kafka partition counts are a power of two at least the producer's slot count
   divided by 4, and never decrease.
 - **Headers**: `partition`, `epoch`, `seq`, `ts` (commit timestamp), `kind`, `schema_v`,
   `key_id`, and for markers `report_through` or `resolved`.
@@ -743,7 +824,7 @@ transaction (§4.3), so a change orders before every later confirm.
 | Parameter | Value | Source |
 |---|---|---|
 | `ε_cfg` | **100 ms** | The database's `max_offset` (RFC-000 coordinator decision) |
-| `δ_x_cfg` | **160 ms** | RFC-000's worst-case `δ_x` (R1 lost, owners in R2, both commits through R3), to be confirmed at **p99.9** by the spike (AI-1; Architecture issue AI6-3) |
+| `δ_x_cfg` | **160 ms** | RFC-000's worst-case `δ_x` (R1 lost, owners in R2, both commits through R3), to be confirmed at **p99.9** by the spike (AI-1; RFC-000 revision 4.1, AI6-3) |
 | `τ_cfg` = max(`ack_budget`, `ε_cfg` + `δ_x_cfg`) | **260 ms** | RFC-000 §4.3: confirms only if `ts` < `D − 260 ms`; expiry entry at `D − 260 ms`; partner confirm window `commit_margin − τ` ≈ 9.7 s |
 
 One configured `τ` for every topology state: the worst-case value is what the fence must
@@ -794,7 +875,7 @@ with standbys like any other). Its state is tables in the database:
 | `region_preference` | `R1` by default, until the R1 spike measures each Kenyan region's RTT to R3 (RFC-000 R2-D7); changed by failover and failback |
 | `topology_events` | Every topology-state change (§7.3), with its detection time and evidence; insert-only; the **recorded losses** that a declaration names (§8.3) |
 | `zone_state` | The expected zone configurations (steady, failed over, 2 + 2 for R1 or R2, restoring) and the progress of every change |
-| `disasters` | Declared region disasters: the recorded loss they name, declaration and approval (operators, reasons, evidence, times), end and how it ended (restored or replaced) (§8.2) |
+| `disasters` | Declared region disasters: their **basis** (the recorded loss they name, or the probe evidence: region, first and last failing probe minute, each minute's probe count and success share, §8.2), declaration and approval (operators, reasons, evidence, times), the window start the system derived, end and how it ended (restored, replaced or, for a probe-evidence disaster, service recovered) (§8.2) |
 | `platform_timing` | §6.4 |
 
 Edges and owners read it through a cache refreshed from the placement feed and on any
@@ -959,35 +1040,58 @@ admission, at the cost of one extra R3 copy of the admission tables (§19.3). R3
 for the second voter set is **reserved** in GCP (a capacity reservation in a second zone),
 not obtained on demand, because on-demand capacity in one cloud region during a regional
 event is not assured (RK8). Fault tolerance for the non-admission tables takes hours, not
-the minutes RFC-000 implies (Architecture issue AI6-4).
+the minutes RFC-000 implies (RFC-000 revision 4.1, AI6-4).
 
 The automatic change is **not** made for "Kenyan link degraded" (both regions alive, R1
 still commits with R3), for a facility loss, or for R3's loss.
 
-#### 8.2 Declaration (RQ-A, as decided in `requirements-v1.6`)
+#### 8.2 Declaration (RQ-A in `requirements-v1.6`; probe evidence, RQ6-3 in `requirements-v1.7`)
 
 - **Who** (POL-06, POL-32, X2-S25, X1-S31). An operator in **network operations** declares a
-  region disaster through the operator console, with a reason and the evidence of the loss
-  (the `topology_events` record it names, facility reports), and the declaration takes
-  effect only once a **second network-operations operator** approves it. An attempt by any
-  other role is refused and recorded (RFC-005's approvals; the refusal is audited, X1-N8).
-  An unapproved declaration lapses after `approval_expiry` (72 h, POL-32), may be cancelled
-  by its requester, and its preconditions (an open recorded loss of that region) are
-  re-checked at approval. The **end** of a disaster is declared and approved the same way.
+  region disaster through the operator console, with a reason and its **basis**, and the
+  declaration takes effect only once a **second network-operations operator** approves it.
+  An attempt by any other role is refused and recorded (RFC-005's approvals; the refusal is
+  audited, X1-N8). An unapproved declaration lapses after `approval_expiry` (72 h, POL-32),
+  may be cancelled by its requester, and its basis is re-checked at approval. The **end** of
+  a disaster is declared and approved the same way.
+- **Basis** (POL-06; X2-S26, X2-S29). Exactly one of:
+
+  | Basis | Precondition, checked by placement at request and at approval | Window starts at |
+  |---|---|---|
+  | **Recorded loss** | An open `topology_events` loss of the region (§8.3), named by the declaration; facility reports attached as evidence | The recorded loss's detection time |
+  | **Probe evidence** (X2-S29) | No loss of the region recorded at any time from the run's first minute to the request; a **run** of at least `disaster_probe_minutes` (5, POL-06) consecutive UTC minutes in which **admission** was **not an available minute** in that region (§17.3), as recorded by the probe-results owner; the declaration names the run's first and last minute, and the minute before the first must have been an available minute, so the start is the run's own first minute and cannot be chosen | The run's **first minute** |
+
+  A declaration with neither basis is refused, recorded, and the minutes count against
+  every target (X2-S29, second row: four failing minutes, 10:00 to 10:03, are refused; five,
+  10:00 to 10:04, are declared from 10:00). The check reads the probe-results log, so the
+  evidence is the measurement's own record and cannot be supplied by the operator. A
+  request made while the run is still open names its last complete minute; the window,
+  once approved, runs from the first minute until the declared end whatever happened
+  since.
+- **Not available because unmeasured.** A minute is "not an available minute" also when it
+  had too few probes or locations (§17.3), so a probe-estate fault alone could build a run.
+  The system accepts such a run (the requirements define failing as not available, review
+  12, choice 1), but the declaration record shows each minute's probe count, the console
+  warns, RB-4 forbids declaring on a measurement fault, and the monthly report lists every
+  probe-evidence disaster with its counts (Requirements issue RQ6-4).
 - **When** (runbook RB-4): when a whole region has been lost for 10 min with no credible
   restoration within 1 h, or at once on confirmed destruction or loss of power in both its
-  facilities. A fibre isolation is **not** a disaster unless the region itself is lost
-  (RFC-000 R2-D2).
-- **Effects: measurement only.** The 2 + 2 change no longer waits for it (§8.1). The
-  declaration records, in `disasters`, the recorded loss it names, both operators, the
-  reasons and the evidence; the measurement pipeline then excludes the disaster window
-  (§18.4).
+  facilities; on probe evidence, when the region's admission has been unusable for at least
+  `disaster_probe_minutes` with no recorded loss (edges down with the database healthy, for
+  example) and the cause is a regional failure, not a single slot or a measurement fault. A
+  fibre isolation is **not** a disaster unless the region itself is lost (RFC-000 R2-D2).
+- **Effects: measurement only.** The 2 + 2 change no longer waits for it (§8.1), and a
+  probe-evidence declaration changes no placement or topology state. The declaration
+  records, in `disasters`, its basis, both operators, the reasons, the evidence and the
+  window start the system derived; the measurement pipeline then excludes the disaster
+  window (§18.4).
 
-#### 8.3 When a disaster counts from (RQ-B, as decided)
+#### 8.3 When a disaster counts from (RQ-B and RQ6-3, as decided)
 
 POL-06: a declared disaster lasts, for every measurement, **from the loss of the region as
-the system recorded it when it happened** until the declared end; a loss never declared
-is no disaster.
+the system recorded it when it happened**, or, with no recorded loss, **from the first
+failing probe minute** of the run it was declared on (X2-S29), until the declared end; a
+loss never declared is no disaster.
 
 - **The recorded loss** is a `topology_events` row of kind *region unreachable* or *region
   gated* for that region, written by placement at detection with its detection time, or the
@@ -1001,11 +1105,19 @@ is no disaster.
 - **A loss never declared** leaves no window: every minute counts against every target, in
   each serving region (X2-S28). The recorded loss is still kept, and the monthly report
   lists it.
-- **The end** is the approved end declaration's time. A disaster can be ended only once the
-  region is restored or replaced (§8.4).
+- **The end** is the approved end declaration's time. A recorded-loss disaster can be ended
+  only once the region is restored or replaced (§8.4); a probe-evidence disaster once the
+  region's admission has had at least one available minute since the run, or the region is
+  replaced. The end cannot be backdated.
+- **A disaster left open over a healthy region** pages network operations and the
+  compliance audit read when the region's admission has been available for
+  `disaster_healthy_alert` (30 min) with the disaster still open, and every such interval
+  is listed in the monthly report, so the exclusion cannot be kept open silently.
 - A region that is reachable but unusable without being gated (for example its edges down
-  with its database healthy) has no recorded loss, so it cannot be declared; it counts
-  against availability (Requirements issue RQ6-3).
+  with its database healthy) has no recorded loss; it may now be declared on probe evidence
+  (X2-S29; RQ6-3 resolved in `requirements-v1.7`). If a loss of the region is recorded
+  during or after a failing run, the declaration must name the recorded loss and counts from
+  it, as POL-06's first rule says (the reading of RQ6-5).
 
 #### 8.4 Restoration or replacement
 
@@ -1211,7 +1323,10 @@ This section is the complete semantics of RFC-000 §8's **substrate conventions*
 epoch-conditional writes, leader placement for every group and region-wide failover, the
 automatic 2 + 2 reconfiguration, closed and report positions, read leases and status
 replicas, the transactional outbox, changefeeds and Kafka topics; the clock bound `ε` and
-the monitored quantities". It is a TypeScript interface of the owner runtime (§4); the
+the monitored quantities", with revision 4.1's additions: the truncation role (AI5-8),
+owner leases as session rows plus slot epochs (AI6-1), slot batch transactions (AI3-11),
+hot standbys for link slots (AI-R1-12), the standing R3 non-voter for admission tables
+(AI6-4), R3 on Kenyan time (AI6-5) and `δ_x_cfg` at p99.9 (AI6-3). It is a TypeScript interface of the owner runtime (§4); the
 delivery phase defines the exact signatures.
 
 #### 12.1 Schema
@@ -1228,14 +1343,17 @@ delivery phase defines the exact signatures.
   (after the catch-up of §4.4) and when it is lost or handed off. Between them the owner is
   the slot's only writer.
 - `append(partition, entries[], projections, outbox[]) → Committed(seqFrom, seqTo, ts) |
-  Retry | StaleEpoch | Ambiguous | Overloaded(retryAfter)`, as §4.3. **Committed** means
+  ConditionFailed(which) | Retry | StaleEpoch | Ambiguous | Overloaded(retryAfter)`, as §4.3. **Committed** means
   durable on a majority spanning two regions; it is the only success. Every other result is
   "not known to be committed"; the caller retries with the **same identities**, and the
   owner's entries deduplicate by identity in the same transaction that applies the effect
-  (A6). The runtime batches calls per partition (one transaction in flight).
+  (A6). The runtime batches calls **per slot**: one transaction in flight per slot,
+  carrying every partition with calls pending (§4.3; AI3-11); a call may also return
+  `ConditionFailed(which)` while the rest of its batch commits.
 - `conditions`: an `append` may carry conditions over rows of its own slot (for example
-  "no decision row for request r") and over `ts` ("`ts` < `D − τ`"); a failed condition
-  commits nothing and returns which failed.
+  "no decision row for request r"), over `ts` ("`ts` < `D − τ`") and, for the account owner
+  only, over the link displacement read (§3.7; RFC-000 §8); a failed condition commits
+  nothing of that call and returns which failed.
 - `leaseValid() → { valid, untilMonotonic }`: the owner must check it immediately before
   any action taken from memory rather than through `append` (a headroom answer, the checks
   before a partner confirm, a command sent, RFC-000 §3).
@@ -1272,7 +1390,8 @@ delivery phase defines the exact signatures.
   after `Committed` and the changefeed relays them (§5.3).
 - `subscribe(topic, fromCheckpoint, gate = 'committed' | 'reported') → events in seq order
   per producer partition, deduplicated, gaps filled from the log (§5.5)`. `reported`
-  delivers outcome events only at or below a report marker (A10).
+  delivers outcome events only at or below a report marker of the same account slot
+  (A10, B-AI-8).
 - Delivery is **at least once, in `seq` order per producer partition**, with no order across
   partitions (RFC-000 §4.5). A consumer that is an owner checkpoints in its own `append`.
 - Resolved markers: `onResolved(topic, R)`: no event with `ts` ≤ `R` will follow on that
@@ -1321,6 +1440,8 @@ delivery phase defines the exact signatures.
 | `δ_x_cfg`, `τ_cfg` | 160 ms, 260 ms | §6.4 |
 | `session_ttl`, `session_renew` | 3 s, 500 ms | §4.2 |
 | `standby_poll`, `standby_grace` | 250 ms, 1 s | §4.4 |
+| `slot_batch_max_entries`, `slot_batch_max_bytes` | 2,000, 4 MB | §4.3 |
+| `marker_max_wait` | 20 ms | §4.6 |
 | `republish_window` | 30 s | §4.4 |
 | `batch_retries` | 5 | §4.3 |
 | `heartbeat_interval` (owner → readers) | 100 ms | §4.6 |
@@ -1336,6 +1457,9 @@ delivery phase defines the exact signatures.
 | Kafka `min.insync.replicas` | 3 (2 while degraded) | §5.2 |
 | `seal_interval` | 60 s or 64 MB | §13.2 |
 | `tail_buffer` | 24 h | §13.2 |
+| `disaster_probe_minutes` (POL-06, a policy parameter, listed for reference) | 5 consecutive minutes | §8.2 |
+| `disaster_healthy_alert` | 30 min | §8.3 |
+| `pd_backup_retention`, `kek_generation_period` (RFC-005's parameters; RFC-006 enforces them on storage) | as RFC-005 states, within `erasure_max` (POL-19, 30 days) | §14.4 |
 
 ### 13. History and archive: retention for 7 years
 
@@ -1387,13 +1511,18 @@ archive, because no personal data is in it (X1-S34, X1-S37).
 
 - **Two-region durable** means any two of the three stores have acknowledged the segment and
   its checksum has been verified on read-back.
-- **Truncation.** The **truncator** role, the only role with DELETE on log tables, deletes a
-  slot's rows with `ts` ≤ `T` only once the segment covering them is two-region durable,
-  and never rows newer than the oldest resolved timestamp of any registered consumer that
+- **Truncation** (RFC-000 §5.5, revision 4.1, AI5-8). The **truncator** role, the only role
+  with DELETE on log tables, granted to the truncation job alone, deletes a slot's rows with
+  `ts` ≤ `T` only once the segment covering them is two-region durable **and** at or below
+  the **sealed-through watermark** that audit (RFC-005) writes per slot and kind after
+  verifying the segment against the live rows and the hash chain, and never rows newer than the oldest resolved timestamp of any registered consumer that
   is less than `tail_buffer` behind. Its deletes are range deletes in `seq` order and their
   MVCC garbage is collected after `gc.ttlseconds`. With the archive healthy the live tail
   is minutes of log (est.); the database is sized to buffer 24 h (§19.4), and archive lag
-  alarms at 10 min (warning) and 1 h (page).
+  alarms at 10 min (warning) and 1 h (page). The job reads the watermark in its own delete
+  transaction, so a watermark lowered or not yet written stops it; audit detects any row
+  missing above the watermark (RFC-005). Audit's verification adds a lag of minutes (est.)
+  between sealing and truncation, inside `tail_buffer`.
 
 #### 13.3 Indexes and queries
 
@@ -1458,7 +1587,8 @@ be undone to a point in time without replaying 7 years.
 
 - **Scope.** Every table except the high-volume ingestion, attribution and rating log and
   outbox tables, whose rows the archive holds write-once within `seal_interval` plus the
-  archive lag; the account, link, partner, ledger, payments and every other log are
+  archive lag, and except the **personal-data store's tables**, which have their own
+  schedule (§14.4); the account, link, partner, ledger, payments and every other log are
   included. This keeps the incrementals to about 60 MB/s per destination (est., §19.3).
 - **Encryption.** Backups are encrypted with a backup key held in the Kenyan HSMs, exposed
   to the scheduler through a KMS interface; payload columns are already ciphertext (§3.7),
@@ -1494,22 +1624,53 @@ to a point before the faulty release and replaying forward, then let the owner a
 corrective entries where its own rules say so (corrections are new facts). Releases roll
 out one facility at a time with canary digests (RB-13).
 
-#### 14.4 The personal-data store: backups and key destruction (A11, X1-N11)
+#### 14.4 The personal-data store: backups and key destruction (A11, X1-N11, POL-19)
 
-RFC-005 owns the personal-data store; RFC-006 runs its storage. Its tables are in the same
-database, with their own zone configuration (2 + 2 + 1, no non-voters), encrypted per data
-subject with subject keys held in an HSM-backed key store in both Kenyan regions.
+RFC-005 owns the personal-data store, its key hierarchy (`KEK_PD` generations, rotated
+every `kek_generation_period`) and the erasure itself; RFC-006 runs its storage. Its tables
+are in the same database, with their own zone configuration (2 + 2 + 1, no non-voters),
+holding subject keys wrapped under the current `KEK_PD` generation and items encrypted under
+the subject keys. They also hold, since `requirements-v1.7`, the payloads of flow records
+refused for not conforming to their template (P3-S71, RFC-003, RFC-000 AI3-12), each kept
+until an erasure it falls under or `dispute_window` + 7 days after receipt; at the design
+load this is sized at 0.01% of records refused (est.), about 26 payloads/s of 100 KB on
+average, about 225 GB a day and about 8 TB per copy over `dispute_window` (30 days) + 7
+days, to be replaced by the measured refusal rate (§19.4, RK27).
 
-- **Data backups** are part of the database backups (§14.1); they hold only ciphertext.
-- **Key-store backups** are taken daily, encrypted under the HSMs' master key, kept for
-  `pds_key_backup_retention` (35 days) under object lock, in Kenya only.
-- **Erasure** destroys the subject's key in the live key store at once (RFC-005), so every
-  live copy is unreadable immediately; every backup of the data is unreadable once the last
-  key-store backup holding the key expires, at most 35 days later. Restores of the key store
-  re-apply every erasure recorded since the backup (erasures are themselves facts in
-  identity's log), so a restore never resurrects an erased key. Whether 35 days is an
-  acceptable completion time for erasure is not stated in the requirements (Requirements
-  issue RQ6-1).
+**The bound** (POL-19, `requirements-v1.7`): an erasure is complete in every copy, the live
+store, every backup and every escrowed copy, within **`erasure_max` = 30 days of the
+request** (X1-N11, X1-S39). The copies RFC-006 keeps, and how each meets it:
+
+| Copy | Kept by | Becomes unrecoverable | Bound |
+|---|---|---|---|
+| Live store (three Kenyan voters and R3's voter) | RFC-006 storage; RFC-005 erases | At the erasure transaction's commit (the subject key's row deleted; MVCC history removed after the store's `gc.ttlseconds` of **1 h**, set apart from §3.6's 4 h) | Execution time + 1 h |
+| The store's own backups (**this schedule only**) | RFC-006 | When the `KEK_PD` generation it was taken under is destroyed (RFC-005), and the backup object itself deleted within 24 h of that destruction | Generation's destruction + 24 h |
+| Database backups of other tables (§14.1) | RFC-006 | Hold no personal data (A11; DT-25 checks), so nothing to erase | — |
+| Escrow of `KEK_PD` generations | RFC-005 | Destroyed generation by generation with the HSM copies | RFC-005 |
+| Archive, Kafka, logs | RFC-006 | Hold no personal data (A11) | — |
+
+- **Schedule.** `CREATE SCHEDULE backup_pds FOR BACKUP TABLE pds.*` to Ceph RGW in R1 and R2
+  only (never GCS), daily full plus hourly incrementals, no revision history beyond
+  `pd_backup_retention`, encrypted with the backup key. Each backup's object is tagged with
+  the `KEK_PD` generation current when it was taken (from RFC-005's generation table, read in
+  the backup's AS OF SYSTEM TIME), and written under an object lock no longer than
+  `pd_backup_retention` (RFC-005's parameter), so deletion is never blocked by the lock.
+- **Deletion with the generation.** RFC-005's generation-destruction ceremony is an entry in
+  identity's log; the backup pruner (a NestJS job on the history service's slots) consumes
+  it and deletes every backup object tagged with that generation or an older one, within
+  **24 h**, then records the deletion. A daily **erasure-conformance check** lists every
+  backup object of the store and pages compliance and platform on-call if any is tagged with
+  a destroyed generation, is older than `pd_backup_retention` + 24 h, or sits outside the
+  two named buckets.
+- **Restores** of the store (from its own backups, RB-10) re-apply every erasure recorded in
+  identity's log since the backup before the store serves, so a restore never resurrects
+  an erased subject; a backup whose generation is destroyed cannot be restored at all.
+- **What RFC-006 requires of RFC-005** (the arithmetic is RFC-005's): its execution time
+  for a request, plus `kek_generation_period`, plus `pd_backup_retention`, plus RFC-006's
+  24 h deletion, must not exceed `erasure_max` (30 days). RFC-006's own share is the 24 h
+  deletion and the 1 h garbage collection. The revision 2 key-store backups kept for 35
+  days are removed: subject keys live only in the store's tables and its generation-tagged
+  backups.
 
 ### 15. Notifier
 
@@ -1595,7 +1756,7 @@ reports, and every platform alarm in this RFC).
 | Item | Design |
 |---|---|
 | Probe runners | Three colocation sites per serving region, outside Share's facilities, within about 10 ms (RFC-000 D2); persistent TLS connections to the region's **unicast** edge address (§2), so each region is measured on its own |
-| **Probe accounts** (RQ-C, X2-S27) | **One designated probe account per account slot** (1,024 at the design load; one more for every slot added), each Share-internal, with identifiers chosen so that each hashes to its slot. "Every part of admission and the wallet that serves accounts" is read as **every account slot**, the unit in which the account owner, its funds module and its status reads are owned, fail and fail over (§4.1); probing every slot every minute means no slot can fail unseen (Requirements issue RQ6-2 asks the requirements to confirm the reading). Each has a `credit_limit` set by a finance operator (POL-15, POL-32), counts as vetted, is never invoiced, and has one agent key per runner. No probe account is a buyer's account (designation is set only on a new Share-internal account, §17.4) |
+| **Probe accounts** (RQ-C, X2-S27) | **One designated probe account per account slot** (1,024 at the design load; one more for every slot added), each Share-internal, with identifiers chosen so that each hashes to its slot. "Every part of admission and the wallet that serves accounts" is read as **every account slot**, the unit in which the account owner, its funds module and its status reads are owned, fail and fail over (§4.1); probing every slot every minute means no slot can fail unseen. `requirements-v1.7` adopts this reading (RQ6-2; X2-S27 retitled "every account slot of admission and the wallet is probed"). The wallet's balance and headroom answer is the account owner's funds module in the same slot, so one probe account per account slot covers both. Each has a `credit_limit` set by a finance operator (POL-15, POL-32), counts as vetted, is never invoiced, and has one agent key per runner. No probe account is a buyer's account (designation is set only on a new Share-internal account, §17.4) |
 | Probe links | 64 designated probe links per serving region, each a Share link on Share's own equipment in that region with a large virtual capacity (10 Gbps), spread over link slots and both facilities' processes |
 | **Probe supplier** | One designated Share-internal supplier owning every probe link; it never earns (nothing is settled), and its payout runs always end "nothing due" (X2-S20, RQ-C) |
 | Probe exporters | Eight per serving region, spread over ingestion slots |
@@ -1712,8 +1873,11 @@ the notifier, so each timing is exact to within twice the measured offset.
 #### 18.4 Declared-disaster exclusions (X2-S19, X2-S23, X2-S26, X2-S28)
 
 The measurement pipeline reads the `disasters` table (§7.1). A window runs from the
-**recorded loss** the declaration names (§8.3) to the approved end; minutes before the
-recorded loss, and every minute of a loss never declared, count as usual.
+**recorded loss** the declaration names, or for a probe-evidence declaration from the
+**first failing probe minute** of its run (§8.3), to the approved end; minutes before that
+start, and every minute of a loss never declared, count as usual. Because a declaration
+may be approved after the month's report was generated, the report is regenerated on every
+approved declaration or end, and every version is kept.
 
 | Measurement | Treatment in the window |
 |---|---|
@@ -1724,7 +1888,10 @@ recorded loss, and every minute of a loss never declared, count as usual.
 
 A declaration approved at 10:20 for a loss recorded at 10:00 (X2-S26) excludes 10:00 onwards;
 the minutes 09:40 to 10:00 that an operator may claim count. A recorded loss from 10:00 to
-10:20 never declared (X2-S28) counts in full. The monthly report lists every recorded loss,
+10:20 never declared (X2-S28) counts in full. With no recorded loss, admission probes
+failing in every minute from 10:00 to 10:04 and a declaration approved at 10:20 (X2-S29)
+exclude 10:00 onwards, latency included (X2-N3); failing from 10:00 to 10:03 only, the
+declaration is refused and every minute counts. The monthly report lists every recorded loss,
 declared or not, with its window.
 
 #### 18.5 Error budgets and canaries
@@ -1760,18 +1927,18 @@ declared or not, with its window.
 
 | Load | Transactions/s (est.) | Note |
 |---|---|---|
-| Account owners | about 50,000 | Intake and deciding entries for 25,000 requests/s, little batching (about 25 requests/s per active account slot partition), plus marks and "releases durable" |
-| Link owners | about 35,000 | The hottest link batches about 75 to 150 entries per transaction (about 33 a second); other links have low per-link rates |
+| Account owners | about 30,000 batches + about 10,000 marker-only | About 55,000 entries/s (intake and deciding entries for 25,000 requests/s, marks, "releases durable") in one transaction in flight per slot (§4.3): at most about 33 a second per slot of 1,024, about 1.8 entries per batch on average (est.); marker-only transactions where no batch is due within 20 ms (§4.6, B-AI-8) |
+| Link owners | about 15,000 | 640 slots at up to about 33 batches a second; the hottest link's dedicated slot batches about 75 to 150 entries per transaction |
 | Ingestion | about 600 | One per accepted batch of about 1,000 records |
-| Attribution, rating, settlement, ledger | about 10,000 | Feed applications and one movement per account and minute |
-| Payments, notifier, alerts, others | about 25,000 | 20,000 webhook deliveries/s each an entry |
+| Attribution, rating, settlement, ledger | about 3,000 | About a quarter of per-partition batching (RFC-000 §3, AI3-11) |
+| Payments, notifier, alerts, others | about 10,000 | 20,000 webhook delivery entries/s on 256 notifier slots, about 2 to 3 per batch |
 | Session renewals | about 2,400 | About 1,200 processes (both regions) twice a second |
-| **Total** | **about 120,000** | About 6 statements each, about 700,000 statements/s at R1's leaseholders |
+| **Total** | **about 70,000** | Statements per transaction rise with partitions per batch (one head read and upsert each): about 10 each, about 700,000 statements/s at R1's leaseholders, as before. Node counts are unchanged: per-statement cost, not transaction count, sizes them (est.) |
 
 | Item | Per Kenyan facility | R3 | Notes |
 |---|---|---|---|
 | Database nodes (64 vCPU, 256 GB RAM, 4 × 3.84 TB NVMe) | 24 | 8 per zone × 3 zones running; 24 reserved | Leaseholder work about 700 vCPU at about 1,000 statements per vCPU-second (est., to be measured), plus follower work about 30%: about 900 vCPU, 59% of one facility's 1,536 |
-| Owner hosts (64 cores, 256 GB) | 28 | — | About 600 owner processes per region at about 2 cores each (est.; Node.js taken at about 2.5 × RFC-006 revision 1's Go estimate), all within one facility at ≤ 70%, plus the hot standbys of the other facility |
+| Owner hosts (64 cores, 256 GB) | 28 | — | About 600 owner processes per region at about 2 cores each (est.; Node.js taken at about 2.5 × RFC-006 revision 1's Go estimate), all within one facility at ≤ 70%, plus the hot standbys of the other facility and, in the other region, the link slots' cross-region hot standbys (about 640 slots applying pushed batches, about 40 cores, est.) |
 | Status-reader hosts | 4 (8 reader processes, §4.6) | — | 25,000 polls/s per facility, most from pushed state |
 | Kafka brokers (32 cores, 128 GB, 8 × 3.84 TB NVMe) | 6 | — (one KRaft controller) | §19.3 |
 | KRaft controller | 1 | 1 | Small hosts |
@@ -1812,6 +1979,7 @@ replication (Risk RK6).
 | **Archive** (§13.2): raw flow records about 2.9 PB, ledger lines about 2.2 PB, account and link logs about 1.1 PB (up to 3.8 PB if every kind is `7y`), rating, attribution, payments and audit about 1 PB | **about 7 to 10 PB**, growing about 1.2 PB a year | 2 (cold), 3 for the hot 13 months | about 16 to 22 PB |
 | **Database, live**: payment reference bindings (about 2×10¹¹ at about 100 B with index, RFC-000 §6) about 22 TB; ledger watermarks, record-identity range sets, projections and 63 M active reservations about 3 TB; log tails (minutes normally) and outbox (25 h at about 60 MB/s, about 5 TB) | **about 30 TB normally; about 50 TB with a 24 h archive outage buffered** | 5 voters, plus non-voters of the account tables (about 2 TB each) and admission tables | about 160 to 260 TB; about 40 to 65 TB per Kenyan facility, about 15% of its NVMe |
 | **Kafka**: 3 days of the high-volume topics and 7 days of the rest, 4 replicas | about 60 TB | 4 | about 240 TB, about 10 TB per broker |
+| **Personal-data store**: subject items and keys (about 10⁶ subjects, under 1 TB) and refused-template payloads (about 8 TB, §14.4) | about 9 TB | 5 voters | about 45 TB; its own backups about 2 × `pd_backup_retention` of fulls on Ceph only |
 | **Backups**: 35 days, weekly fulls of about 10 TB (the backed-up tables) and hourly incrementals of about 60 MB/s | about 0.35 PB | 2 (GCS, Ceph) | about 0.7 PB |
 
 The live database grows by about 3 TB a year per copy, almost all payment reference
@@ -1895,7 +2063,7 @@ arithmetic is redone before go-live.
 | RB-1 | Database node loss | Confirm every range has a leaseholder (no unavailable ranges); confirm probe minutes; after 5 min confirm replicas re-placed in the same facility; open a hardware ticket; decommission the old node ID if it will not return |
 | RB-2 | Owner host loss | Confirm standbys hold every slot (dashboard: slots without a live holder = 0); confirm no `Ambiguous` batch left unresolved; restart or replace the host; standbys re-created |
 | RB-3 | Facility loss | Confirm leases and slots consolidated in the surviving facility; check CPU headroom (§19.1 rule 2); freeze deploys; confirm Kafka in-sync at 3; track recovery; rejoin as new nodes |
-| RB-4 | Region-wide failover (automatic) and declaration | Verify trigger and evidence; verify every admission slot in the new region within 30 s; confirm Kafka `min.insync.replicas` 2; watch the 10 min timer for the automatic 2 + 2; within 10 min decide whether to declare (§8.2); **declaration**: network operations declares naming the recorded loss, with reason and evidence; a second network-operations operator approves; publish the customer notice |
+| RB-4 | Region-wide failover (automatic) and declaration | Verify trigger and evidence; verify every admission slot in the new region within 30 s; confirm Kafka `min.insync.replicas` 2; watch the 10 min timer for the automatic 2 + 2; within 10 min decide whether to declare (§8.2); **declaration**: network operations declares naming the recorded loss, with reason and evidence; a second network-operations operator approves; publish the customer notice. **On probe evidence** (no recorded loss): only after RB-12 has shown a service fault of the whole region, not a slot or a measurement fault; name the failing run the console shows (at least `disaster_probe_minutes`); second operator approves; end it once admission there is available again |
 | RB-5 | Automatic 2 + 2 in progress | Watch class progress (system, admission within minutes; others within hours); confirm R3 reserved capacity in use; confirm no range needs 4 of 4; escalate if admission is not done in 10 min |
 | RB-6 | Restore a region, end a disaster, fail back | Wipe and rejoin as new nodes; revert zone configurations in class order; watch up-replication; Kafka reassignment and `min.insync.replicas` 3; probes pass in the region; **end** declared and approved by two network-operations operators; after 30 min stable, order failback (T4) |
 | RB-7 | Fibre cut (one or both N–M paths, or a Kenya–J path) | Confirm network failover; for both N–M paths: priority-one with carriers; do not declare (counts against availability); consider T4 to R2 only if R2 reaches R3 better and the cut will last hours |
@@ -1977,7 +2145,11 @@ Each cites the scenario it serves (docs/README.md conventions).
 | DT-22 Records, movements, payment events and reservation changes back-dated 7 years less one day are returned unchanged from the cold tier, for every format version | X2-S11 |
 | DT-23 A webhook delivery survives a notifier holder failover without loss, is retried with backoff for 24 h, and carries the same event ID on every attempt; a notice is "told" once in the notice list and first attempted | P2-S09, P1-S75 |
 | DT-24 An alert raised in an owner's log reaches the alert service after the alert service's holder is killed | P2-S53 |
-| DT-25 No personal data appears in any log table, outbox row, Kafka message, archive segment, backup of an owner table or application log (scanner over samples of each); an erased subject's data is unreadable in the live store at once and in every backup after `pds_key_backup_retention` | X1-S34, X1-S37 (with RFC-005) |
+| DT-25 No personal data appears in any log table, outbox row, Kafka message, archive segment, backup of an owner table or application log (scanner over samples of each); an erased subject's data is unreadable in the live store at once; after a generation's destruction, every backup object tagged with it is deleted within 24 h, and the daily erasure-conformance check pages on any left | X1-S34, X1-S37, X1-S39 (with RFC-005) |
+| DT-26 With no recorded loss of R1, admission not available in R1 in every minute 10:00 to 10:04: a declaration at 10:20 approved by a second operator excludes from 10:00 until its end, for availability and latency; with 10:00 to 10:03 only, it is refused and recorded; naming 10:01 as first minute when 10:00 also failed is refused; with a loss of R1 recorded at 10:06, the declaration must name it and counts from 10:06; an open disaster over a region available for 30 min pages | X2-S29 |
+| DT-27 A slot batch carrying partitions p and q, with q's condition failing, commits p only; an `Ambiguous` batch reloads both; a deposed holder's batch commits neither | X2-S09, X2-S14 (and POL-05 via RFC-001) |
+| DT-28 Killing a hot link's holder: the in-region hot standby serves within 5 s with no reload from the log beyond the last pushed batch; isolating the region: the cross-region hot standby likewise | X2-S10 (and P1-S54, P1-S62 via RFC-001) |
+| DT-29 An outcome on an idle account slot is followed within `marker_max_wait` + commit by a marker covering it, in the same Kafka partition; the notifier never delivers above a marker | P2-S09 (with RFC-002) |
 
 ## Benefits
 
@@ -1992,10 +2164,10 @@ Figures marked "est." are estimates (to be replaced by the R1 spike and the load
 | Charge timeliness and attribution lag, 99.99% of minutes (X2-S13, S22) | Hot standbys tailing within about 1.5 s take over in about 4 to 5 s: no breaching minute (est.) |
 | Confirm fence and deadlines (POL-26, P2-S93) | `τ` = 260 ms in every state, configured from the worst case; `τ` is a row read in the confirm transaction, so it moves earlier the moment measured `δ_x` grows; GNSS/PTP keeps offsets far below the 40 ms alarm and the 80 ms self-termination |
 | Single writer across failures (POL-05) | Sessions and slot epochs, every write conditional on the epoch under serialisable isolation, `moved`/`adopt`, sequences on every feed event |
-| Auditable measurement (X2-N1, X2-S25 … S28) | Every probe result and monthly figure kept and recomputable; absence of probes never counts as available; disaster windows start at a loss the system recorded and need two network-operations operators |
+| Auditable measurement (X2-N1, X2-S25 … S29) | Every probe result and monthly figure kept and recomputable; absence of probes never counts as available; disaster windows start at a loss the system recorded, or at the first minute of a run of failing admission probes the probe-results log recorded, and need two network-operations operators |
 | Retention 7 years (X2-S11, POL-19, X1-S15) | Write-once, two-region (three while hot), hash-chained, encrypted columnar archive; format corpus; quarterly retrieval at the retention edge; backups for point-in-time recovery of current state |
-| Design load (X2-S03, S04) | About 120,000 transactions/s on 24 database nodes per facility, each facility able to hold every lease at ≤ 70% CPU (est.); slots split without re-partitioning |
-| Personal data erasable (A11, X1-N11) | No platform store holds personal data in clear; the personal-data store's backups are ciphertext and its key backups expire in 35 days |
+| Design load (X2-S03, S04) | About 70,000 transactions/s (about 700,000 statements/s) on 24 database nodes per facility, each facility able to hold every lease at ≤ 70% CPU (est.); slots split without re-partitioning |
+| Personal data erasable within `erasure_max` (A11, X1-N11, X1-S39) | No platform store but the personal-data store holds personal data; its backups are apart, generation-tagged, deleted within 24 h of their generation's destruction and checked daily, so RFC-006 adds at most about a day to RFC-005's erasure arithmetic |
 | A platform the team can build and run (RFC-000 RK10) | No consensus code of Share's own: an off-the-shelf database and Kafka under a TypeScript runtime of a few thousand lines, one language with the rest of Share's stack |
 
 ## Competition
@@ -2048,61 +2220,72 @@ Figures marked "est." are estimates (to be replaced by the R1 spike and the load
 | RK10 | *(Closed.)* Team size and skills for a custom consensus platform | Substrate changed by RFC-000 revision 4; Competition |
 | RK11 | **Correlated loss of both Kenyan regions** (shared country, grid, some fibre; RFC-000 R2) | Outside X2-N4. R3's voters, the GCS archive and GCS backups remain; recovery would lose commits not yet on R3. Stated, not designed for; the quarterly full restore from GCS (§14.2) times it |
 | RK12 | **Webhook load unknown** (R10) | Provisional 20,000/s (§15); measured once buyers integrate |
-| RK13 | **`δ_x` tail in the degraded state**: RFC-000's 160 ms is a p99 figure; at p99.9 the worst state may exceed it | A-T2 raises `τ` automatically; the spike measures p99.9 (AI6-3) |
+| RK13 | **`δ_x` tail in the degraded state**: RFC-000's 160 ms is a p99 figure; at p99.9 the worst state may exceed it | A-T2 raises `τ` automatically; the spike measures p99.9 (AI6-3, adopted in RFC-000 revision 4.1) |
 | RK14 | **Gray failures that probes do not catch** (a reader or node) | Internal canaries in every slot, reader and relay (§18.5) |
 | RK15 | **The database is a product Share does not control** (RFC-000 R18): closed-timestamp behaviour, lease failover time, changefeed scale, per-transaction cost, upgrade regressions | Enterprise licence and support as go-live conditions; the spike measures each figure; YugabyteDB retained; one facility at a time upgrades with canary digests; no unreviewed setting changes (RB-17) |
 | RK16 | **Range-lease failover may exceed the hot-standby budget**: a database node loss under the rating path's ranges could cost a breaching minute (§10.3) | Spike exit criterion p99 ≤ 6 s; the budget absorbs about four such events a month meanwhile |
 | RK17 | **Node.js pauses** (garbage collection, blocking) under owners | Loop-delay self-fencing, worker threads for heavy work, measured pauses per process class (§4.7) |
-| RK18 | **Fault tolerance after the 2 + 2 change takes hours for non-admission tables** (snapshot volume) | Standing non-voters for admission; delegated snapshots inside R3; snapshot rate raised; RFC-000 told (AI6-4) |
+| RK18 | **Fault tolerance after the 2 + 2 change takes hours for non-admission tables** (snapshot volume) | Standing non-voters for admission; delegated snapshots inside R3; snapshot rate raised; stated as a known cost in RFC-000 revision 4.1 (AI6-4) |
 | RK19 | **Degraded latency in undeclared states** (double Nairobi–Mombasa cut, an isolated region before its 2 + 2 or never declared) counts against the targets | The go-live condition; RB-7; the two-write path as the first lever (§8.5) |
 | RK20 | **Changefeeds at scale**: about 20 changefeeds over thousands of ranges, R3-planned aggregators, resolved-timestamp lag | The spike measures lag; the polling relay is the fallback (Competition); the direct publish and gap fill make changefeed lag cost latency, not facts |
 | RK21 | **A drift of the whole cluster** is invisible to the database's own checks | External references and the cluster level of the ladder (§6.2, §6.3); safety does not depend on it (A8) |
 | RK22 | **Live database growth from 7-year payment reference bindings** (about 22 TB per copy at year 7) | Sized for (§19.4); RFC-004 may move bindings older than 13 months to a history index |
 | RK23 | **Ciphertext limits database compression**: payloads compressed by owners entry by entry compress worse than columnar storage would | Accounted for in §19; the archive decrypts and re-encrypts with columnar compression (§13.2) |
-| RK24 | **Erasure completion through backups** takes up to 35 days | RQ6-1 |
+| RK24 | *(Resolved by `requirements-v1.7`.)* Erasure completion through backups took up to 35 days | `erasure_max` = 30 days (RQ6-1 decided); generation-tagged store backups deleted with their generation (§14.4). RFC-005's own arithmetic (44 days in its revision 2) must come within 30 days |
+| RK25 | **A disaster declared on probe evidence can hide a measurement fault or be kept open**: a probe-estate failure makes minutes "not available", and an open disaster excludes minutes | Four eyes, evidence read from the probe-results log (§8.2), RB-4 forbids declaring on a measurement fault, the console shows probe counts, an open disaster over a healthy region pages after 30 min, every one listed in the monthly report (§8.3); RQ6-4 proposes excluding unmeasured minutes from the evidence |
+| RK26 | **Slot batching adds a wait on busy slots** (one transaction in flight per slot, AI3-11): about 30 ms at p99 on the hottest link (est., RFC-000 R19) | Measured in the spike; the second in-flight batch for dedicated link slots is the first lever (§4.3) |
+| RK27 | **Refused-template payloads in the personal-data store** may be far more than its designed size if exporters misconfigure templates | Sized at 0.01% of records (est., about 8 TB per copy, §14.4); expiry at `dispute_window` + 7 days; a page when refusals exceed 0.01% of an exporter's records over an hour, and storage alarms at 50% of the store's allotment; at 10 × the estimate the store needs about 80 TB per copy, which the facilities' NVMe holds (§19.4) |
 
 ## Requirements issues
 
-**Resolved.** Every issue revision 1 raised is settled in `requirements-v1.6`
-([review 11](../reviews/11-requirements-amendments-from-detailed-rfcs.md)), and revision 2
-applies each decision as written:
+**Resolved in `requirements-v1.6`** ([review 11](../reviews/11-requirements-amendments-from-detailed-rfcs.md)),
+applied since revision 2:
 
 | # | Issue | Decision in `requirements-v1.6` | Applied in |
 |---|---|---|---|
 | RQ-A | Who may declare a region disaster | Network operations declares, and ends, with reason and evidence; a second network-operations operator approves (POL-06, POL-32; X2-S25, X1-S31; glossary *Declared region disaster*) | §8.2, §7.1 (`disasters`), RB-4, RB-6, DT-18 |
 | RQ-B | When a disaster starts for measurement | From the loss as the system recorded it, not the declaration; a loss never declared counts against every target (POL-06; X2-S26, X2-S28, X2-S23 amended) | §8.3, §18.4, DT-19 |
-| RQ-C | One probe account; no probe supplier | Several designated probe accounts spread so every part of admission and the wallet serving accounts is probed, plus a designated probe supplier owning the probe links (POL-06; X2-S20, X2-S24, X2-S27) | §17.1, §17.4, DT-16, DT-17; RQ6-2 asks to confirm "part" |
+| RQ-C | One probe account; no probe supplier | Several designated probe accounts spread so every part of admission and the wallet serving accounts is probed, plus a designated probe supplier owning the probe links (POL-06; X2-S20, X2-S24, X2-S27) | §17.1, §17.4, DT-16, DT-17; "part" confirmed as account slot by RQ6-2 in `requirements-v1.7` |
 | RQ-D | Window of the p99 targets | Every percentile per calendar month and per serving region (POL-06; X2-S05, S06, S07, S15) | §18.1, DT-20 |
 | RQ-E | "Told" when the endpoint is down | Told once recorded in the account's notice list and first delivery attempted within the time, then retried for `webhook_retry` (POL-04; P1-S75; glossary *Told*) | §15, §18.2, DT-23 |
 | RQ-F | The fibre condition was weaker than the design's | Four paths pairwise without shared risk: two Nairobi–Mombasa, one from each serving region to Johannesburg not via the other (POL-06; X2 constraints; glossary *Serving region*) | §20.1 |
 
-**New.** Found while writing revision 2. The requirements are not changed here; each is
+**Resolved in `requirements-v1.7`** ([review 12](../reviews/12-requirements-amendments-from-rfc-revision-2.md)),
+applied in revision 3:
+
+| # | Issue (revision 2) | Decision in `requirements-v1.7` | Applied in |
+|---|---|---|---|
+| RQ6-1 | How soon an erasure must be complete, backups included | `erasure_max` = 30 days from the request, in every copy (live store, backups, escrow); one compliance operator executes (POL-19, POL-32; X1-N11, X1-S39). RFC-006's 35-day reading was not adopted | §14.4 (store backups apart, generation-tagged, deleted within 24 h of the generation's destruction; daily check), §14.1 (scope), §19.4, DT-25, RK24 |
+| RQ6-2 | What "every part of admission and the wallet that serves accounts" is | Every account slot, each probed by at least one probe account every minute (POL-06; X2-S27 retitled) | §17.1 (as designed), §17.3, DT-16 |
+| RQ6-3 | A reachable but unusable region has no recorded loss | It may be declared on probe evidence, admission not available there for `disaster_probe_minutes` (5) consecutive minutes, counted from the first of them (POL-06, POL-32; X2-S29). RFC-006's reading (only an unreachable or gated region) was not adopted | §7.1, §8.2, §8.3, §18.4, RB-4, DT-26 |
+
+**New.** Found while writing revision 3. The requirements are not changed here; each is
 proposed for the next requirements amendment.
 
-| # | Issue | Where | Proposal |
-|---|---|---|---|
-| RQ6-1 | **How soon an erasure must be complete, backups included, is not stated.** X1-N11 asks that erased personal data cannot be recovered; the design makes it unreadable at once in the live store and, through the expiry of key-store backups, in every backup within 35 days. Without a stated bound, either reading (immediate everywhere, or "as backups age out") is arguable | X1-N11, X1-S34, X1-S37, POL-19 | State that erasure is effective at once in every live store and complete in backups within a bounded period (35 days proposed), with the subject told of that period |
-| RQ6-2 | **"Every part of admission and the wallet that serves accounts" (X2-S27) is not defined.** The number of probe accounts, and so the measurement, depends on what a part is | POL-06, X2-S27, glossary *Available minute* | Define a part as the unit in which the design owns and fails over accounts, stated by the platform RFC (today an account slot, 1,024 at the design load), so the probe set follows the design |
-| RQ6-3 | **A region that is reachable but unusable has no recorded loss.** POL-06 counts a disaster from "the loss of the region as the system recorded it"; if a region's edges fail while its database and network stay up, the system records a failover (T2) or nothing, not a loss, and the design does not let it be declared | POL-06, glossary *Declared region disaster* | State that only a region that is unreachable, or gated by its own clocks or storage, as the system records it, can be declared; anything else counts against the targets. RFC-006 applies this reading meanwhile (§8.3) |
+| # | Issue | Where | Proposal | Reading adopted meanwhile |
+|---|---|---|---|---|
+| RQ6-4 | **A run of minutes "not available" only because the probes did not run** (fewer than 12 probes or one location, a probe-estate fault) qualifies as probe evidence under review 12's choice 1, so a disaster could be declared on a measurement fault and its minutes excluded | POL-06 (*declared region disaster*, probe evidence), X2-N1, X2-S29 | Count as failing, for the evidence, only minutes with at least 12 probes from at least two locations in which fewer than 90% succeeded; a minute unmeasured stays unavailable for the target but is not evidence | The system accepts the run as the requirements say; the record and console show each minute's probe count, RB-4 forbids declaring on a measurement fault, and the monthly report lists every probe-evidence disaster (§8.2, RK25) |
+| RQ6-5 | **Probe evidence followed by a recorded loss.** POL-06 counts from the recorded loss, and allows probe evidence only "with no recorded loss"; a region whose admission fails from 10:00 and whose loss is recorded at 10:06 therefore counts from 10:06, while the same failure with no loss ever recorded would count from 10:00 | POL-06, X2-N1, X2-S26, X2-S29 | Count the window from the earlier of the recorded loss and the first minute of an unbroken run of at least `disaster_probe_minutes` failing admission minutes that leads into it | A loss recorded at any time from the run's first minute to the declaration must be named, and the window counts from it (§8.3; DT-26), which counts more minutes against Share, never fewer |
 
 ## Architecture issues
 
 **Resolved by RFC-000 revision 4.** AI-1 (monitored quantities instead of the invariant;
 `δ_x` at p99.9), AI-2 (automatic 2 + 2 after `region_detect` + 10 min), AI-3 (placement of
-every group) and AI-4 (status replicas named), and RK10 (substrate changed), are adopted
-in RFC-000 revision 4 ("Revision 4 resolution") and applied here in §6.5, §8.1, §7.2 and
-§4.6, and Competition.
+every group) and AI-4 (status replicas named), and RK10 (substrate changed), applied here in
+§6.5, §8.1, §7.2 and §4.6, and Competition.
 
-**New.** Found while writing revision 2; raised for RFC-000's next revision. None blocks
-this RFC.
+**Resolved by RFC-000 revision 4.1** ("Revision 4.1 errata"), each as proposed in revision 2:
 
-| # | Issue | Where in RFC-000 | Proposal |
+| # | Issue (revision 2) | Decision in RFC-000 revision 4.1 | Applied in |
 |---|---|---|---|
-| AI6-1 | **Owner-lease expiry per slot row is too costly to renew.** §5.2 makes the owner lease a row (slot → holder, epoch, expiry) renewed by its holder; at about 5,000 slots and a 500 ms renewal that is about 10,000 two-region writes a second | §5.2, §5.5 | State the lease as a slot row (holder session, epoch) whose validity is its holder **session's** expiry, one row per process, as §4.2; the epoch and the conditional write are unchanged |
-| AI6-2 | **Redpanda cannot survive a Kenyan region loss without a broker in R3**, and "at least two in-sync replicas in different regions" is not a Kafka setting | §5.1, §5.5, R20 | Name Apache Kafka (KRaft) only; state replication factor 4, `min.insync.replicas` 3, lowered to 2 by placement while fewer than three facilities can hold replicas (§5.2) |
-| AI6-3 | **`δ_x` = 160 ms is RFC-000's p99 figure**, but AI-1 quotes `δ_x` at p99.9, at which the worst state may exceed 160 ms, making `τ` about 280 to 300 ms | §4.3, coordinator decision (1) of revision 4 | Read `τ` ≈ 260 ms as the starting configuration, raised automatically if measured p99.9 exceeds 160 ms (§6.5) |
-| AI6-4 | **After the automatic 2 + 2 change, fault tolerance returns in minutes only for ranges with a standing R3 non-voter**; other ranges need a new R3 voter bootstrapped, about 1 to 3 h | §5.1 | State the times, and the standing R3 non-voter for admission tables (one extra R3 copy of them) |
-| AI6-5 | **R3's clocks are inside the database's clock domain**: R3 nodes compare offsets with every peer and may hold a lease transiently, so their time must not be Google's smeared time and must come from Kenyan references | §5.1, R4 | Note that R3 synchronises from Kenyan time servers (§6.1) |
+| AI6-1 | Owner-lease expiry per slot row is too costly to renew | Session rows (one per process, renewed) plus slot rows (holder session, epoch) | §4.2 (as designed), §4.6, §12 |
+| AI6-2 | Redpanda cannot survive a Kenyan region loss without a broker in R3 | Apache Kafka (KRaft), replication factor 4, `min.insync.replicas` 3, lowered to 2 by placement | §5.1, §5.2, §5.6 (as designed) |
+| AI6-3 | `δ_x` = 160 ms is a p99 figure | `δ_x_cfg` at p99.9; `τ` starts at about 260 ms, up to about 300 ms | §6.4, §6.5, RK13 |
+| AI6-4 | Fault tolerance after the automatic 2 + 2 returns in minutes only with a standing R3 non-voter | The admission tables keep a standing R3 non-voter; other tables about 30 min to 3 h (est.), a known cost | §3.2, §8.1, RK18 |
+| AI6-5 | R3's clocks are inside the database's clock domain | R3 takes Kenyan time (NTP from Kenyan time servers) | §6.1 |
+
+**New.** None. Revision 4.1's other errata that bind RFC-006 (AI3-11, AI-R1-11, AI-R1-12,
+AI5-8, AI5-11, B-AI-8) are applied without finding a defect (Revision 3 resolution).
 
 ## Traceability
 
@@ -2116,7 +2299,7 @@ measurement observes.
 | X2-S18 Each capability probed by its own operation and limit | §17.2 | — |
 | X2-S20 Probes end to end as designated probe accounts, without business side effects *(amended)* | §17.1, §17.4, DT-17 | RFC-002 (intake rule), RFC-003, RFC-004 (exclusions) |
 | X2-S24 Each probe account on a credit limit set by finance, never invoiced *(amended)* | §17.4 (rule 4), §17.1, DT-17 | RFC-004 (credit holds), RFC-005 (finance sets the limit) |
-| X2-S27 Every part of admission and the wallet serving accounts probed *(new)* | §17.1, §17.3 (coverage gap), DT-16; RQ6-2 | RFC-002 (account slots) |
+| X2-S27 Every account slot of admission and the wallet is probed *(retitled in v1.7)* | §17.1, §17.3 (coverage gap), DT-16 (RQ6-2 decided) | RFC-002 (account slots) |
 | X2-S21 Funds holds and headroom checks at admission's targets | §10.1, §4.4, §11, DT-03 | RFC-002, RFC-004 Part A (in the account owner) |
 | X2-S02 Ingestion may lag, never loses an accepted record | §9, §5.5, §13.2, DT-13, DT-14 | RFC-003 |
 | X2-S03 Admission sustains the design load | §19, §19.5 | RFC-001, RFC-002 |
@@ -2134,10 +2317,11 @@ measurement observes.
 | X2-S25 A disaster and its end take effect only once declared with evidence and approved by a second operator *(new)* | §8.2, §7.1, RB-4, RB-6, DT-18 | RFC-005 (approvals, refusals audited) |
 | X2-S26 A disaster counts from the loss the system recorded *(new)* | §8.3, §18.4, DT-19 | — |
 | X2-S28 A loss never declared counts against every target *(new)* | §8.3, §18.4, DT-19 | — |
-| X2-S09 A fact survives a node or zone loss | §9, §11, §22.2, DT-01, DT-04, DT-12 | — |
+| X2-S29 A region with no recorded loss may be declared on probe evidence, counted from the first failing probe minute *(new in v1.7)* | §8.2 (basis), §8.3, §7.1 (`disasters`), §17.3, §18.4, RB-4, DT-26 | RFC-005 (approvals, four eyes) |
+| X2-S09 A fact survives a node or zone loss | §9, §11, §22.2, §4.3 (slot batches), DT-01, DT-04, DT-12, DT-27 | — |
 | X2-S12 No fact lost on a region loss | §9, §7.4, §8.1, §11, §22.2, DT-02, DT-11, DT-14 | — |
 | X2-S14 Acknowledged only once durable in two regions | §9, §3.2, §4.3, §12.2, DT-01 | RFC-002, RFC-003, RFC-004 (each acknowledgement) |
-| X2-S10 Recovery time per capability and scope | §10.1, §4.4, §3.3, §7.4, §11, §22.2, DT-02 | — |
+| X2-S10 Recovery time per capability and scope | §10.1, §4.4 (incl. link hot standbys), §3.3, §7.4, §11, §22.2, DT-02, DT-28 | — |
 | X2-S11 Retrieval at the end of the retention period | §13, §14.2, DT-21, DT-22 | — |
 
 **Other scenarios to which RFC-006 contributes a contract** (primary RFC named; the scenario
@@ -2145,13 +2329,14 @@ is satisfied there).
 
 | Scenario | RFC-006 contribution | Primary |
 |---|---|---|
-| P1-S26, P1-S40, P1-S50, P1-S72 Affected and restoration notices within `affected_notice_time` | §15 delivery and timing | RFC-001 (flags), RFC-002 (holders) |
+| P1-S26, P1-S40, P1-S50, P1-S72 Affected and restoration notices within `affected_notice_time` (P1-S40 retitled in v1.7: the flag ends from the first minute boundary at or after the restoration's record) | §15 delivery and timing; the boundary rule is RFC-001's | RFC-001 (flags), RFC-002 (holders) |
+| P1-S78 A confirmation that had begun committing is judged by whether the reduction's displacement record is visible to the confirming transaction *(new in v1.7)* | §3.7 (the account owner's SELECT on `link_displacement`, serialisable read set), §4.3 (condition reads in the slot batch) | RFC-002 (the read), RFC-001 (the markers) |
 | P1-S75 Told: recorded in the notice list and first attempted | §15, §18.2, DT-23 | RFC-001 |
 | P1-S63 A confirmation completed across a reduction is alerted | §15, §16 | RFC-001 |
 | P1-S33 Schedule as known at a past time | §13 storage, indexes, `asKnownAt` | RFC-001 |
 | P1-S54, P1-S62 Release within `release_grace` while a record or schedule owner fails over | §4.4 takeover in seconds, §10.1 | RFC-001, RFC-002 |
 | P2-S04 Whatever fails, never booked on some legs only | §4.2, §4.3, §4.5 (one writer, takeover) | RFC-002 |
-| P2-S09 Webhook sent, signed, retried | §15, §5.3, DT-13, DT-23 | RFC-002 (outcome), RFC-005 (signing) |
+| P2-S09 Webhook sent, signed, retried | §15, §5.3 (per-slot markers, slot-keyed topic), DT-13, DT-23, DT-29 | RFC-002 (outcome), RFC-005 (signing) |
 | P2-S10, P2-S99, P2-S107, P2-S108, P2-S111 Status reads, report position | §4.6 report position, read leases, rule-3 check; DT-05, DT-06, DT-07 | RFC-002 (replica rule) |
 | P2-S22, P2-S23 Interrupted requests resumed or failed | §4.4 takeover, `onAcquire` | RFC-002 |
 | P2-S93 Every hold released at the deadline | §6.4, §6.5 (`δ_x`, `τ`, alarms), DT-09, DT-10 | RFC-002 |
@@ -2160,6 +2345,7 @@ is satisfied there).
 | P3-S31 An accepted record is never altered or removed | §3.7 (insert-only), §13.1, §13.4 | RFC-003 |
 | P3-S36 Recomputing a period gives the recorded charges | §13.1 (inputs kept), §13.3 replay | RFC-003 |
 | P3-S39 Records retrieved by reservation, link and minute | §13.3 entity indexes | RFC-003 |
+| P3-S71 A non-conforming payload kept only in the erasable store *(new in v1.7)* | §14.4 (storage, sizing, backups), §19.4, RK27 | RFC-003 (refusal), RFC-005 (the store) |
 | P4-S23 Buyer told when reservations are released | §15 | RFC-004 |
 | P4-S71, P4-S72 Movements trace to facts; past headroom rebuilt | §13.3 replay and projections | RFC-004 |
 | P4-S90, P4-S104 Reconciliation at a consistent cut | §3.4 consistent cuts, §3.7 `ts`, DT-08 | RFC-004 |
@@ -2168,7 +2354,8 @@ is satisfied there).
 | X1-S24 Webhook only to its own account's endpoint | §15 (endpoint from identity, per-account queues) | RFC-005 |
 | X1-S14, X1-S15 Changes record principal and time; audit record cannot be altered or removed | §3.7, §13.1, §13.4, DT-21 | RFC-005 |
 | X1-S31 Network operations declares a region disaster with four eyes | §8.2, DT-18 | RFC-005 |
-| X1-S34, X1-S37 Personal data held apart and erasable; audit keeps the pseudonym | §3.7 (A11), §13.1, §14.4, §15, DT-25; RQ6-1 | RFC-005 |
+| X1-S34, X1-S37 Personal data held apart and erasable; audit keeps the pseudonym | §3.7 (A11), §13.1, §14.4, §15, DT-25 | RFC-005 |
+| X1-S39 Erasure on request, by compliance, complete in every copy within `erasure_max` *(new in v1.7)* | §14.4 (every copy RFC-006 keeps, 24 h deletion, daily check), DT-25 | RFC-005 |
 
 ## Revision 2 resolution
 
@@ -2193,3 +2380,26 @@ revision 4; new issues RQ6-1 … RQ6-3 and AI6-1 … AI6-5 raised; risks RK5, RK
 closed and RK15 … RK24 added. Kept from revision 1, re-based on the new substrate: the
 probe estate and measurement method (§17, §18), history and the write-once archive (§13),
 the notifier (§15), alerting (§16), the fibre verification (§20) and the runbook set (§21).
+
+## Revision 3 resolution
+
+Revision 3 rebases revision 2 on `requirements-v1.7` (`python3 tools/impact.py diff
+requirements-v1.6 requirements-v1.7`: for S-PLAT P1-N01, P1-S40, P3-N07, X1-N11, X2-N01,
+X2-S27, X2-S29 and POL-05, POL-06, POL-07, POL-14, POL-15, POL-19, POL-24, POL-32) and on
+RFC-000 revision 4.1.
+
+| Finding or record | Change in revision 3 |
+|---|---|
+| RQ6-1 decided (review 12): `erasure_max` 30 days from the request, every copy (X1-N11, X1-S39, POL-19) | §14.4 rewritten: the store backed up apart (Ceph only), generation-tagged, deleted within 24 h of the generation's destruction, daily conformance check; 35-day key-store backups removed; §14.1 scope; DT-25; Benefits; RK24 resolved; RFC-005's arithmetic named as its share |
+| RQ6-2 decided: every account slot probed every minute (X2-S27 retitled, X2-N1) | §17.1 cites the decision (design unchanged); traceability retitled |
+| RQ6-3 decided: declaration on probe evidence, `disaster_probe_minutes` (X2-S29, X2-N1, POL-06, POL-32) | §7.1 `disasters` basis; §8.2 basis table, refusals, "when", effects; §8.3 window start, end rule, open-over-healthy alert; §18.4; RB-4; §12.10; DT-26; RK25; new RQ6-4, RQ6-5 |
+| P1-S40 retitled, P1-N01 and P1-S78 (B-RQ-9, displacement read), POL-07 (every rise in sellable capacity) | Traceability only for P1-S40 (the boundary rule is RFC-001's); §3.7 grant and serialisable read for P1-S78 |
+| P3-N07, P3-S71 (RQ3-14: non-conforming payloads in the erasable store) | §14.4 storage and sizing; §19.4 row; RK27 |
+| POL-05, POL-14, POL-15, POL-24 amendments | Read; no change to the platform (they bind RFC-001, RFC-003, RFC-004) |
+| RFC-000 4.1 AI3-11: one transaction in flight per slot | §4.3 rewritten (slot batch, per-call conditions, size limits, batching wait and lever, crash points); §12.2; §19.2 re-costed (about 70,000 transactions/s); DT-27; RK26 |
+| RFC-000 4.1 AI-R1-12: link hot standbys | §4.4 (two hot standbys per link slot, pushed batches); §19.2 owner hosts; DT-28 |
+| RFC-000 4.1 B-AI-8: per-slot report markers, slot-keyed outcome topic | §4.6 (markers, `marker_max_wait`, marker-only transactions), §5.3, §5.4 keys, §12.5, §12.10; §19.2; DT-29 |
+| RFC-000 4.1 AI-R1-11: the link displacement read | §3.7 grants and read semantics; §4.3 condition reads; §12.2 |
+| RFC-000 4.1 AI5-8: truncation below audit's verified watermark | §3.7, §13.2 |
+| RFC-000 4.1 AI5-11: store backups never outlive their key generation | §14.4 |
+| RFC-000 4.1 AI6-1 … AI6-5 (raised by revision 2) | Architecture issues: resolved, each pointing to RFC-000 revision 4.1's errata; in-text references repointed; RK13, RK18 updated |

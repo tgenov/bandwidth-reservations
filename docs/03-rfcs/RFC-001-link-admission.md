@@ -2,12 +2,12 @@
 
 | | |
 |---|---|
-| Status | Draft, revision 2 |
-| Satisfies | P1-S01, P1-S02, P1-S03, P1-S04, P1-S05, P1-S06, P1-S07, P1-S08, P1-S09, P1-S10, P1-S11, P1-S12, P1-S13, P1-S14, P1-S15, P1-S16, P1-S17, P1-S18, P1-S19, P1-S20, P1-S21, P1-S22, P1-S23, P1-S24, P1-S25, P1-S26, P1-S27, P1-S28, P1-S29, P1-S30, P1-S31, P1-S32, P1-S33, P1-S34, P1-S35, P1-S36, P1-S37, P1-S38, P1-S39, P1-S40, P1-S41, P1-S42, P1-S43, P1-S44, P1-S45, P1-S46, P1-S47, P1-S48, P1-S49, P1-S50, P1-S51, P1-S52, P1-S53, P1-S54, P1-S55, P1-S56, P1-S57, P1-S58, P1-S59, P1-S60, P1-S61, P1-S62, P1-S63, P1-S64, P1-S65, P1-S66, P1-S67, P1-S68, P1-S69, P1-S70, P1-S71, P1-S72, P1-S73, P1-S74, P1-S75 (every P1 scenario, 75). Link-side part only, the primary RFC being another (§13): P2-S02, S13, S14, S15, S16, S17, S18, S19, S20, S21, S43, S44, S45, S46, S47, S48, S52, S55, S56, S58, S59, S60, S61, S62, S73, S74, S79, S80, S81, S84, S85, S87, S88, S92, S93, S94, S95, S97, S101, S104, S106, S107, S110, S114, S116 (RFC-002); X1-S22, X1-S23 (RFC-005); X2-S03, X2-S05, X2-S06, X2-S15, X2-S23 (RFC-006). Also the link-side rows of P2-S112, X1-S13 and X1-S31, whose needs are not allocated to this RFC (§13) |
+| Status | Draft, revision 3 |
+| Satisfies | P1-S01 … P1-S78 (every P1 scenario, 78). Link-side part only, the primary RFC being another (§13): P2-S02, S13, S14, S15, S16, S17, S18, S19, S20, S21, S43, S44, S45, S46, S47, S48, S52, S55, S56, S58, S59, S60, S61, S62, S73, S74, S79, S80, S81, S84, S85, S87, S88, S92, S93, S94, S95, S97, S101, S104, S106, S107, S110, S114, S116 (RFC-002); X1-S22, X1-S23 (RFC-005); X2-S03, X2-S05, X2-S06, X2-S15, X2-S23 (RFC-006). Also the link-side rows of P2-S112, X1-S13 and X1-S31, whose needs are not allocated to this RFC (§13) |
 | Policies | POL-02, POL-04, POL-05, POL-06, POL-07, POL-08, POL-09, POL-10, POL-16, POL-19, POL-25, POL-26, POL-29, POL-30, POL-31, POL-32, POL-33 |
 | Prior decisions | History log D1, D5, D6, D7, D9, D10, D11, D12, D14, D15, D17, D30 (carried forward or rejected in Competition) |
-| Builds on | The requirements at tag `requirements-v1.6`, which decide this RFC's Requirements issues RQ-R1-1 … RQ-R1-12 ([review 11](../reviews/11-requirements-amendments-from-detailed-rfcs.md)); [RFC-000](RFC-000-architecture.md) revision 4, whose components, ownership, principles A1 … A11, substrate (§5.5), contracts (§8) and allocation (§7) bind this RFC, and whose "Revision 4 resolution" resolves this RFC's Architecture issues AI-R1-1 … AI-R1-9 |
-| Revision | **Revision 2** (this): rebased on RFC-000 revision 4 (CockroachDB at 2 + 2 + 1, TypeScript/NestJS owners with epoch-fenced owner leases, insert-only log tables, commit timestamps, closed timestamps and changefeeds, Kafka through a transactional outbox) and on `requirements-v1.6`; see "Revision 2 changes" at the end. Revision 1: the first draft, on RFC-000 revision 3.2 (a custom Raft group per link) and `requirements-v1.5` |
+| Builds on | The requirements at tag `requirements-v1.7`, which decide this RFC's Requirements issues RQ-R1-1 … RQ-R1-12 ([review 11](../reviews/11-requirements-amendments-from-detailed-rfcs.md)) and RQ-R1-13, RQ-R1-14 with RFC-002's B-RQ-9 ([review 12](../reviews/12-requirements-amendments-from-rfc-revision-2.md)); [RFC-000](RFC-000-architecture.md) revision 4.1, whose components, ownership, principles A1 … A11, substrate (§5.5), contracts (§8) and allocation (§7) bind this RFC, whose "Revision 4 resolution" resolves this RFC's Architecture issues AI-R1-1 … AI-R1-9 and whose "Revision 4.1 errata" resolve AI-R1-10 … AI-R1-12 |
+| Revision | **Revision 3** (this): rebased on `requirements-v1.7` and RFC-000 revision 4.1 (the displacement read adopted, A1 amended for named reads; per-slot batch transactions; owner leases as session plus slot rows; insert-only log tables with a separate truncation role; `τ` about 260 to 300 ms); see "Revision 3 resolution" at the end. Revision 2: rebased on RFC-000 revision 4 (CockroachDB at 2 + 2 + 1, TypeScript/NestJS owners with epoch-fenced owner leases, insert-only log tables, commit timestamps, closed timestamps and changefeeds, Kafka through a transactional outbox) and on `requirements-v1.6`; see "Revision 2 changes". Revision 1: the first draft, on RFC-000 revision 3.2 (a custom Raft group per link) and `requirements-v1.5` |
 | Supersedes | The pre-baseline draft of this RFC (an impulse segment tree in memory, and a Postgres link-row lock as the authority) |
 
 Terms are used in the sense of the [glossary](../02-specs/glossary.md): "reserved rate" is
@@ -32,8 +32,9 @@ and why it is hard:
    overlap; windows last a minute, a year, or have no end (P1-N6); the check must cost the
    same whatever the length (X2-S05), and must say, on a rejection, the largest rate that
    fits and the earliest window that does, both beside the capacity held (P1-N4, POL-10).
-   Concurrent requests are checked one at a time in the order received, each counting the
-   capacity then held (POL-05, P1-S14).
+   Concurrent requests are checked one at a time in the order they reach the link's
+   schedule owner, each counting the capacity then held (POL-05, P1-S14, P1-S77): not the
+   order their accounts received them, which no single component sees.
 2. **Do it at the hottest link's rate** (POL-06: 2,500 requests/s, ×50 of today's load),
    inside the link's share of `ack_budget`: one two-region transaction, about 30 ms at
    p99, plus up to about 30 ms of batching wait on the hottest link (RFC-000 §3, R19), with
@@ -49,13 +50,15 @@ and why it is hard:
    a release is request-scoped and tombstoned (A0R-03).
 4. **Take capacity changes without ever revoking silently** (P1-N8, POL-07): unplanned
    outages that reduce what is sold from the minute they are recorded in, and flag every
-   reservation at exactly the overcommitted minutes; restorations, permanent increases and
-   cancelled maintenance sellable from the next minute boundary; maintenance only beside
+   reservation at exactly the overcommitted minutes; every rise in sellable capacity
+   (restorations, permanent increases, cancelled maintenance) effective from the first
+   minute boundary at or after its record (P1-S76); maintenance only beside
    committed and held capacity; permanent reductions with notice, newest Mbps first, each
    part cut by the largest excess it meets; firm equivalent-path offers whose capacity is
-   held and counted as committed. A request that had begun committing when a reduction is
-   recorded may complete, and is then affected and alerted (v1.6, RQ-R1-1); every other
-   request is decided against the reduced capacity.
+   held and counted as committed. A request whose confirming transaction does not see the
+   reduction's **displacement record** had begun committing, may complete, and is then
+   affected and alerted; one whose confirming transaction sees it is decided against the
+   reduced capacity (POL-07 as amended by B-RQ-9, P1-S63, P1-S78).
 5. **Record only facts, and explain any past decision** (P1-N7, P1-N9, POL-19): the
    schedule as known at any past time, for 7 years.
 6. **Survive crashes and owner changes** with no fact lost and no second writer: a new
@@ -72,8 +75,10 @@ and why it is hard:
   database ranges to themselves. The link schedule owner **is** the NestJS instance that
   holds the slot's owner lease; its lease **epoch** is the term. Partner links have no
   schedule here: their partner adapter stands in for Share's position (RFC-002).
-- The link's **log** is its rows in an insert-only log table (§7.1), appended by batch
-  transactions conditional on the epoch (§7.2). The owner is a **deterministic state
+- The link's **log** is its rows in an insert-only log table (§7.1), appended by the
+  slot's batch transactions, one in flight per slot and each carrying every link of the
+  slot with entries pending, conditional on the slot's epoch (§7.2; RFC-000 revision 4.1,
+  AI3-11). The owner is a **deterministic state
   machine over that log**: every decision (hold, refusal, waiter registration, grant,
   conversion, release, capacity change) is the effect of applying one log entry at its
   commit timestamp, and the entry records the outcome it had. The owner's memory is a
@@ -161,16 +166,24 @@ sales stop at once at the reduced capacity (P1-S43), while the link still carrie
 capacity, so nothing is affected before `T_eff` (P1-S44). The committed rate at a minute
 (glossary) is the confirmed parts plus the offer holds.
 
-**Effective boundaries** (v1.6, RQ-R1-2, RQ-R1-5, RQ-R1-7). A change that **raises**
-sellable capacity (a restoration, a permanent increase, a cancelled maintenance booking)
-is recorded at once but takes effect from `b = ceil_minute(ts)`: until an entry with
-`ts ≥ b`, decisions see the old capacity, and from then they see the new one at every
+**Effective boundaries** (POL-07 *Every rise in sellable capacity*, as amended by
+RQ-R1-13 in `requirements-v1.7`; RQ-R1-2, RQ-R1-5, RQ-R1-7). One rule for every change
+that **raises** sellable capacity (a restoration, a permanent increase, a cancelled
+maintenance booking): it is recorded at once and takes effect from
+`b = ceil_minute(ts)`, the first minute boundary at or after its record. Until an entry
+with `ts ≥ b`, decisions see the old capacity; from then they see the new one at every
 minute `≥ b` (P1-S27, P1-S40, P1-S67, P1-S69). The owner keeps these as **pending capacity
-effects**, applied at the start of the apply of the first entry with `ts ≥ b`, and
-proposes a `Tick` at `b` if no entry comes (§7.3), so the waiter scan runs on time. A
-change that **lowers** capacity takes effect at once: an outage from `floor_minute(ts)`
-(the start of the minute it is recorded in), a permanent reduction's sellable part from
-`floor_minute(ts)`.
+effects** in a heap by `b`. The apply of every entry starts by applying, in `b` order then
+log order, each pending effect with `b ≤ ts`, running the waiter scan over its range; the
+recording entry itself, once it has recorded the change, does the same, so a change
+recorded exactly on a boundary (`ts = b`, whatever the hybrid-logical clock's logical
+part) takes effect in its own entry, and every later command of the same batch and every
+later batch sees it (P1-S76: recorded at 09:31:00, a 2 Mbps booking held from 09:31 is
+confirmed, in all three rows). If no entry comes, the owner proposes a `Tick` at `b`
+(§7.3), so the waiter scan runs on time. A change that **lowers** capacity takes effect at
+once: an outage from `floor_minute(ts)` (the start of the minute it is recorded in), a
+permanent reduction's sellable part from `floor_minute(ts)`. On a boundary both rules give
+the boundary itself.
 
 #### 3.2 The occupancy tree
 
@@ -259,9 +272,10 @@ iterated only in a stated order (§7.4).
   pulse from hold to committed without changing `occ_all` (conversion, §4.4), or adds a
   capacity reduction. Hence at any position, a minute with `occ_all > C_ref` exists only
   where a reduction was recorded after the pulses that now exceed it, and the excess is
-  made of those earlier pulses (§5.1). Of those, the confirmations decided after the
-  reduction's record are the v1.6 exception (requests that had begun committing), each
-  flagged affected and alerted.
+  made of those earlier pulses (§5.1). Of those, the conversions of holds the reduction
+  displaced are the POL-07 exception (requests whose confirming transaction did not see
+  the displacement record, so had begun committing, B-RQ-9), each flagged affected and
+  alerted.
 - **I2. Fit is decided on the right occupancy.** A hold, grant or maintenance booking is
   granted only on `occ_all`; a no-fit refusal only on `occ_firm` (P1-S37, P2-S17).
 - **I3. Holds outlive no outcome.** A hold, waiter or grant is removed only by a release,
@@ -282,8 +296,10 @@ iterated only in a stated order (§7.4).
 A hold command carries the request identity, account, leg, kind (`booking`, or `change`
 for an extension or increase, which is a new admission of the difference, POL-08), rate
 `b`, window `W`, deadline `D`, **commit fence `D_c`** (`D − commit_margin` with a partner
-leg, `D − τ` otherwise, `τ = max(ack_budget, ε + δ_x)`, about 260 ms; POL-26, RFC-000
-§4.3), `request_age`, receipt time, `wait` and policy version. Applied in log order at the
+leg, `D − τ` otherwise, `τ = max(ack_budget, ε + δ_x_cfg)`, about 260 ms and up to about
+300 ms, `δ_x_cfg` configured at p99.9; POL-26, RFC-000 §4.3 and revision 4.1, AI6-3). The
+link takes `D_c` as given and never recomputes it, so a change of `τ` needs no change here.
+The hold also carries `request_age`, receipt time, `wait` and policy version. Applied in log order at the
 batch's commit timestamp `ts`:
 
 ```
@@ -306,12 +322,21 @@ hold(r, b, W, D, D_c, age, wait):
 refuse(r, reason, …): tombstone r until D + release_grace; record the refusal
 ```
 
-- **One at a time in the order received** (POL-05 as amended, P1-S14, B-RQ-1). The link
-  checks hold commands in the order its owner receives them, which is the order of its
-  log: each batch takes the commands that arrived while the previous batch committed, in
-  arrival order, and applies them one after another, each against the state its
-  predecessors left, counting every hold then in place. A `wait = false` request refused
-  because of a hold later released stays refused. The check counts committed and **held**
+- **One at a time in the order they reach the schedule owner** (POL-05 as amended by
+  RQ-R1-14 in `requirements-v1.7`, P1-S14, P1-S77, B-RQ-1). "The order received" is the
+  order in which hold commands reach the owner-lease holder of the link's slot, which is
+  the order of the link's log: each batch takes the commands that arrived while the
+  previous batch committed, in arrival order at the owner process, and applies them one
+  after another, each against the state its predecessors left, counting every hold then in
+  place. The order in which the accounts' owners received the requests plays no part:
+  two requests received by different accounts in one order may reach the link, and be
+  checked, in the other (P1-S77: Y reaches the owner first, holds the last 2 Mbps, and X,
+  received first by its account, is refused `IN_FLIGHT` with `retry_after` = Y's remaining
+  deadline). A command refused `NOT_OWNER` or `STALE_EPOCH` and re-sent reaches the owner
+  when the lease holder receives it; a retried command returns the state its first
+  application recorded, so its place is that first application. The log records the order,
+  so it is checkable afterwards (T-03). A `wait = false` request refused because of a hold
+  later released stays refused. The check counts committed and **held**
   capacity only: it does not reserve capacity for older waiters, which receive released
   capacity through the scan (§4.3). (Revision 1 also counted older waiters' needs; v1.6's
   arrival-order rule removes that, Competition.)
@@ -450,11 +475,17 @@ P2-S95, P2-S116).
   reservation, part identity and the **decision timestamp** `T_dec` (RFC-000 §8). The
   hold's pulse is added to `occ_firm` and `occ_phys`; `occ_all` is unchanged, so confirming
   never counts the capacity twice (P1-S09); the part is recorded with age `T_dec`; the hold
-  and any displacement marker are removed; the waiters overlapping it are scanned for
-  no-fit refusals (P2-S52). If a reduction recorded at or before `T_dec` overlaps the part,
-  the confirmation is the v1.6 exception (§5.1): the part is flagged or added to the
-  reduction's affected set like any other, its notice due at `T_dec`, and
-  `CONFIRMED_AFTER_REDUCTION` is raised (P1-S63). A convert for a request with no hold here
+  and its displacement marker, if it has one, are removed; the waiters overlapping it are
+  scanned for no-fit refusals (P2-S52). If the hold carries a **displacement mark** (a
+  reduction displaced it, §5.1), the account owner's confirming transaction did not see
+  the marker, so the request had begun committing (POL-07, B-RQ-9; P1-S78's first row):
+  the part is flagged or added to the reduction's affected set like any other, its notice
+  due at `max(T_dec, the reduction's ts)`, which is already past when the convert is
+  applied, so the notice is written at once (P1-S63: within `affected_notice_time` of the
+  confirmation), and `CONFIRMED_AFTER_REDUCTION` is raised with the reduction and both
+  timestamps. Because the marker was not seen, `T_dec` is below the reduction's commit
+  timestamp in the database's order, though the link applies the convert after the
+  reduction entry; the link's condition is the mark, not a comparison of timestamps. A convert for a request with no hold here
   is a protocol violation (the account owner confirms only with every leg held): it is
   refused, `NO_HOLD`, and alerted.
 - **Release** (request-scoped, on a non-confirmed outcome, A9): carries `D` (RFC-000 §8,
@@ -518,9 +549,11 @@ Anyone else gets "not found", as if the link did not exist (X1-S22, including an
 supplier's principal recording an increase or cancelling maintenance). A network
 operations operator attempting maintenance, a permanent reduction, an increase or a link
 registration gets "refused", and nothing changes (X1-S23, X1-S13). Every supply and
-registry entry carries the pseudonymous principal, role and a reason reference (X1-N8,
-A11); a free-text reason is held in the entry's encrypted payload, under RFC-005's rule
-that it carries no personal data.
+registry entry carries the pseudonymous principal, role and a reason code with RFC-005's
+reason reference (X1-N8, A11). Free text an operator or supplier writes stays with RFC-005
+(the operator action envelope), never in the link log, so the link's log, feeds and
+history hold no personal data and an erasure (POL-19 as amended, X1-N11, `erasure_max`)
+never has to touch them.
 
 #### 5.1 Displacement of pending requests
 
@@ -532,7 +565,7 @@ that adds the reduction also, in the same apply:
 ```
 displace(R):                                   # R: range where capacity fell
   T := occ_all minus the pulses of every hold overlapping R
-  for h in those holds, in priority order:     # the order their checks were made in
+  for h in those holds, in priority order:     # POL-02: older holds keep their capacity first
     if peak(T, h.W) + h.b ≤ C_ref: T += h      # still fits beside committed and older holds
     else: mark h displaced (reduction, ts); write its displacement marker (§7.1);
           notify its account owner:
@@ -541,41 +574,49 @@ displace(R):                                   # R: range where capacity fell
 ```
 
 A displaced hold **keeps counting** in `occ_all` until its account owner answers (A9); the
-link cannot end it. The answer follows v1.6 (POL-07 *Any fall in capacity*, RQ-R1-1 and
-B-RQ-2 decided), applied by the account owner (RFC-002) in its own order:
+link cannot end it. Whether the request had begun committing when the reduction was
+recorded is judged **exactly, by whether the reduction's displacement record is visible to
+the transaction confirming the request** (POL-07 *When it is judged*, as amended by B-RQ-9
+in `requirements-v1.7`; P1-S78). The displacement record is the set of **displacement
+markers** the reduction's own batch transaction writes, one row per displaced hold
+(`link_displacement`, §7.1), and the account owner's serialisable confirm transaction reads
+the marker of each of the request's Share legs, a point read per leg (RFC-000 revision 4.1:
+A1 amended, §8 *Link displacement read*, AI-R1-11; RFC-002 performs the read). The
+account owner applies the answer in its own order (RFC-002):
 
-- **The request had not begun committing** (POL-26: no confirm entry proposed, and with a
-  partner leg no partner confirm sent): it is decided against the reduced capacity. It is
-  ended *rejected* for no fit with the counter-offer and released (P1-S41), or, if it
-  still fits on committed capacity, the account owner accepts the displacement
-  (`displacement_accept`), after which the link turns the hold into a waiter
-  (attempt + 1), as for a yield. A partner route that has not sent its partner confirm is
-  ended the same way.
-- **The request had begun committing** before the reduction was recorded: it may complete,
-  by its deadline as usual. The link receives `convert` and records the part; the part is
-  an affected reservation at the minutes it overcommits (flagged on an outage, in the
-  affected set of a permanent reduction), its holder is told within `affected_notice_time`
-  of the confirmation, and network operations is alerted (`CONFIRMED_AFTER_REDUCTION`)
-  (§4.4, P1-S63, P1-N1's exception).
+| The confirm transaction | Meaning (POL-07, B-RQ-9) | Account owner's answer | Link |
+|---|---|---|---|
+| Sees the marker (the reduction committed at a lower timestamp) | Had not begun committing: decided against the reduced capacity | No confirm. If it no longer fits on committed capacity: ended *rejected* for no fit with the counter-offer, then the request-scoped release (P1-S41, P1-S78's second row). If it still fits on committed capacity: `displacement_accept` | Release: hold, marker and mark removed, tombstone, scan. `displacement_accept`: in one entry the hold's pulse and marker are removed, the request registered as a waiter (attempt + 1, same age), and the scan runs, as for a yield |
+| Does not see the marker (the confirm is ordered before the reduction) | Had begun committing: may complete by its deadline | `convert` once decided confirmed (or the release if it ends otherwise, B-AI-7) | §4.4: part recorded, flagged or in the affected set, notice written at once, `CONFIRMED_AFTER_REDUCTION` (P1-S63, P1-S78's first row) |
+| Has not run yet when `DISPLACED` arrives | Undecided: the request has not begun committing | As in the first row; a confirm proposed later reads the marker and so cannot complete | As in the first row |
 
-**The notice in flight.** The link records the reduction and the account owner learns of
-it one notice later (a hop and one commit, about 5 to 35 ms, est.). A request whose
-account owner proposes its confirm entry inside that interval began committing **after**
-the record, so v1.6 requires it to be decided against the reduced capacity, which the
-notice alone cannot ensure. This RFC closes the interval with **displacement markers**:
-the reduction's own transaction writes a marker row per displaced hold (§7.1), and the
-account owner's confirm transaction reads the markers of the request's Share legs, a
-point read per leg in the same serialisable transaction. The database orders the two
-transactions: if the reduction committed first, the confirm sees the marker and handles it
-as `DISPLACED` (unless the request had begun committing earlier, through a partner confirm
-sent before the marker's timestamp); if the confirm committed first, it began committing
-before the record. The cost is one in-region read per leg, about 1 to 2 ms (est.), and no
-extra commit; a reduction writing a marker after a confirm has read its key at a later
-timestamp is pushed and re-decided (§7.2), which only reductions can cause. The read needs
-RFC-000 and RFC-002 to adopt it (Architecture issues AI-R1-11). Until they do, the
-interval stays open: the link still detects every case (`T_dec` at or after the record on
-a displaced hold), flags it, and raises `CONFIRMED_AFTER_REDUCTION` with the hold's
-displacement time, so operations can count those that fall outside the v1.6 exception.
+**Why the order is exact.** Both transactions touch the marker key: the reduction writes
+it, the confirm reads it, each serialisable. If the reduction commits first, every confirm
+at a later timestamp sees the marker (a read meeting the reduction's uncommitted write
+waits for it to resolve). If the confirm reads first, the database's timestamp cache
+pushes the reduction's write above the read, so the reduction's batch fails with a retry
+error and is re-decided at its new timestamp (§7.2 step 5); the confirm is then ordered
+before the reduction. A confirm whose own commit timestamp is pushed refreshes its read
+and, if the marker appeared meanwhile, retries and sees it. So "had begun committing at the
+record" is a fact the records decide, with no window, at the cost the coordinator accepted:
+a request whose confirm is ordered before the reduction but whose convert reaches the link
+after it completes and is affected (a few more affected, credited, alerted confirmations
+while the notice is in transit).
+
+**Marker lifecycle.** A marker is written (upserted, so a second reduction displacing the
+same hold replaces it with the later reduction) in the displacing entry, and deleted in the
+entry that ends the displaced attempt: its conversion, its release, or the accepted
+displacement. The deletion is a write by the link owner at a timestamp above any confirm
+that could still read it, since the confirm precedes the convert and the release. Rows are
+written only when a reduction displaces a hold, so the read is of an absent key on almost
+every confirm. A marker carries the attempt it was written for; a waiter granted again
+after an accepted displacement has no marker, and its confirm reads none.
+
+**Costs.** One in-region point read per Share leg per confirm, about 1 to 2 ms (est.), no
+extra commit (RFC-000 §3 latency table). A reduction's batch is pushed and re-decided only
+when a confirm has read a key it then writes, which needs a reduction and a confirm of the
+same request in the same milliseconds; with per-slot batching the re-decision covers every
+link of the slot in that batch (§7.2), which on a hot link's own slot is that link only.
 
 #### 5.2 Unplanned outage and restoration
 
@@ -591,8 +632,9 @@ displacement time, so operations can count those that fall outside the v1.6 exce
 - `record_restoration(outage, to_capacity?)`: the impulse `−Δ` (or the part restored) at
   `b = ceil_minute(ts)`, the first minute boundary at or after the record, as a pending
   effect (§3.1). Capacity is sellable again, and flags end, from `b` (P1-S27; P1-S40: a
-  record at 10:30:20 leaves A and B affected for `[10:30, 10:31)`); the waiter scan runs at
-  `b`.
+  record at 10:30:20 leaves A and B affected for `[10:30, 10:31)`; P1-S76's first row: a
+  record at 09:31:00 frees 2 Mbps from 09:31 and ends the flags there, with no minute
+  flagged after the record); the waiter scan runs at `b`.
 - Overlapping outages are separate facts with their own `Δ`; a restoration names the
   outage or outages it ends.
 
@@ -617,10 +659,9 @@ displacement time, so operations can count those that fall outside the v1.6 exce
 Because maintenance is admitted only on free capacity, it can never make a reservation
 affected. `cancel_maintenance(maintenance)`, the supplier's own (RQ-R1-5 decided), removes
 the pulse from all three occupancies at `b = ceil_minute(ts)` as a pending effect, and the
-waiter scan runs then (P1-S67: cancelled at 09:00:30, a booking from 09:01 is confirmed).
-POL-07 says "the next minute boundary"; this RFC reads it, as for increases and
-restorations, as the first boundary at or after the record (Requirements issues
-RQ-R1-13).
+waiter scan runs then (P1-S67: cancelled at 09:00:30, a booking from 09:01 is confirmed;
+P1-S76's third row: cancelled at 09:31:00, free from 09:31). This is POL-07's one rule for
+every rise in sellable capacity (§3.1; RQ-R1-13, resolved by `requirements-v1.7`).
 
 #### 5.4 Permanent reduction
 
@@ -685,7 +726,8 @@ RQ-R1-7 decided): `Δ = new_capacity − current sellable capacity` (positive; o
 `INVALID`). The impulse `−Δ` (open-ended) is added to all three occupancies at
 `b = ceil_minute(ts)`, as a pending effect (§3.1); new sales are decided against the larger
 capacity from `b`, and the waiter scan runs then. It changes no reservation and flags none
-(P1-S69: recorded at 09:30:20, a 5 Mbps booking is confirmed from 09:31). An increase
+(P1-S69: recorded at 09:30:20, a 5 Mbps booking is confirmed from 09:31; P1-S76's second
+row: recorded at 09:31:00, a 2 Mbps booking is confirmed from 09:31). An increase
 during an open outage raises the capacity the outage is measured from, so flags can only
 shrink (§5.7); during a reduction's notice it triggers the affected-set recomputation
 (§5.4).
@@ -741,7 +783,7 @@ the minute ranges, the cause and a **notice due time** (POL-07 as amended):
 |---|---|---|
 | A reservation active at the outage's record | The record | P1-S26 |
 | A reservation that starts during the outage | Its start | P1-S50 |
-| A confirmation completed across a reduction (§5.1) | Its decision time `T_dec` | P1-S63 |
+| A confirmation completed across a reduction (a displaced hold converted, §5.1) | `max(T_dec, the reduction's ts)`, already past when the convert is applied, so written at once | P1-S63, P1-S78 |
 | A reservation's affected minutes change during the outage (another ends or is decreased, an increase) | The change's known time (its decision time) | P1-S72, RQ-R1-12 decided |
 | Restoration | The restoration's record, for every holder already told | P1-S40 |
 | An open offer whose held path is affected (`OFFER_AFFECTED`) | The record | P1-S68 |
@@ -794,10 +836,10 @@ first by `link_id`, so a hot link's rows split into ranges of their own.
 
 | Table | Key | Rows | Written |
 |---|---|---|---|
-| `link_log` | (link, sequence) | One per entry: kind, epoch, commit timestamp, command identity, sender (component, partition, epoch, sequence), audit fields (pseudonymous principal, role, reason reference), and the **encrypted payload**: the command and its recorded outcome (§7.3) | Insert only, by the owner-lease holder; no role may update or delete (RFC-000 §5.5) |
-| `link_head` | link | Last sequence, its commit timestamp, the epoch of the last batch | Updated by every batch |
+| `link_log` | (link, sequence) | One per entry: kind, epoch, commit timestamp, command identity, sender (component, partition, epoch, sequence), audit fields (pseudonymous principal, role, reason reference), and the **encrypted payload**: the command and its recorded outcome (§7.3) | Insert only, by the owner-lease holder; no application role may update or delete; only RFC-006's truncation role deletes, and only below audit's verified sealed-through watermark (RFC-000 §5.5, revision 4.1, AI5-8) |
+| `link_head` | link | Last sequence, its commit timestamp, the epoch of the last batch | Updated by every slot batch that carries entries of the link |
 | `link_outbox` | (link, sequence, index) | Feed events (schedule feed) and waiting-port notifications, each identified by (link, epoch, sequence, index) | Insert only, in the same transaction as the entry that caused it |
-| `link_displacement` | (link, request) | Displacement marker: attempt, reduction sequence, commit timestamp (§5.1) | Inserted in the reduction's transaction; deleted with the hold's end (projection row, derived from the log) |
+| `link_displacement` | (link, request) | Displacement marker: attempt, reduction sequence, the reduction's commit timestamp (§5.1). Together these rows are POL-07's **displacement record** | Upserted by the displacing entry, in the reduction's own transaction; deleted by the entry that ends the displaced attempt (convert, release, accepted displacement). Derived from the log. The only table of this RFC another owner may read: the account owner's role has select on it and nothing else here (RFC-000 A1 and §5.5 as amended in revision 4.1, AI-R1-11) |
 | `link_projection` | (link, projection) | The sequence through which each projection's output has been written (§7.5) | Updated in the transaction that writes that output |
 
 Outbox and projection rows, the head row and the displacement markers are derived from the
@@ -808,37 +850,45 @@ timestamps) are not personal data.
 
 #### 7.2 Batch transactions
 
-The owner has **one batch transaction in flight per link** (RFC-000 §3). Commands that
-arrive while it commits queue, in arrival order, for the next one (at most
-`link_batch_max`, design constant 1,000 entries). A batch:
+The owner runtime has **one batch transaction in flight per slot** (RFC-000 §3 and §5.5 as
+amended in revision 4.1, AI3-11). The transaction carries every link of the slot with
+commands pending, each link with its own head row, its own contiguous sequence and its own
+speculative generation; per-link guarantees are those of a batch per link. The hottest
+links each have a slot of their own (§1), so for them a slot batch is a link batch. Commands
+that arrive while a batch commits queue per link, in arrival order, for the next one (at
+most `link_batch_max`, design constant 1,000 entries per link). A batch:
 
-1. Begins a transaction; reads the slot's owner-lease epoch (the guard) and the link's head
-   row; reads the transaction's timestamp `ts`, which fixes its commit timestamp.
-2. Applies every queued command in order on a **speculative generation** of the state
-   (§3.2), at `ts`, recording each outcome, computing counter-offers within the batch
-   budget (§4.2), and collecting the log, outbox, marker and projection rows. Projection
-   output computed since the last batch (§7.5) is added to the same transaction.
-3. Inserts the rows, updates the head row and commits, conditional on the epoch.
-4. **Committed:** the generation becomes current; synchronous commands are answered;
+1. Begins a transaction; reads the slot row's epoch (the guard, RFC-000 revision 4.1,
+   AI6-1) and the head row of each link it carries; reads the transaction's timestamp
+   `ts`, which fixes its commit timestamp.
+2. For each link, applies every queued command in order on a **speculative generation**
+   of that link's state (§3.2), at `ts`, recording each outcome, computing counter-offers
+   within the batch budget (§4.2), and collecting the log, outbox, marker and projection
+   rows. Projection output computed since the last batch (§7.5) is added to the same
+   transaction.
+3. Inserts the rows, updates the head rows and commits, conditional on the slot's epoch.
+4. **Committed:** every generation becomes current; synchronous commands are answered;
    outbox rows are pushed directly (gRPC to account owners for waiting-port notifications,
    Kafka for feeds), the changefeed relaying them again as the guaranteed path (RFC-000
    §5.5). Consumers drop duplicates by (link, epoch, sequence, index).
-5. **Retry error** (the transaction was pushed past `ts`, or met a conflict): the
-   generation is dropped and the batch is re-decided from step 1 with the same commands
-   at its new timestamp; nothing was answered. Only the owner writes the link's rows, so
-   pushes come only from the rare readers of a marker key (§5.1) and from the database's
-   own range operations.
+5. **Retry error** (the transaction was pushed past `ts`, or met a conflict): every
+   generation of the batch is dropped and the batch is re-decided from step 1 with the
+   same commands at its new timestamp; nothing was answered. Only the owner writes the
+   slot's rows, so pushes come only from a confirm's read of a marker key the batch then
+   writes (§5.1) and from the database's own range operations.
 6. **Ambiguous result** (the connection failed during commit): the owner reads the head
-   row at the present timestamp. If it holds this batch's last sequence, the batch
-   committed and step 4 follows; if not, step 5. If the epoch has moved, the owner has been
-   deposed (§8): it drops the generation, answers nothing, and redirects.
+   row of one link the batch carried at the present timestamp (the batch is atomic). If it
+   holds this batch's last sequence for that link, the batch committed and step 4 follows;
+   if not, step 5. If the slot's epoch has moved, the owner has been deposed (§8): it drops
+   the generations, answers nothing, and redirects.
 7. **Epoch mismatch:** deposed, as in 6.
 
 So no answer, notification or feed event ever describes an entry that did not commit, and
 every entry is decided at exactly the timestamp it is recorded at, which the `D_c` check,
 the validity rules, tombstone expiry and every effective boundary rely on. Applying a batch
-of 150 entries costs a few milliseconds of the event loop (§9), during which no other
-batch is in flight for that link; other links on the same instance batch independently.
+of 150 entries costs a few milliseconds of the event loop (§9). On a slot shared by many
+cold links, a retry re-decides all of them; their batches are small, and pushes need a
+reduction, so the cost is negligible (est.).
 
 #### 7.3 Entries
 
@@ -929,14 +979,19 @@ projections moved to its standby, which applies the same log (R1-5).
   memory; they remain in the log and in history. Nothing admission reads is lost: every
   window starts at or after the current minute (§2, V4).
 - **Retention.** History seals the log into segments kept 7 years (POL-19, X2-N6); once
-  sealed and verified, the live tail is truncated from the database (RFC-000 §5.5), so a
-  link keeps only hours of log in the database (§9).
+  sealed and verified, the live tail is truncated from the database by RFC-006's
+  truncation job, the only holder of the delete grant, below audit's verified
+  sealed-through watermark (RFC-000 §5.5, revision 4.1, AI5-8), so a link keeps only hours
+  of log in the database (§9). The owner and its standbys never delete log rows.
 
 ### 8. Crash, takeover and failover behaviour
 
-**Takeover.** A lease holder stops deciding, granting read access and sending commands at
-its lease's expiry less `ε` by its own clock (RFC-000 §5.2). A standby takes the slot's
-lease once it has expired by the database's clock, incrementing the epoch; it then reads the
+**Takeover.** Owner leases are a session row per process, renewed, plus a slot row naming
+the holder session and the epoch, changed only on acquisition and handoff (RFC-000
+revision 4.1, AI6-1). A lease holder stops deciding, granting read access and sending
+commands at its session's expiry less `ε` by its own clock (RFC-000 §5.2). A standby
+acquires the slot row once the holder's session has expired by the database's clock,
+incrementing the slot's epoch; it then reads the
 log past its applied sequence at the present timestamp (an in-flight batch of the old
 holder is resolved, committed or aborted, by that read), applies it, commits
 `Takeover(epoch)` as its first batch, rebuilds its timers from state (expiry requests for
@@ -962,7 +1017,7 @@ at worst on the hottest link, about 5 to 10 s, est.) and replay at most 1 M entr
 | Hold, convert and release reordered or duplicated | Release before hold: the tombstone refuses the hold. Duplicate hold or convert: recorded state returned. Convert without hold: refused and alerted. Stale yield or displacement acceptance: no effect (attempt mismatch) | Port invariants (RFC-000 §8) |
 | A range loses its leaseholder (database node loss) | Commits stall for seconds while the database moves the range lease; the owner keeps its owner lease, whose row's range moves the same way | Counts against admission's availability |
 | The leader region is isolated or lost | The owner's commits need a majority and fail; its lease expires; placement moves leaseholders and owner leases region-wide to the second preference (RFC-000 §3, §5.1), where a standby takes over | Region RTO; nothing lost |
-| Declared region disaster | Commits reach R3: about 70 to 75 ms at p99 (est.), also after the automatic 2 + 2 reconfiguration | Latency targets suspended (POL-06); nothing lost |
+| Declared region disaster (on a recorded loss or on probe evidence, POL-06 as amended) | Commits reach R3: about 70 to 75 ms at p99 (est.), also after the automatic 2 + 2 reconfiguration; the admission tables, link tables included, keep a standing R3 non-voter, so they tolerate a further fault within minutes (RFC-000 revision 4.1, AI6-4) | Latency targets suspended (POL-06); nothing lost |
 | Kafka unavailable | Outbox rows wait in the database; the changefeed relays them later; synchronous answers are unaffected; waiting-port notifications still go by gRPC. Notices due during the outage risk `affected_notice_time` and are alerted | Feeds delayed, nothing lost |
 | A replica's apply diverges (a determinism bug) | The outcome check stops it at the first diverging entry; it is excluded from the lease and alerted (§7.4) | No wrong state can take over |
 | Owner host clock leaves the bound | The host gives up its leases (more than 50 ms from the database's clock, RFC-000 §4.3) | A standby takes over |
@@ -981,7 +1036,7 @@ The mix is POL-06's (80% single-link, 20% routes, 70% fit); the rest are estimat
 | Releases after a hold | about 200/s | Route requests failing elsewhere, withdrawals, deadlines (est. 10% of holds) |
 | Waiting marks, yields, grants, displacements | about 250/s | Est. 5% of requests contended (below) |
 | **Entries** | **about 5,000/s**, sized for 20,000/s | RFC-000 §6 ("at least 5,000") |
-| Batches | One in flight; 33 to 66 a second at 15 to 30 ms a commit; about 75 to 150 entries each, at most `link_batch_max` (1,000) | RFC-000 §3, §6 |
+| Batches | One slot batch in flight, the hottest link's slot carrying that link only (AI3-11); 33 to 66 a second at 15 to 30 ms a commit; about 75 to 150 entries each, at most `link_batch_max` (1,000) | RFC-000 §3, §6 |
 | Rows per batch | About 150 log rows of about 250 B (with the encryption envelope), about 40 outbox rows (conversions and notifications), one head row: about 50 kB | Est. |
 | Write rate into the database | About 2 to 3 MB/s for the hottest link, sent to each of four other voters; sequential keys, so all of it lands on the link's tail range, which load-based splitting cannot spread, at about 50 transactions/s, well within one range (R1-11) | RFC-000 §6 ("well within one range's write rate") |
 | Live tail | About 110 GB a day of log per copy for the hottest link; sealed hourly by history and truncated after verification, so a few hours (about 15 to 30 GB per copy) | §7.6, RFC-006 |
@@ -993,6 +1048,8 @@ The mix is POL-06's (80% single-link, 20% routes, 70% fit); the rest are estimat
 | Waiters | At most about 10,000 (est.) | Contended share × deadline |
 | Generation copies while pinned | About 50 MB/s of copied nodes while a projection slice or a batch pins, retained milliseconds to seconds | §3.2 |
 | Checkpoint | About 1 to 2 GB at worst; cold rebuild about 30 s (§8) | Only without a standby |
+| Displacement markers | Written only by reductions: at most the holds in flight (about 190) per reduction on the hottest link; read by every confirm of a request holding here, as absent-key point reads served by the leaseholder, about 1,750 reads/s on the hottest link's marker range (est.), none of them a write | §5.1; RFC-000 §6 |
+| Probe bookings | One probe account per account slot, each booking every minute (POL-06 as amended, RQ6-2): about 1,024 bookings a minute, about 17/s (est.), spread over the designated probe links, never the hottest link | RFC-006 designates probe links (§10) |
 | Standbys | Two per slot, each one core and the state's memory; tail reads about 2 to 3 MB/s | §7.6 |
 | Link step in the single-link budget | About 30 ms at p99 (one two-region transaction), plus up to about 30 ms of batching wait on the hottest link and up to about 5 ms of apply and counter-offers in the batch | RFC-000 §3 latency table and R19: about 145 ms single-link on the hottest link, against 200 ms |
 
@@ -1054,7 +1111,9 @@ Common errors: `NOT_OWNER` (with a hint) and `STALE_EPOCH` (re-route); `UNAVAILA
 commit possible; retry within the request's deadline); `UNKNOWN_LINK`; `LINK_RETIRED`;
 `MISMATCH` (same identity, different content: nothing changes, alerted). Commands are
 answered once their batch transaction has committed, durable in two regions. Commands for
-one link are applied in one total order, the link log's; there is no order across links.
+one link are applied in one total order, the link log's, which is the order they reach the
+owner-lease holder (POL-05 as amended, §4.1); there is no order across links, and none by
+the time an account received a request.
 
 #### 11.1 Provided
 
@@ -1094,11 +1153,19 @@ epoch, sequence, index) for idempotent consumption.
 | `WAITER_REFUSED` | Link → account owner | (request, `NO_FIT`, counter-offer); tombstoned |
 | `mark_waiting` | Account owner → link | (request, waiting or not, the account-log position it reflects); applied only if newer than the last applied for the request |
 
-**Link displacement read** (proposed, AI-R1-11; consumer RFC-002's confirm transaction):
-a point read of `link_displacement(link, request)` inside the account owner's serialisable
-confirm transaction, one per Share leg. Present: the hold was displaced by a reduction
-committed earlier (with its record timestamp); absent: no reduction displaced it before
-the confirm's timestamp. Read-only; the link owner remains the only writer.
+**Link displacement read** (RFC-000 §8 revision 4.1, AI-R1-11, B-RQ-9; consumer RFC-002's
+confirm transaction). A point read of `link_displacement(link, request)` inside the account
+owner's serialisable confirm transaction, one per Share leg, made with the select grant
+RFC-000 §5.5 gives the account owner's role on that table only.
+
+| Result | Meaning | What the consumer must do (POL-07, B-RQ-9) |
+|---|---|---|
+| Present (attempt, reduction, record timestamp) | A reduction committed at a lower timestamp displaced the hold: the displacement record is visible, so the request **had not begun committing** | Not confirm in this transaction; decide the request against the reduced capacity (§5.1's first row), whether or not a partner confirm was already sent (a partner residue is then cancelled at Share's cost, RFC-002); answer `DISPLACED` with the release or `displacement_accept` |
+| Absent | No reduction displaced the hold below the confirm's timestamp; any later reduction is ordered after the confirm | Confirm as usual; the link treats a later-displaced hold's `convert` as §4.4's exception |
+
+Errors: none of its own (a database read; a retry error retries the confirm transaction).
+Ordering: the database's serialisable order of the two transactions (§5.1). Idempotency:
+a read. The link owner is the only writer of the markers (A1).
 
 **Link availability query** (synchronous read; consumer RFC-002): `availability(window,
 rate)` → largest rate, earliest window (or none, or "not found before T"), as-of
@@ -1106,8 +1173,9 @@ sequence; `fit_ranges(rate, from, until, k)` → up to `k` ranges and where to c
 (§4.2). Advisory, from the owner's latest committed generation; no idempotency needed.
 
 **Link supply commands** (synchronous; from the supplier API through RFC-005's edge, and
-from the operator console). RFC-000 §8 names the first, second, third and fifth; the
-fourth and sixth are added here (AI-R1-10).
+from the operator console). RFC-000 §8 names all six (revision 4.1, AI-R1-10). Every
+rise in sellable capacity (restoration, maintenance cancellation, increase) answers with
+the boundary it takes effect from, `ceil_minute` of its record (§3.1, P1-S76).
 
 | Operation | Who | Output | Refusals |
 |---|---|---|---|
@@ -1135,7 +1203,7 @@ sequence, index) or, for projections, by (link, causing sequence, kind, subject)
 | `AFFECTED_CHANGED` | Reservation, part, minute ranges (open-ended allowed), cause, notice due time; and the notice events when due | RFC-002 (route-level affected), RFC-006 (notifier: holder and network operations) |
 | `OFFER_AFFECTED` | Offer, minute ranges from when, notice due time | RFC-002 (tells the offer's holder, P1-S68) |
 | `REDUCTION_AFFECTED` | Reduction, `T_eff`, `[(reservation, part, cut Mbps)]`, as-of sequence | RFC-002 (equivalent-path offers) |
-| `ALERT` | `CONFIRMED_AFTER_REDUCTION` (with the hold's displacement time), `NO_HOLD`, `UNDECIDED_PAST_DEADLINE`, outcome mismatch on replay, cold rebuild | RFC-006 (alerting) |
+| `ALERT` | `CONFIRMED_AFTER_REDUCTION` (with the reduction, its record timestamp and `T_dec`), `NO_HOLD`, `UNDECIDED_PAST_DEADLINE`, outcome mismatch on replay, cold rebuild | RFC-006 (alerting) |
 
 Hold events (held, waiting, granted, refused, released, converted, displaced) are not a
 separate feed: history and alerting read them from the log through its changefeed. Probe-
@@ -1159,7 +1227,7 @@ it reflects.
 | Reservation command port (RFC-002) | `revoke_or_reduce(reservation, link, reduction, [(part, cut)], effective T_eff)`, idempotent by (link, reduction, reservation); RFC-002 then changes every leg, this link's included, through `end_leg` or `reduce_parts` |
 | Principal and authorisation context, operator action envelope, audit record (RFC-005) | The authenticated pseudonymous principal and role on supply and registry commands; the supplier check of X1-N10 (repeated here against the registry) |
 | Payload encryption (RFC-005) | Envelope encryption of every entry's payload, keys in Kenyan HSMs |
-| Substrate conventions (RFC-006) | The database topology at 2 + 2 + 1 with leaseholders preferred in R1; log-table schema conventions; owner leases, epochs and epoch-conditional batch transactions; region-wide placement of leaseholders and owner leases; the transactional outbox, changefeeds and Kafka topics; `ε` (`max_offset`, 100 ms) and the clock discipline; object storage for checkpoints; hot standbys for link slots (AI-R1-12); the operational alert feed |
+| Substrate conventions (RFC-006) | The database topology at 2 + 2 + 1 with leaseholders preferred in R1; log-table schema conventions; owner leases as session rows plus slot rows with epochs (AI6-1), per-slot epoch-conditional batch transactions (AI3-11); insert-only log tables with the separate truncation role (AI5-8); the select grant on `link_displacement` for the account owner's role (AI-R1-11); the standing R3 non-voter for admission tables (AI6-4); region-wide placement of leaseholders and owner leases; the transactional outbox, changefeeds and Kafka topics; `ε` (`max_offset`, 100 ms) and the clock discipline; object storage for checkpoints; hot standbys for link slots (AI-R1-12); the operational alert feed |
 | Catalogue probe designation (RFC-006) | The probe flag on links |
 | Equivalent-path source (routing) | Not consumed here: RFC-002 chooses paths and sends `offer_hold` (RFC-000 §8) |
 
@@ -1169,7 +1237,7 @@ it reflects.
 |---|---|---|
 | T-01 | **Oracle.** Random schedules, holds, conversions, releases, leg changes and capacity changes over a year's minutes; every decision equals a per-minute array oracle's (D9), and the three occupancies equal sums recomputed from the facts | P1-S01 … S06, S37, S39 |
 | T-02 | **Invariant I1** checked after every entry from the facts alone; the only minutes above `C_ref` are explained by later reductions and by confirmations that completed across one, each flagged and alerted | P1-S05, S13, S63 |
-| T-03 | **Arrival order.** Concurrent random load through the batch pipeline; the outcomes equal those of checking the commands one at a time in log order, each counting the holds then in place; a `wait = false` refusal stays refused after the blocking hold's release | P1-S13, S14, P2-S112 |
+| T-03 | **Arrival order.** Concurrent random load through the batch pipeline; the outcomes equal those of checking the commands one at a time in log order, each counting the holds then in place; a `wait = false` refusal stays refused after the blocking hold's release; two accounts' requests delivered to the owner in the reverse of their accounts' receipt order are checked in the owner's order | P1-S13, S14, S77, P2-S112 |
 | T-04 | **Counter-offers** against the oracle, beside held capacity, including open-ended requests, a schedule full for ever, several blockers, the step bound and the per-batch budget, and a retry after takeover returning the recorded counter-offer | P1-S12, S15, S16, S38, S39, S70, S73, P2-S18 |
 | T-05 | **Validity** rules V1 … V6 at the edges, calendar-month horizons in UTC including month ends and 29 February, with the hold reaching the link one minute boundary later than receipt | P1-S19, S20, S74 |
 | T-06 | **Open-ended and horizon roll**: advance `ts` by days and months; no new sale takes an open-ended reservation's minutes | P1-S21, S22, S23 |
@@ -1178,7 +1246,7 @@ it reflects.
 | T-09 | **Port invariants**: release before hold, duplicate commands, stale attempts, convert without hold, hold at `D_c` | P1-S08, S18, P2-S14 |
 | T-10 | **Takeover and batch failure**: kill the owner at every entry kind and at every batch step (before commit, during commit with an ambiguous result, after commit before replies); push batch timestamps; pause a deposed owner and resume it; replies retried; releases durable within `release_grace`; expiry requests resent; hot-standby and cold-path takeover times measured | P1-S54, S62, P2-S104, S106, S107, S114 |
 | T-11 | **Outages**: flags at exactly the overcommitted minutes, all alike, open-ended, from the minute of the record to the boundary of the restoration; due times; recomputation and notices when a reservation ends inside an outage; notices written within the link's 10 s budget with a webhook endpoint down | P1-S24 … S27, S40, S48 … S51, S72, S75 |
-| T-12 | **Displacement**: a hold that has not begun committing is rejected or turned into a waiter; one that had begun completes, flagged and alerted; a confirm racing the reduction's transaction, with and without the marker read | P1-S41, S42, S63 |
+| T-12 | **Displacement**: a hold that has not begun committing is rejected or turned into a waiter; one that had begun completes, flagged and alerted; a confirm racing the reduction's transaction both ways on a real 2 + 2 + 1 cluster (reduction first: the confirm sees the marker and does not confirm; confirm first: the reduction's batch is pushed, re-decided, and the later `convert` is flagged and alerted); markers deleted with the attempt they mark | P1-S41, S42, S63, S78 |
 | T-13 | **Maintenance**: notice by calendar date, beside committed and held capacity, `retry_after` when only holds block it, cancellation free from the boundary | P1-S28 … S30, S66, S67 |
 | T-14 | **Permanent reductions**: newest part first, own ages, the largest excess per part, cut at `T_eff` in steps, recomputation when the schedule changes during the notice | P1-S31, S32, S35, S36, S43 … S47, S52, S64, S65 |
 | T-15 | **Offer holds**: counted as committed, no waiting on them, accept with original ages, earlier move, decline, lapse, failed partner leg, an outage on the offered path | P1-S53, S55 … S61, S68, S71 |
@@ -1186,12 +1254,12 @@ it reflects.
 | T-17 | **Determinism**: replay the same log on two builds and on a standby; every entry's outcome equal; checkpoint digests equal | All (I5) |
 | T-18 | **Load**: the design mix at 2,500 requests/s on one link for one hour on the 2 + 2 + 1 database, one NestJS owner and two standbys; p99 of the link step with batching wait, event-loop utilisation and GC pauses, batch size, projection lag, share answered `pending` | X2-S03, S05, S15 |
 | T-19 | **Supply and registry authorisation**: every principal and role against every supply and registry command | X1-S13, S22, S23, S31 |
-| T-20 | **Permanent increase**: sellable from the boundary at or after the record, no reservation changed, during an outage and during a reduction's notice | P1-S69 |
+| T-20 | **Every rise in sellable capacity** (restoration, increase, maintenance cancellation): effective from the boundary at or after the record, including a record exactly on a boundary, with the recording entry and later commands of its batch seeing it; no reservation changed by an increase, during an outage and during a reduction's notice | P1-S27, S40, S67, S69, S76 |
 
 ### 13. Traceability
 
 **P1 scenarios** (all primary in this RFC). Rows marked * are new or changed in
-`requirements-v1.6`.
+`requirements-v1.6`; rows marked † are new or changed in `requirements-v1.7`.
 
 | Scenario | Approach |
 |---|---|
@@ -1208,7 +1276,7 @@ it reflects.
 | P1-S11 | §4.3 (scan and grant) |
 | P1-S12 | §4.1 (`IN_FLIGHT`, `retry_after`), §4.2 (counter-offer beside held capacity) |
 | P1-S13 * | §3.4 I1, §7.2 (one writer, one order), §5.1 (the exception) |
-| P1-S14 * | §4.1 (one at a time in the order received, counting holds then in place), §7.2 (batch order) |
+| P1-S14 *† | §4.1 (one at a time in the order they reach the schedule owner, counting holds then in place), §7.2 (batch order) |
 | P1-S15 | §4.2 (largest rate) |
 | P1-S16 | §4.2 (earliest window) |
 | P1-S17 | §4.2 (rates and windows only) |
@@ -1234,7 +1302,7 @@ it reflects.
 | P1-S37 | §4.1 (no fit only on `occ_firm`), §3.4 I2 |
 | P1-S38 | §4.2 |
 | P1-S39 | §2 (a capacity answer), §4.2 |
-| P1-S40 * | §5.2 (flags end at the boundary at or after the record), §5.7 (restoration notices) |
+| P1-S40 *† | §3.1 (every rise from the first boundary at or after its record), §5.2 (flags end there), §5.7 (restoration notices) |
 | P1-S41 * | §5.1 (displacement of a request that has not begun committing) |
 | P1-S42 * | §5.1, §4.3 (waiter refused for no fit) |
 | P1-S43 | §5.4 (sellable reduction from the announcement) |
@@ -1257,11 +1325,11 @@ it reflects.
 | P1-S60 | §5.6 |
 | P1-S61 | §5.6 (`offer_release`) |
 | P1-S62 | §4.4, §8 (release durable once the lease is held again) |
-| P1-S63 * | §5.1 (a request that had begun committing completes; displacement markers), §4.4 (conversion flagged, notice due at `T_dec`, alert), §5.7 |
+| P1-S63 * | §5.1 (a request whose confirm did not see the displacement record completes), §4.4 (a displaced hold's conversion flagged, notice written at once, alert), §5.7 |
 | P1-S64 * | §5.4 (affected set follows the schedule; offer stays open; cut never more than then required) |
 | P1-S65 * | §5.4 (largest excess per part, newest first) |
 | P1-S66 * | §5.3 (step 4: `retry_after`, not queued) |
-| P1-S67 * | §5.3 (cancellation), §3.1 (effective boundary) |
+| P1-S67 *† | §5.3 (cancellation), §3.1 (first boundary at or after the record) |
 | P1-S68 * | §5.6 (offer hold not flagged; `OFFER_AFFECTED`), §5.7 |
 | P1-S69 * | §5.5 (permanent increase), §3.1 |
 | P1-S70 * | §4.1 (`retry_after` the latest blocker), §4.2 |
@@ -1270,6 +1338,9 @@ it reflects.
 | P1-S73 * | §4.2 (every counter-offer beside held capacity) |
 | P1-S74 * | §2 (calendar-month horizon from the minute of receipt) |
 | P1-S75 * | §5.7 (notice events on time; "told" completed by the notifier, RFC-006) |
+| P1-S76 † | §3.1 (a rise recorded on a boundary takes effect in its own entry), §5.2 (restoration), §5.5 (increase), §5.3 (maintenance cancellation), §11.1 (supply answers) |
+| P1-S77 † | §4.1 (the order of reaching the owner, not of the accounts' receipt; `IN_FLIGHT` with Y's remaining deadline), §7.2, §11 |
+| P1-S78 † | §5.1 (judged by the displacement record's visibility; marker written in the reduction's transaction, read in the confirm's), §4.4 (a displaced hold converted: flagged and alerted), §7.1 (`link_displacement`), §11.1 (link displacement read) |
 
 **Scenarios of needs allocated jointly** (RFC-000 §7: "also RFC-001"). The primary RFC
 satisfies each; this RFC provides the link-side part named. Scenarios of these needs with
@@ -1288,9 +1359,14 @@ no link-side behaviour are listed as such.
 **Link-side rows of scenarios outside the allocation.** P2-S112 (P2-N8, RFC-002/RFC-004):
 the `IN_FLIGHT` refusal with `retry_after` that makes R1 fail at once (§4.1). X1-S13 and
 X1-S31 (X1-N7, X1-N8, RFC-005): the registry's role check, network operations refused and
-commercial accepted for registering and retiring a link (§10).
+commercial accepted for registering and retiring a link (§10). X1-S13's row added in
+`requirements-v1.7` (support refused an erasure) and the v1.7 changes to X1-N7 (erasure by
+compliance; withholding a termination notice decided with the termination) have no
+link-side part: a termination reaches the link as `end_leg` with cause `terminate`
+whatever is decided about its notice (§4.5), and the link holds no personal data (§5).
 
-**Coverage.** P1: 75 of 75 scenarios designed for here (13 new, 6 changed in v1.6).
+**Coverage.** P1: 78 of 78 scenarios designed for here (13 new and 6 changed in v1.6; 3
+new, P1-S76 … S78, and 3 changed, P1-S14, S40, S67, in v1.7).
 Jointly allocated needs: 82 scenarios, 52 with a link-side part provided here (45 of P2,
 2 of X1, 5 of X2) and 30 without one; every one of the 82 is satisfied by the primary RFC
 named.
@@ -1299,14 +1375,14 @@ named.
 
 | Target or policy | How this design meets it |
 |---|---|
-| Never oversold (P1-N1, POL-05) | One writer per link (the owner-lease holder, every batch conditional on its epoch), and invariant I1 checked on every addition; holds count against the link until the account owner ends them (A9). The only confirmations above a reduced capacity are those v1.6 allows, each flagged and alerted; displacement markers make "had begun committing before the record" exact (§5.1) |
-| Requests that fit are confirmed (P1-N2) | The check is the peak, not a sum or a gap (D6); no fit is decided only on committed capacity; checks run one at a time in log order, counting the holds then in place (POL-05) |
+| Never oversold (P1-N1, POL-05) | One writer per link (the owner-lease holder, every batch conditional on its epoch), and invariant I1 checked on every addition; holds count against the link until the account owner ends them (A9). The only confirmations above a reduced capacity are those v1.6 allows, each flagged and alerted; "had begun committing" is judged exactly by whether the confirm sees the displacement markers the reduction wrote (§5.1, B-RQ-9) |
+| Requests that fit are confirmed (P1-N2) | The check is the peak, not a sum or a gap (D6); no fit is decided only on committed capacity; checks run one at a time in the order requests reach the owner, which is log order, counting the holds then in place (POL-05, P1-S77) |
 | Cost independent of booking length (X2-S05) | Two point updates and `O(log m)` queries, `m` at most about 530,000 keys (est.); open-ended bookings need no horizon at all |
 | Hottest link at ×50 (POL-06, X2-S03) | About 5,000 entries/s in batches of about 75 to 150 against an apply ceiling of about 20,000/s on one event loop (est.), 4× margin; the latency is the two-region transaction and the batching wait (about 60 ms p99 on the hottest link, est.), not the decision. The pre-baseline draft's link-row lock measured p99 115.5 ms with 50 clients on one link, without any two-region commit (D12) |
 | One schedule, one priority rule (P1-N3, POL-02) | Single-link and route legs, waiters and yields all in one log; released capacity to the oldest waiter it fits, in the entry that frees it; yields only from waiting holders |
 | Rejections actionable and discreet (P1-N4, POL-10) | Largest rate and earliest window from the same tree, beside held capacity, recorded with the refusal; no identities |
 | Holds outlive no outcome, and late commands recreate none (POL-26, A0R-03) | Request-scoped releases, tombstones until `D + release_grace`, refusal at `D_c`, decided at the entry's own commit timestamp |
-| Loss of supply never revokes silently (P1-N8, POL-07) | Sellable and physical capacity kept apart; raises effective from the next boundary, falls at once; flags exact, all alike, recomputed and re-notified when they change; newest-first cuts by the largest excess, decided at `T_eff`, never before and never more than needed; firm offer holds counted as committed and not flagged |
+| Loss of supply never revokes silently (P1-N8, POL-07) | Sellable and physical capacity kept apart; every rise effective from the first boundary at or after its record, falls at once; flags exact, all alike, recomputed and re-notified when they change; newest-first cuts by the largest excess, decided at `T_eff`, never before and never more than needed; firm offer holds counted as committed and not flagged |
 | Known-at history (P1-N9, POL-19) | Every fact carries its known time and commit timestamp; the log replays to any position; the index is rebuilt from sealed segments |
 | Failover (X2-N5) | Hot standbys hold the state; takeover is a lease expiry plus milliseconds of catch-up, designed for about 5 s (est.), inside `release_grace` (1 min); a cold rebuild about 30 s |
 | Policy changes without mechanism changes | Every parameter and the priority comparator come from `Policy` entries |
@@ -1330,6 +1406,7 @@ named.
 | **Strict first-come-first-served per link** (head of line) | Makes every younger request wait behind an older one even when their windows do not conflict, contradicting POL-05's check against the capacity then held |
 | **First fit among waiters, ignoring priority** | A stream of small younger requests could starve an older large one of released capacity; breaks POL-02 |
 | **Re-validating every hold at the decision** (the account owner asks each link "still valid?" just before its confirm entry) | Closes the reduction interval completely, but adds one hop and one link commit to every booking (about +35 ms at p99, est.). The displacement marker read (§5.1) closes the same interval with one in-region read and no commit |
+| **A bounded window for "had begun committing"** (RFC-002 revision 2's reading of B-RQ-9: a request counts as already committing if it proposed its confirm within a bounded interval after the record) | Needs no cross-owner read, but the bound is a parameter to justify and the judgement is not checkable from the records alone. `requirements-v1.7` decides the exact reading by visibility, which the marker read gives for one in-region read per leg |
 | **Recording projections as log entries** (affected flags, announcement-time affected sets) | Makes history self-describing, but an outage on a busy link can flag 100,000 parts (est.): a long apply on the hottest link, inside the 200 ms path. The flags are a pure function of the log, so they are recomputable; only the cuts, which change state, are entries (`ReductionStep`) |
 | **Computing a permanent reduction's cut in one entry** | A reduction to zero on a link with a million parts would stall the event loop for seconds. Bounded steps keep every entry a few milliseconds (est.) |
 | **Recomputing counter-offers on a retry** | Needs the tree as it was at the refusal, which is not kept. Recording the counter-offer in the refusal entry costs a few bytes and makes every retry, across any takeover, return the same answer |
@@ -1339,7 +1416,7 @@ named.
 
 | # | Risk or issue | Mitigation or next step |
 |---|---|---|
-| R1-1 | **The notice interval of a reduction** (§5.1): until the displacement marker read is adopted, a confirm proposed between a reduction's record and the `DISPLACED` notice's arrival completes though it began committing after the record | AI-R1-11 proposes the read; meanwhile detected, flagged and alerted with the displacement time, and counted; the interval is one notice transit (about 5 to 35 ms, est.) per reduction |
+| R1-1 | **Confirmations across a reduction** (§5.1). The interval is closed (B-RQ-9, AI-R1-11 adopted); what remains is the accepted cost: a confirm ordered before the reduction whose `convert` arrives after it completes and is affected, and a reduction's batch pushed by a confirm's read is re-decided (with per-slot batching, every link of its slot) | Each case flagged and alerted (`CONFIRMED_AFTER_REDUCTION`) and counted; T-12 measures the push rate on a real cluster; reductions are rare (supply events), so pushes are too (est.) |
 | R1-2 | **Waiter scans under heavy contention**: cost grows with the waiters overlapping a changed range | Interval indexes bound the candidates; the R1 spike measures the worst flash crowd; if needed, a scan budget per entry with the remainder continued by a `Tick` |
 | R1-3 | **The share answered `pending`** on the hottest link is an estimate (1 to 5%, §9) | Measured in the spike (T-18) |
 | R1-4 | **B+tree constants in V8** on the hottest link | Measured; fall back to the dense ring tree (Competition) for links above a change-point threshold, with the same monoid; or the trees as a native module behind the same interface |
@@ -1365,7 +1442,7 @@ schedule and admission"), and applied in this revision:
 | RQ-R1-2 | The minute of a restoration | **Resolved**: an outage from the start of its minute; flags end and capacity is sellable from the first boundary at or after the restoration. P1-S40 | §3.1, §5.2, §5.7 |
 | RQ-R1-3 | The affected set when the schedule changes during the notice | **Resolved**: recomputed; newly affected holders offered at once; an offer once made stays open; removal decided at the notice's end, never more than then required. P1-S64 | §5.4 |
 | RQ-R1-4 | "Just enough Mbps" at different excesses | **Resolved**: the largest excess met, after newer parts' cuts. P1-S65 | §5.4 |
-| RQ-R1-5 | Maintenance blocked by holds; cancelling maintenance | **Resolved**: beside committed and held capacity; rejected with `retry_after`; the supplier may cancel, free from the next boundary. P1-S66, P1-S67 | §5.3 |
+| RQ-R1-5 | Maintenance blocked by holds; cancelling maintenance | **Resolved**: beside committed and held capacity; rejected with `retry_after`; the supplier may cancel, free from the next boundary (read since v1.7 as the first boundary at or after the record, RQ-R1-13). P1-S66, P1-S67 | §5.3 |
 | RQ-R1-6 | An outage on a link with an offer hold | **Resolved**: counts as committed, not flagged; the offer stays open and firm; its holder told. P1-S68 | §5.6, §5.7 |
 | RQ-R1-7 | Who registers and retires a link; permanent increases | **Resolved**: commercial registers and retires; an increase is the supplier's, sellable from the next boundary. POL-07, POL-32; P1-S69, X1-S31 and rows of X1-S13, S22, S23 | §5, §5.5, §10, §11.1 |
 | RQ-R1-8 | `selling_horizon` and "now" | **Resolved**: "now" the minute boundary at or before receipt; 12 calendar months in UTC, clamped to the month's last day. P1-S74 | §2 |
@@ -1374,12 +1451,29 @@ schedule and admission"), and applied in this revision:
 | RQ-R1-11 | Ages of a moved reservation's parts | **Resolved**: each part keeps its original age. P1-S71 | §5.6 |
 | RQ-R1-12 | Telling holders when a flag shrinks | **Resolved**: holders and network operations told within `affected_notice_time` whenever affected minutes change. P1-S72 | §5.7 |
 
-New in revision 2, raised for decision with this RFC's working interpretation:
+Revision 2 raised RQ-R1-13 and RQ-R1-14. Both are **resolved** by `requirements-v1.7`
+([review 12](../reviews/12-requirements-amendments-from-rfc-revision-2.md)), as is RFC-002's
+B-RQ-9, which this RFC's displacement markers serve, and applied in this revision:
 
-| # | Issue | Working interpretation and proposal |
-|---|---|---|
-| RQ-R1-13 | **"The next minute boundary" for a cancelled maintenance booking** (POL-07 *Planned maintenance*) against "the first minute boundary at or after its record" for a restoration and a permanent increase. They differ only for a cancellation recorded exactly on a boundary | One rule for every change that raises sellable capacity: the first minute boundary at or after the record. Proposal: word POL-07's maintenance bullet the same way |
-| RQ-R1-14 | **"In the order received" for link checks** (POL-05, P1-S14). Requests are received by different accounts' owners; the link can check them only in the order their holds reach it, and no requirement orders events across accounts (RFC-000 §4.5, no global sequencer). Two requests received in one order can reach the link in the other | "The order received" for a check on a link is the order in which the link's schedule owner receives the hold, which its log records; concurrent outcomes match that sequence of checks. Proposal: say so in POL-05 and the glossary's *Capacity hold* |
+| # | Issue (revision 2) | Decision in v1.7 | Applied in |
+|---|---|---|---|
+| RQ-R1-13 | "The next minute boundary" for a cancelled maintenance booking against "the first boundary at or after its record" for restorations and increases | **Resolved** (coordinator), as proposed: every rise in sellable capacity takes effect from the first minute boundary at or after its record. POL-07 *Every rise in sellable capacity*; P1-N8; P1-S76 new, P1-S40 and P1-S67 retitled | §3.1, §5.2, §5.3, §5.5, §11.1, T-20 |
+| RQ-R1-14 | "In the order received" for link checks | **Resolved** (coordinator), as proposed: the order in which requests reach the link's schedule owner. POL-05; P1-N2; P1-S14 amended, P1-S77 new; glossary *Capacity hold* | §4.1, §7.2, §11, T-03 |
+| B-RQ-9 (RFC-002) | When "had begun committing when the reduction was recorded" is judged | **Resolved** (coordinator): exactly, by whether the reduction's displacement record is visible to the confirming transaction. POL-07 *When it is judged*; P1-N1; P1-S78 new; glossary *Affected reservation* | §3.4 I1, §4.4, §5.1, §7.1, §11.1, T-12 |
+
+New in revision 3: none. Two readings are recorded, neither needing an amendment:
+
+- **What "the displacement record" is in the design.** POL-07 defines it by what it records
+  ("the record, made at the link with the reduction, of the requests in flight it no
+  longer fits"); here it is the set of `link_displacement` rows written in the
+  reduction's own transaction (§5.1, §7.1). A hold that still fits after the reduction
+  beside committed capacity and older holds is not "no longer fit", so it gets no marker,
+  and its confirmation is not an exception.
+- **"Confirmed after the reduction was recorded"** (P1-S63's alert). With the read, a
+  confirm that did not see the record is ordered before it in the database, though its
+  `convert` reaches the link after the reduction entry. The link raises the alert for
+  every conversion of a hold that carries a displacement mark (§4.4), which is the set
+  P1-S78's first row names.
 
 ## Architecture issues
 
@@ -1398,13 +1492,23 @@ Revision 1 raised AI-R1-1 … AI-R1-9. All nine are **resolved** in RFC-000 revi
 | AI-R1-8 | The release carried no deadline | **Resolved**: the release carries `D`. §2, §4.3, §8 | §4.4, §11.1 |
 | AI-R1-9 | The hold needed the commit fence | **Resolved**: the hold carries `D_c`; granting skips waiters past it. §2, §3, §4.3, §8 | §4.1, §4.3 |
 
-New in revision 2:
+Revision 2 raised AI-R1-10 … AI-R1-12. All three are **resolved** in RFC-000 revision 4.1
+("Revision 4.1 errata"), as proposed:
 
-| # | Issue | Resolution in this RFC; RFC-000 to confirm |
-|---|---|---|
-| AI-R1-10 | **Supply commands for a permanent increase and a maintenance cancellation.** v1.6 gives the supplier both (POL-07, POL-32); RFC-000 §8's link supply commands name only outages and restorations, maintenance booking and permanent reductions | Added to the link supply commands: `record_increase` and `cancel_maintenance` (§5.3, §5.5, §11.1), same consumers. Proposal: extend the §8 row |
-| AI-R1-11 | **"Had begun committing" across two logs.** With the notice alone, a confirm proposed after a reduction's record but before `DISPLACED` arrives completes, though v1.6 requires a request that had not begun committing at the record to be decided against it (§5.1) | Displacement markers written in the reduction's transaction, and a point read of them in the account owner's serialisable confirm transaction, one per Share leg: the database orders the reduction and the confirm, so "before the record" becomes exact, for about 1 to 2 ms per confirm and no extra commit (§5.1, §11.1 "Link displacement read"). Needs RFC-000 to allow an owner's transaction to **read** another owner's rows (A1 constrains writers only; RFC-000 §5.5's grants restrict write access) and to list the read in §8, and RFC-002 to make it in its confirm transaction. Until then: detected and alerted (R1-1) |
-| AI-R1-12 | **Hot standbys for link owners.** RFC-000 §5.4 promises owner-lease takeovers within seconds for admission, and AI3-9 names hot standbys for rating only. A link owner with 1 to 2 GB of state rebuilt cold takes about 30 s (est.), which still fits admission's 1 min RTO and `release_grace` but leaves little margin | Every link slot has two hot standbys tailing its log (§7.6); RFC-006 provisions them in its owner runtime and counts them in §17's costs. Proposal: RFC-000 §5.4's admission row names them |
+| # | Issue (revision 2) | Resolution in RFC-000 revision 4.1 | Here |
+|---|---|---|---|
+| AI-R1-10 | Supply commands for a permanent increase and a maintenance cancellation | **Resolved**: link supply commands gain `record_increase` and `cancel_maintenance`, same consumers; capacity history records both. §2, §8 | §5.3, §5.5, §11.1 |
+| AI-R1-11 | "Had begun committing" across two logs | **Resolved**: displacement-marker rows written in the reduction's transaction, one point read per Share leg in the account owner's confirm transaction; A1 amended (an owner may read another owner's rows, never write them, only where §8 names the read; select granted only there); §8 *Link displacement read*. With B-RQ-9 (requirements) | §5.1, §7.1, §11.1, R1-1 |
+| AI-R1-12 | Hot standbys for link owners | **Resolved**: two per link slot, one in the leader region's other facility, one in the second Kenyan region. §5.1, §5.4, §5.5 item 10, §8 | §7.6, §8, §11.2 |
+
+Revision 4.1 also changed, without an issue of this RFC, the substrate this RFC runs on;
+each is applied here: per-slot batch transactions (AI3-11, §1, §7.2, §9); owner leases as
+session plus slot rows (AI6-1, §8); insert-only log tables with a separate truncation role
+(AI5-8, §7.1, §7.6); `τ` at about 260 to 300 ms with `δ_x_cfg` at p99.9 (AI6-3, §4.1); a
+standing R3 non-voter for admission tables (AI6-4, §8); Kafka named as Apache Kafka (AI6-2,
+no change here).
+
+New in revision 3: none.
 
 ## Revision 2 changes
 
@@ -1416,3 +1520,17 @@ New in revision 2:
 | Reductions (POL-07, RQ-R1-1) | Race detected and alerted; amendment proposed | v1.6 rule applied: displacement for requests that have not begun committing, completion with flag and alert for those that had; displacement markers proposed for the notice interval (§5.1) |
 | Other v1.6 decisions | Working interpretations | Applied as rules: restoration, increase and maintenance cancellation from the next boundary (§3.1); maintenance with `retry_after` (§5.3); permanent increase (§5.5); largest excess per part and recomputed affected sets (§5.4); offer holds under outages, original ages on a move (§5.6); notices on every change of affected minutes, and "told" (§5.7); counter-offers beside held capacity, `retry_after` the latest blocker (§4.1, §4.2); calendar-month horizon from receipt (§2); commercial registers and retires links (§5, §10) |
 | Coverage | 62 P1 scenarios; 77 jointly allocated | 75 P1 scenarios (P1-S63 … S75 added; S05, S13, S14, S40, S41, S42 changed); 82 jointly allocated, 52 with a link-side part (§13) |
+
+## Revision 3 resolution
+
+| Finding or issue (record) | Change in revision 3 |
+|---|---|
+| RQ-R1-13, resolved by `requirements-v1.7` ([review 12](../reviews/12-requirements-amendments-from-rfc-revision-2.md)) | One effective-boundary rule for every rise, applied in the recording entry when it is recorded on a boundary (§3.1); §5.2, §5.3, §5.5 cite P1-S76; supply answers state the boundary (§11.1); T-20 widened; working interpretation removed |
+| RQ-R1-14, resolved by `requirements-v1.7` (review 12) | §4.1 states the order as the order requests reach the owner-lease holder, with P1-S77's worked example, re-routed and retried commands; §11 states the one total order; T-03 adds the reversed-delivery case |
+| B-RQ-9, resolved by `requirements-v1.7` (review 12) | §5.1 rewritten: judged by the marker's visibility, a decision table of the three cases, why the order is exact, the marker lifecycle and costs; §4.4 alerts on converting a displaced hold, notice written at once; §3.4 I1 and Need item 4 restated; §11.1 gives the read's semantics and what the consumer must do; T-12 covers both orders; Competition adds the bounded-window reading |
+| AI-R1-10, AI-R1-11, AI-R1-12, resolved by RFC-000 revision 4.1 ("Revision 4.1 errata") | "Proposed" removed from §11.1; the select grant and `link_displacement` row semantics in §7.1; the notice-interval fallback removed from §5.1 and R1-1; Architecture issues table records the resolutions |
+| RFC-000 revision 4.1: AI3-11, AI6-1, AI5-8, AI6-3, AI6-4 | Per-slot batch transactions (§1, §7.2, §9); session and slot lease rows (§8); truncation role (§7.1, §7.6); `τ` range (§4.1); R3 non-voter (§8); substrate conventions consumed (§11.2) |
+| `requirements-v1.7` POL-06 (probes per account slot, disaster on probe evidence) | Probe-booking load row (§9); disaster row names both grounds (§8) |
+| `requirements-v1.7` POL-19, POL-32, X1-N7, X1-N11 (erasure by compliance within `erasure_max`) | Free-text reasons stay with RFC-005, never in the link log (§5); X1-S13's new row recorded as having no link-side part (§13) |
+| `requirements-v1.7` POL-30, X1-S36 (withholding decided with the termination) | No link-side change; recorded in §13 |
+| Coverage | P1-S76 … S78 added to Satisfies and §13; P1-S14, S40, S67 re-cited; 78 of 78 P1 scenarios |

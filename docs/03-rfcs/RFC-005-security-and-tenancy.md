@@ -2,17 +2,18 @@
 
 | | |
 |---|---|
-| Status | **Draft**, revision 2. Revision 2 rebases revision 1 on `requirements-v1.6` and RFC-000 revision 4 (the distributed SQL substrate); see "Revision 2 resolution" |
-| Satisfies | X1-S01 … X1-S38 (all 38 X1 scenarios). Shares, with the primary RFC named in the traceability table: P2-S09 (webhook signing), P2-S64 and P2-S113 (principal identity for idempotency), P2-S67 (poll limit at the edge), P2-S72 and P2-S103 (key revocation push), P4-S82 (finance action and KYB), P4-S99 (principal identity for source references), X2-S24 and X2-S25 (finance and network-operations actions, probe principals) |
+| Status | **Draft**, revision 3. Revision 3 applies [review 16](../reviews/16-rfc-005-review.md) (R5-01 … R5-28, decisions D-1 … D-9) and rebases revision 2 on `requirements-v1.7` and RFC-000 revision 4.1; see "Revision 3 resolution". Revision 2 rebased revision 1 on `requirements-v1.6` and RFC-000 revision 4 |
+| Satisfies | X1-S01 … X1-S39 (all 39 X1 scenarios). Shares, with the primary RFC named in the traceability table: P2-S09 (webhook signing), P2-S64 and P2-S113 (principal identity for idempotency), P2-S67 (poll limit at the edge), P2-S72 and P2-S103 (key revocation push), P3-S71 (non-conforming payloads in the personal-data store), P4-S82 (finance action and KYB), P4-S99 (principal identity for source references), X2-S24, X2-S25 and X2-S29 (finance and network-operations actions, probe principals, declaration on probe evidence) |
 | Policies | POL-01, POL-04, POL-06, POL-07, POL-08, POL-12, POL-14, POL-15, POL-16, POL-17, POL-18, POL-19, POL-21, POL-22, POL-23, POL-24, POL-25, POL-27, POL-28, POL-29, POL-30, POL-32, POL-33 |
-| Builds on | The requirements at tag `requirements-v1.6` ([X1 problem statement](../01-discovery/X1-security-and-tenancy.md), [X1 spec](../02-specs/X1-security-and-tenancy.feature), [policy register](../02-specs/policy-register.md), [glossary](../02-specs/glossary.md)), which resolve this RFC's RQ5-1 … RQ5-10 ([review 11](../reviews/11-requirements-amendments-from-detailed-rfcs.md)); and [RFC-000](RFC-000-architecture.md) revision 4: its components, single-writer ownership (A1), two-region commits (A3), append-only facts (A4), the one decision point per request (A7), personal data never in a log (A11), the substrate (§5.5: CockroachDB at 2 + 2 + 1, TypeScript/NestJS owner services with epoch-fenced owner leases, append-only log tables, Kafka fed by a transactional outbox), the topology (§5.1: payload encryption, Kafka without brokers in R3), the allocation table (§7) and the cross-RFC contracts (§8), which resolve this RFC's AI5-1 … AI5-7 |
-| Specifies | Per RFC-000 §7: the **edge gateway** (with the exact poll limiter), **identity and access** (with webhook endpoints and the **personal-data store**), the **operator console and approvals**, **audit**, **webhook signing**, the **authenticity verifier** for every money-moving input, and **payload encryption**; and the security obligations every other owner must meet when it consumes the contracts in §11 |
+| Builds on | The requirements at tag `requirements-v1.7` ([X1 problem statement](../01-discovery/X1-security-and-tenancy.md), [X1 spec](../02-specs/X1-security-and-tenancy.feature), [policy register](../02-specs/policy-register.md), [glossary](../02-specs/glossary.md)), which resolve this RFC's RQ5-1 … RQ5-10 ([review 11](../reviews/11-requirements-amendments-from-detailed-rfcs.md)) and RQ5-11, RQ5-12 ([review 12](../reviews/12-requirements-amendments-from-rfc-revision-2.md)); and [RFC-000](RFC-000-architecture.md) revision 4.1: its components, single-writer ownership with cross-owner reads only where §8 names them (A1), two-region commits (A3), append-only facts (A4), the one decision point per request (A7), personal data never in a log (A11), the substrate (§5.5: CockroachDB at 2 + 2 + 1, TypeScript/NestJS owner services with epoch-fenced owner leases, insert-only log tables with the truncation role, Kafka fed by a transactional outbox), the topology (§5.1: payload encryption, Kafka without brokers in R3), the allocation table (§7) and the cross-RFC contracts (§8), which resolve this RFC's AI5-1 … AI5-7 (revision 4) and AI5-8 … AI5-11 (revision 4.1 errata) |
+| Specifies | Per RFC-000 §7: the **edge gateway** (with the exact poll limiter), **identity and access** (with webhook endpoints, erasure requests and the **personal-data store**), the **operator console and approvals**, **audit**, **webhook signing**, the **authenticity verifier** for every money-moving input, and **payload encryption**; and the security obligations every other owner must meet when it consumes the contracts in §11 |
 
 Terms are used in the sense of the [glossary](../02-specs/glossary.md). "Reserved rate" is
 capacity and "traffic" is bytes. Figures marked "est." are estimates, to be replaced by
-measurement in RFC-000's spike (RFC-000 R1). Parameters written `like_this` are policy
-parameters from the register; parameters written ‹like_this› are **design parameters** of
-this RFC, not business policy, and are listed in §13.
+measurement in RFC-000's spike (RFC-000 R1). Sizing is at POL-06's design load (×50 of
+launch; RFC-000 §6). Parameters written `like_this` are policy parameters from the
+register; parameters written ‹like_this› are **design parameters** of this RFC, not
+business policy, and are listed in §13.
 
 ## Need
 
@@ -27,16 +28,19 @@ tenant's state, not even by learning that it exists**. That has to hold:
    at 25,000 booking requests/s and about 100,000 status polls/s (RFC-000 §6). No remote
    call is affordable on that path, yet a revoked agent key must stop working within 60 s
    (POL-25, X1-N3), and its undecided requests must fail at their one decision point
-   (POL-04, RFC-000 A7).
+   (POL-04, RFC-000 A7). This RFC holds every other credential (user sessions, device
+   certificates) to the same 60 s (D-6).
 2. **Without a second writer** (RFC-000 A1). Identity and access is the only writer of
-   principals, keys, users, administrator rights, consent, endpoints and operator roles;
-   the account owner is the only writer of a request's outcome. Revocation must cross that
-   boundary without giving a request two decision points (RFC-000 D6).
-3. **Against Share's own operators** (X1-N7, POL-32). Operators must act on any account,
-   which is exactly the power to control: one role per action and per preparatory read, a
-   reason the policy allows, four eyes in three roles (compliance, commercial, network
-   operations), approvals that lapse, and a record of every attempt and read, granted or
-   refused.
+   principals, keys, users, administrator rights, consent, endpoints, erasure requests and
+   operator roles; the account owner is the only writer of a request's outcome. Revocation
+   must cross that boundary without giving a request two decision points (RFC-000 D6), and
+   without reads of another owner's tables that RFC-000 §8 does not name.
+3. **Against Share's own operators, and a compromised console** (X1-N7, POL-32). Operators
+   must act on any account, which is exactly the power to control: one role per action
+   and per preparatory read, a reason the policy allows, four eyes in three roles
+   (compliance, commercial, network operations), approvals that lapse, and a record of
+   every attempt and read, granted or refused, that the console alone cannot forge or
+   skip.
 4. **Against suppliers who compete with each other and with Share's buyers** (X1-N2,
    POL-33). A supplier sees the reservations on its links by an opaque reference and its
    own termination points, never the buyer, unless the buyer's administrator consents or
@@ -48,10 +52,13 @@ tenant's state, not even by learning that it exists**. That has to hold:
    links, keys, roles, administrator rights, consent, policy and endpoints, every operator
    action and read, and every refused privileged attempt is recorded with principal and
    time, and nobody, operators and Share's own engineers and database administrators
-   included, can alter or remove the record.
+   included, can alter or remove the record without it being detected and refused by every
+   reader.
 7. **While personal data stays erasable** (X1-N11, POL-19, RFC-000 A11). Logs, topics,
    archives and the audit trail are append-only for 7 years; a person's data must still be
-   erasable beyond recovery, without altering any record or any sum computed from them.
+   erased beyond recovery **at the person's request**, in every copy (live store, backups,
+   escrowed copies) **within `erasure_max` (30 days) of the request**, without altering any
+   record or any sum computed from them.
 8. **Across region loss, on a substrate Share does not write** (X2-N4, X2-N5, RFC-000
    §5.5). Authentication is part of admission (99.99%, RTO 1 min; RFC-000 §5.4); every
    owner, the console included, is a NestJS service over CockroachDB at 2 + 2 + 1; the
@@ -64,14 +71,14 @@ tenant's state, not even by learning that it exists**. That has to hold:
 
 | # | Rule | Why |
 |---|---|---|
-| S1 | **Authenticate at the edge, from local state.** Every external call is authenticated by the edge gateway from caches pushed by identity and access; nothing on the booking path waits for a remote identity call. | X1-N1 within the 10 ms edge budget (RFC-000 §3). |
+| S1 | **Authenticate at the edge, from a local replica.** Every external call is authenticated by the edge gateway from a full in-memory replica of credential state streamed by identity and access (§3.3); nothing on the booking path waits for a remote call, and a replica more than 30 s behind identity refuses rather than serves. | X1-N1 within the 10 ms edge budget (RFC-000 §3); X1-N3 by one invariant. |
 | S2 | **The tenant comes only from the credential.** The account (or supplier) a call acts for is the one bound to its credential at issuance. A tenant identifier in a path, body or resource identifier is never used to route or to authorise; if it differs from the credential's, the call is answered as for a resource that does not exist. | X1-N2, X1-S02 … X1-S05, X1-S09: a request for another account's data reveals nothing, not even existence. |
 | S3 | **Decide at the edge, re-check at the owner.** The edge makes the coarse decision (principal kind, operation, tenant); the owner that holds the resource makes the fine one (does this resource belong to this partition, is this key still valid in my serial order) and records the principal in the same log row as the change. | RFC-000 A1, A7 and §4.1 (the audit record is part of the owner's entry); defence in depth against an edge defect. |
-| S4 | **Fail closed on authority, fail open only on advice.** Missing or stale credentials, consent or envelopes deny (or hide); only advisory rate counters fail open. | X1-N1, X1-N2, X1-N3: no condition of Share's makes an operation succeed that should not. |
-| S5 | **Operators act only through the console, and the console cannot act alone.** Every operator command carries an envelope signed by the console and by each operator's own hardware authenticator; owners verify it. | X1-N7, POL-32: four eyes cannot be bypassed by a compromised console. |
+| S4 | **Fail closed on authority, fail open only on advice.** Missing or stale credentials, consent, envelopes or identity state deny (or hide); only advisory rate counters fail open. | X1-N1, X1-N2, X1-N3: no condition of Share's makes an operation succeed that should not. |
+| S5 | **Operators act only through the console, and the console cannot act for them.** Every operator action and read carries what the operators themselves signed on their hardware authenticators, over a digest their own signing client computed, including its expiry; owners and readers verify it, check cancellations and roles with identity and access, and record reads themselves. | X1-N7, POL-32: a compromised console cannot make an action take effect that its operators did not sign, after its expiry or after its cancellation, nor read without a record. |
 | S6 | **Audit is the owners' own log tables, made tamper-evident.** No separate audit write can be lost (RFC-000 §4.1); a hash chain written in the same transaction as each row, signed checkpoints written once in two trust domains, and Merkle roots over sealed segments make alteration detectable, including by a database administrator. | X1-N8, X1-S15. |
-| S7 | **Payloads are ciphertext everywhere but in an authorised process.** Owners encrypt every row's payload with keys held in Share's Kenyan HSMs before the write, bound to the row's position; the database (R3's replica included), Kafka and the archive store and replicate bytes they cannot read or forge. | Tenant isolation against the third-party region and against the substrate's own operators (RFC-000 §5.1, AI5-3). |
-| S8 | **Personal data lives in one erasable store, and nowhere else.** Every log, table, topic, trace and audit record carries pseudonymous identifiers only; personal data is in identity and access's personal-data store, encrypted per data subject, and erasure destroys the subject's key. | X1-N11, RFC-000 A11, POL-19. |
+| S7 | **Every application column is ciphertext outside an authorised process**, except pseudonymous keys, ordering and fencing columns. Owners encrypt with keys held in Share's Kenyan HSMs, separated by purpose and bound to the row's position; the database (R3's replica included), Kafka and the archive store bytes they cannot read, and cannot alter or insert without detection. Authenticity between key holders rests on grants, ACLs and the chain (§5.4). | Tenant isolation against the third-party region and against the substrate's own operators (RFC-000 §5.1, AI5-3). |
+| S8 | **Personal data lives in one erasable store, and nowhere else.** Every log, table, topic, trace and audit record carries pseudonymous identifiers only; personal data is in identity and access's personal-data store, encrypted per data subject; an erasure, executed only on a recorded request, deletes the subject's key, and every copy is unreadable when the key generation it was wrapped under is destroyed, within 24 days of the request. | X1-N11, RFC-000 A11, POL-19. |
 
 ### 2. Principals and authentication
 
@@ -81,25 +88,31 @@ A **principal** (glossary) is whoever performs an operation once authenticated. 
 principal has a **pseudonymous identifier** (`principal_id`, 128-bit random, never reused,
 never derived from personal data) and a kind. Records identify it only by that identifier
 for the retention period (POL-19). Personal data (names, email addresses, phone numbers,
-KYB documents) lives only in the personal-data store (§3.7).
+KYB documents) lives only in the personal-data store (§3.7). Every revocation below takes
+effect within ‹revocation_target› 60 s at every edge, and established connections and
+streams authenticated by the revoked credential are closed (D-6, §3.3).
 
 | Kind | Tenant | Credential | Verified where | Revocation takes effect |
 |---|---|---|---|---|
-| **Account user** (buyer side); an **account administrator** is an account user holding the administrator right | One buyer account | OpenID Connect login at identity and access's authorisation server; password plus a second factor, **WebAuthn mandatory for administrators**; short-lived access token (ES256 JWT, ‹user_token_ttl› 5 min) and refresh token (rotating, 12 h idle). The token carries `principal_id`, never the login name | Edge: token signature and expiry locally (JWKS pushed), session deny-list pushed. Identity and access re-checks the administrator right itself on every command of §3.2 | Session deny-list push, within ‹revocation_target› 60 s; administrator commands always see the current right |
-| **Agent key** | One buyer account, fixed at issuance (POL-25) | Bearer key `shk_<key id>_<secret>` with a check digit, secret 256-bit random, shown once at issuance; Share stores only `SHA-256(secret)` | Edge, from the key cache (§3.3), constant-time comparison | Within 60 s at the edge for every operation, and in the account owner's log for undecided requests (§3.3) |
+| **Account user** (buyer side); an **account administrator** is an account user holding the administrator right | One buyer account | OpenID Connect login at identity and access's authorisation server; password plus a second factor, **WebAuthn mandatory for administrators**; short-lived access token (ES256 JWT, ‹user_token_ttl› 5 min) naming a **session** and refresh token (rotating, 12 h idle). The token carries `principal_id` and the session identifier, never the login name | Edge: token signature and expiry locally, **and the session active in the edge replica** (§3.3). Identity and access re-checks the administrator right itself on every command of §3.2 | Session ended in the replica: within 31 s at every edge, connections closed; administrator commands always see the current right |
+| **Agent key** | One buyer account, fixed at issuance (POL-25) | Bearer key `shk_<key id>_<secret>` with a check digit, secret 256-bit random, shown once at issuance; Share stores only `SHA-256(secret)` | Edge, from the replica (§3.3), constant-time comparison | Within 31 s at every edge for every operation; in the account owner's log for undecided requests, and no request of the key confirmed after 45 s (§3.3) |
 | **Supplier user**, **supplier administrator** (a supplier user holding the supplier administrator right, glossary) | One supplier account | As account user | As account user | As account user |
 | **Supplier key** (supplier API automation) | One supplier account | As agent key (`ssk_` prefix); may only call supplier operations | As agent key | As agent key |
-| **Operator** | None (cross-tenant by role) | Share's corporate single sign-on, FIDO2 hardware authenticator mandatory, from managed devices on Share's operator network only; exactly one role bound to the operator identity (POL-32) | Console only; operators have no credential the public edge accepts | Immediate at the console (sessions are server-side); a role removal is pushed to every owner's envelope verifier (§7.4) |
-| **Probe** | A designated probe account or the designated probe supplier (POL-06) | Agent or supplier keys of the probe tenant, plus mTLS client certificates from the probe colocation sites | Edge, as agent key, plus the certificate | As agent key |
+| **Operator** | None (cross-tenant by role) | Share's corporate single sign-on, FIDO2 hardware authenticator mandatory, from managed devices on Share's operator network only; exactly one role bound to the operator identity (POL-32); every action and read grant signed on the authenticator through the **signing client** (§7.3) | Console for the session; every owner and reader for each signature, with identity's operator check (§7.4, C15) | Immediate at the console (sessions are server-side) and at every owner and reader, which check the role with identity at apply time (C15) |
+| **Probe** | A designated probe account per account slot, or the designated probe supplier (POL-06) | Agent or supplier keys of the probe tenant, plus mTLS client certificates from the probe colocation sites | Edge, as agent key, plus the certificate | As agent key |
 | **Payment provider** | None; bound per notification to the account the event names, by payments (RFC-000 §2) | The provider's own authenticity method (§8.1) | Edge payment ingress, by the provider's verifier | Removing the provider's verifier configuration |
 | **Payment partner** | None | mTLS and signed reports, per the partner's scheme (§8.4) | Reconciliation (RFC-004), with the verifier library | As provider |
 | **Payout provider** | None | Provider's method, as payment provider (§8.4) | Edge payment ingress, routed to payouts | As provider |
 | **Partner system** | None | Share calls out with per-partner credentials; partner callbacks verified by the partner's scheme and then re-queried (§8.2) | Partner adapter | Rotating the partner credential |
-| **Exporter** | The supplier that owns it, or Share for exporters on Share's own network | mTLS with a per-exporter certificate from Share's device CA, naming the exporter identity and its owning tenant; issued at the request of the supplier administrator, or of network operations for Share's own exporters (POL-32) | Edge for exporters; ingestion checks each record's exporter against it (§8.4) | Certificate revocation list pushed to edges within 60 s |
-| **Network operations** (consumer of the standing feed and queries) | None | mTLS client certificate | Edge | As exporter |
+| **Exporter** | The supplier that owns it, or Share for exporters on Share's own network | mTLS with a per-exporter certificate from Share's device CA, naming the exporter identity and its owning tenant; issued at the request of the supplier administrator, or of network operations for Share's own exporters (POL-32) | Edge: chain at the handshake, and **the certificate serial active in the edge replica on every message** of the persistent connection; ingestion checks each record's exporter against it (§8.4) | Within 31 s at every edge; the connection is closed |
+| **Network operations** (consumer of the standing feed and queries) | None | mTLS client certificate | Edge, as exporter | As exporter |
 | **Internal service** | None | Workload identity: short-lived X.509 certificate (‹workload_cert_ttl› 24 h) per service instance from Share's internal CA; the same certificate authenticates the service to the database (its own SQL role, §5.5), to Kafka (its own ACLs) and to gRPC peers | Every receiver, by mTLS, against the command allowlist (§4.4) | Certificate expiry and the allowlist |
-| **Onboarding** (the external process that creates accounts and records KYB, POL-24) | None | Internal service identity | Identity and access | As internal service |
-| **Workforce administration** (the process outside X1 that vets operators and assigns roles, X1 Out of scope) | None | Internal service identity, with the approving person's WebAuthn assertion | Identity and access (operator partition) | As internal service |
+| **Onboarding** (the external process that creates accounts, records KYB and recovers administrator access, POL-24, §3.8) | None | Internal service identity | Identity and access | As internal service |
+| **Workforce administration** (the process outside X1 that vets operators, assigns roles and passes on operators' erasure requests, X1 Out of scope) | None | Internal service identity, with the approving person's WebAuthn assertion | Identity and access (operator partition) | As internal service |
+
+A **data subject** (whose personal data the store holds) is not a principal kind: it is a
+user, an operator or a contact of an account or supplier, named by its pseudonymous
+identifier (§3.7).
 
 #### 2.2 The edge authentication pipeline
 
@@ -109,32 +122,36 @@ before any lookup of the resource named, so an unauthenticated caller learns not
 1. **TLS 1.3** termination (persistent connections; mTLS where the kind requires it).
 2. **Pre-authentication shedding**: per source address and per credential prefix,
    ‹preauth_rate_limit›, soft state. Gross abuse is dropped here (RFC-000 §2, edge).
-3. **Credential parse and check digit**: a malformed credential is unauthenticated at once,
-   without a cache lookup.
-4. **Authentication** from the local caches (§3.3): key verifier, token signature, session
-   deny-list, certificate revocation list.
-5. **Principal context** built (§11, C1) and signed by the edge node's workload key.
+3. **Credential parse and check digit**: a malformed credential is unauthenticated, but
+   its answer waits for the same floor as every other unauthenticated answer (§2.3).
+4. **Authentication** from the edge replica (§3.3): key verifier (an unknown key identifier
+   is compared against a fixed dummy verifier, so the work is the same), token signature
+   and session, certificate serial; and the replica's freshness for the credential's
+   identity slot (S1, S4).
+5. **Principal context** built (§11, C1), carrying the identity-signed key record for an
+   agent or supplier key. It is not signed by the edge: the owner authenticates the edge by
+   its mTLS workload identity (R5-24).
 6. **Coarse authorisation** (§4): principal kind × operation, tenant check for resources
    whose tenancy the edge knows (a link's supplier from the catalogue cache; a webhook
-   endpoint's account or supplier from its own cache).
+   endpoint's account or supplier from the replica).
 7. **Advisory rate counters** per key and account (RFC-000 D5), and the **exact poll
    limiter** for status polls (§5.3).
 8. **Forward once** over gRPC to the owner-lease holder of the slot that the principal's
    tenant hashes to (RFC-000 §3, §5.2), from the edge's copy of the placement table, never
    by an identifier in the request.
 
-Steps 3 to 6 are in-memory operations: about 50 µs of CPU per request with Ed25519 signing
-of the context (est.), well inside the edge's 10 ms (RFC-000 §3). The edge keeps no
-authoritative state and never touches the database on the booking path.
+Steps 3 to 6 are in-memory operations: about 20 µs of CPU per request (est.: one SHA-256,
+one hash-map lookup, one ES256 verification for user tokens), well inside the edge's 10 ms
+(RFC-000 §3). The edge keeps no authoritative state and never touches the database.
 
 #### 2.3 Answers that reveal nothing
 
 | Condition | Answer | Scenario |
 |---|---|---|
-| No credential, malformed, unknown, wrong secret, expired token, revoked key or session, certificate revoked | One "unauthenticated" answer, identical in status, body and headers for every cause. A booking or status submission is **not accepted** (glossary), any other request is **refused** | X1-S01, X1-S06 |
+| No credential, malformed, unknown, wrong secret, expired token, revoked key or ended session, certificate revoked | One "unauthenticated" answer, identical in status, body and headers for every cause, and **sent no earlier than ‹unauth_floor› 5 ms after the request arrived**, which exceeds the p99.9 of every cause's own work (est.), so its timing does not tell a known key identifier from an unknown one (R5-16; DT-23). A booking or status submission is **not accepted** (glossary), any other request is **refused** | X1-S01, X1-S06 |
 | Authenticated, but the resource is outside the principal's tenant, or does not exist, or is a supply command on a link of another supplier, or an administrator command naming another supplier | One "not found" answer, identical to the answer for a resource that does not exist, produced by the same code path at the principal's own partition, so its timing is the same as a genuine miss (§5.1) | X1-S02, X1-S03, X1-S04, X1-S05, X1-S09, X1-S22, X1-S33 (fourth row) |
 | Authenticated, within its own tenant, but the principal's kind or rights do not allow the operation (an agent key managing keys, users or endpoints; a user without the administrator right) | "Refused", naming the missing right; the attempt is recorded (§3.2) | X1-S19, X1-S25, X1-S29, X1-S33 (third row) |
-| Identity and access unreachable and a cache entry has expired | "Temporarily unavailable, retry", never "authenticated" (S4) | — |
+| The edge replica for the credential's identity slot is more than ‹edge_staleness_max› behind identity (§3.3) | "Temporarily unavailable, retry", never "authenticated" (S4) | — |
 
 ### 3. Identity and access
 
@@ -143,38 +160,51 @@ authoritative state and never touches the database on the booking path.
 Identity and access is the only writer of the state below (RFC-000 §2). It is a NestJS
 owner service; each partition is an append-only **log table** row sequence, primary key
 (partition, sequence), written only by the holder of its slot's owner lease, every write a
-transaction conditional on the lease epoch (RFC-000 §5.2, §5.5). Current state is a
-projection table written in the same transaction (A4). The service's SQL role has insert
-on its own log tables and insert and update on its own projection and head rows only, and
-no grant on any other owner's tables (RFC-000 §5.5, A1).
+transaction conditional on the lease epoch (RFC-000 §5.2, §5.5). Its partitions are
+grouped into ‹iam_slots› 256 **identity slots** (est.), each with a lease holder and a hot
+standby in the other Kenyan region, as link owners have (RFC-000 AI-R1-12), so a takeover
+takes seconds (est.). Current state is a projection table written in the same transaction
+(A4), encrypted like every application table (§5.4). The service's SQL role has insert on
+its own log tables and insert and update on its own projection and head rows only, and no
+grant on any other owner's tables (RFC-000 §5.5, A1).
 
 | State | Partition | Notes |
 |---|---|---|
-| Buyer account: users (by `principal_id`), the administrator right per user, agent keys (identifier, verifier, label, status, `key_spend_limit`, `key_inflight_limit`, `key_rate_limit`, version), webhook endpoints and their signing secrets (§8.3), KYB status as recorded by onboarding, probe designation | **By buyer account** | One serial order per account: `account_max_keys` is checked against the keys not revoked in the same entry that issues a key, so concurrent issuance cannot exceed it (X1-S21); the count of administrators is checked in the same entry that removes a right or a user, so an account never loses its last one (X1-S38) |
-| Supplier account: users, the supplier administrator right, supplier keys, exporter credentials (certificate serials and the exporter identities they name), webhook endpoints and their secrets | By supplier account | Same serial-order checks as for buyer accounts |
-| **Consent and disclosure registry**: per (buyer account, supplier) the consent state and its history; per legal-order disclosure its order register identifier, scope, approvers, validity and whether the buyer may be told | **By supplier** | Partitioned by the party whose views it governs, so one supplier view needs one consistent read (§6.2) |
-| Operator identities: the one role of each, the person each belongs to (a pseudonymous person identifier), WebAuthn public keys, status; every grant and removal with its granting principal and approving person | One partition (small) | Granted by workforce administration (§2.1), never through the console (§7.1) |
-| Policy: the permission matrix (§4.2), the operator action catalogue (§7.2), allowed reason codes, verifier configurations per provider, key-release policy (§5.4) | One partition, versioned | Every change is an entry with its principal (X1-S14); consumers record the version they decided with |
+| Buyer account: users (by `principal_id`) and their sessions, the administrator right per user, agent keys (identifier, verifier, label, status, `key_spend_limit`, `key_inflight_limit`, `key_rate_limit`, version), webhook endpoints and their signing secrets (§8.3), KYB status as recorded by onboarding, probe designation, **erasure requests** of its users (§3.7) | **By buyer account** | One serial order per account: `account_max_keys` is checked against the keys not revoked in the same entry that issues a key, so concurrent issuance cannot exceed it (X1-S21); the count of administrators is checked in the same entry that removes a right or a user, so an account never loses its last one (X1-S38) |
+| Supplier account: users and sessions, the supplier administrator right, supplier keys, exporter credentials (certificate serials and the exporter identities they name), webhook endpoints and their secrets, erasure requests of its users | By supplier account | Same serial-order checks as for buyer accounts |
+| **Consent and disclosure registry**: per (buyer account, supplier) the consent state and its history; per legal-order disclosure its order register identifier, scope, approvers, validity and whether the buyer may be told | **By supplier** | Partitioned by the party whose views it governs, so one supplier view needs one consistent read, made by identity itself (§6.2) |
+| Operator identities: the one role of each, the person each belongs to (a pseudonymous person identifier bound to a vetting record), WebAuthn public keys and their last signature counters, status; every grant and removal with its granting principal and approving person; **operator assertions consumed** and **action cancellations** (§7.3); operators' erasure requests | One partition (small) | Granted by workforce administration (§2.1), never through the console (§7.1) |
+| Policy: the permission matrix (§4.2), the operator action catalogue (§7.2), allowed reason codes, verifier configurations per provider, key-release policy (§5.4), the allowlist (§4.4) | One partition, versioned | Every change is an entry with its principal (X1-S14); consumers record the version they decided with |
 | Refused attempts at the operations it owns | With the partition of the attempted operation | X1-S19, X1-S25, X1-S29, X1-S33, X1-S38 |
 | **Personal-data store** | Its own database, by data subject (§3.7) | The only place personal data lives (A11) |
 
-Sizing (est.): about 100,000 buyer accounts with at most `account_max_keys` (100) keys
-each, so at most 10 M keys; key, user and endpoint commands are a few per second. The load
-is on reads, served from caches (§3.3).
+**Sizing at the design load** (est.):
 
-**Reads.** Edge cache fills and the console's checks read identity's projection tables by
-**bounded-staleness follower reads** with maximum staleness ‹iam_read_staleness› 1 s, from
-a Kenyan replica in the reader's own region; a read that no local replica can serve within
-the bound goes to the leaseholder (RFC-000 §4.6's mechanism, without status-replica
-leases, since nothing here is a report). R3's replica serves no reads (RFC-000 §4.6).
-Reads that must see every committed change (the consent check, §6.2; the console's
-precondition checks, §7.3) are consistent reads at the present timestamp, served by the
-leaseholder.
+| Quantity | Estimate | Note |
+|---|---|---|
+| Buyer accounts; supplier accounts | 100,000; 1,000 | RFC-000 §6 |
+| Agent and supplier keys | at most 10⁷ (`account_max_keys` × accounts); about 10⁶ active | Upper bound sizes the edge replica |
+| User sessions alive | about 10⁶ | 12 h idle limit |
+| Device certificates | about 10⁵ | Exporters, probes, network operations |
+| Key, user, right, consent and endpoint commands | a few per second; peaks of 100/s at onboarding waves | `mgmt_rate_limit` per principal |
+| Edge replica per node | about 2 GB in memory (10⁷ × about 200 B, est.) | §3.3 |
+| Edge stream traffic | 256 slots × 1 heartbeat/s × about 50 edge nodes ≈ 13,000 small messages/s fleet-wide, plus the changes | §3.3 |
+| Operator checks (C15) | a few per minute; peaks of 10/s | §7.4 |
+| Personal-data subjects | about 10⁶ (est.) | §3.7 |
+
+**Reads.** Identity reads only its own tables. No other component reads identity's tables
+by SQL (RFC-000 A1 rev 4.1, R5-12): every other component gets identity state through an
+owner-served stream, feed or query, each named in §4.4 and §11, and in RFC-000 §8 through
+AI-R5-1: the **edge stream** (C14), the **identity status push** and **catch-up** (C3),
+**supplier visibility** (C6), the **endpoint feed and query** (C8), the **operator check**
+(C15) and the **erasure-request intake** (§3.7). Reads that must see every committed
+change (the consent check, §6.2; the operator check, §7.4) are made by identity
+itself at the present timestamp, served by the leaseholder.
 
 **Feeds.** Every committed identity entry that a consumer needs is written to the outbox in
 the same transaction and published to Kafka (RFC-000 §5.5): the **identity status push**
-(§3.3, C3) keyed by account, the **edge invalidation feed** (§3.3), the **endpoint feed**
-(§8.3, C8), and the audit feed (§9). Payloads are encrypted (§5.4).
+(C3) keyed by account, with the changefeed's resolved timestamps, the **endpoint feed**
+(C8), and the audit feed (§9). Payloads are encrypted under per-topic feed keys (§5.4).
 
 #### 3.2 Administrator commands
 
@@ -183,59 +213,98 @@ for a supplier account, a **supplier administrator** of the supplier), authentic
 §2.1. Anyone else within the tenant is refused, and the refusal is recorded with the
 principal, the attempted command and the time; a principal of another tenant gets "not
 found" (§2.3). Each command is idempotent by (account, idempotency key) for 24 h, as POL-29
-sets for bookings. Each entry records the administrator, the time, and the old and new
-values (X1-S14, X1-S20), by pseudonymous identifiers only.
+sets for bookings; a replay returns the first answer, **except a secret**: a replay of
+*issue a key* or *register an endpoint* returns the key or endpoint identifier and "secret
+already issued", never the secret, which Share does not keep (keys) or shows once
+(endpoints); a lost first answer is fixed by revoking and issuing again (R5-17). Each entry
+records the administrator, the time, and the old and new values (X1-S14, X1-S20), by
+pseudonymous identifiers only.
 
-| Command | Effect | Pushed to | Scenario |
+| Command | Effect | Reaches | Scenario |
 |---|---|---|---|
-| Issue an agent key | Refused, stating the limit, if the account already has `account_max_keys` keys not revoked; otherwise a key with its limits (defaults from POL-25), its secret returned once | Edge invalidation feed; identity status push | X1-S18, X1-S21 |
-| Change a key's limits (raise or lower `key_spend_limit`, `key_inflight_limit`; lower `key_rate_limit` below the POL-25 default) | New version of the key | Edge invalidation feed; identity status push | X1-S18 |
-| Revoke a key | Terminal; never reversed (a new key is issued instead) | Edge invalidation feed; identity status push | X1-S06, X1-S18, P2-S72 |
+| Issue an agent key | Refused, stating the limit, if the account already has `account_max_keys` keys not revoked; otherwise a key with its limits (defaults from POL-25), its secret returned once | Edge stream; identity status push | X1-S18, X1-S21 |
+| Change a key's limits (raise or lower `key_spend_limit`, `key_inflight_limit`; lower `key_rate_limit` below the POL-25 default) | New version of the key | Edge stream; identity status push | X1-S18 |
+| Revoke a key | Terminal; never reversed (a new key is issued instead) | Edge stream; identity status push | X1-S06, X1-S18, P2-S72 |
 | Consent to identify the account to a named supplier; withdraw it | An entry in that supplier's registry partition (§6.2), recorded with the administrator and time | — (read at view time) | X1-S18, X1-S30 |
-| Add a user to the account; remove one | A new `principal_id`, its personal data put to the personal-data store (§3.7); removal ends the user's sessions. Removing the last administrator is refused (below) | Session deny-list (on removal) | X1-S18 |
-| Grant or remove the administrator right of a user (itself included) | Refused, stating that an account keeps at least one administrator, if it would leave none; checked in the account's serial order | Session deny-list (on removal) | X1-S18, X1-S38 |
-| Register, change or remove a webhook endpoint | Endpoint URL validated (§8.3); a new signing secret shown once | Endpoint feed (notifier) | X1-S18, X1-S24, X1-S11 |
-| *Supplier administrator*: add or remove supplier users; grant or remove the supplier administrator right; issue, change or revoke supplier keys; issue or revoke an **exporter credential** (a device-CA certificate for a submitted key, naming an exporter of the supplier); register, change or remove the supplier's webhook endpoints (supplier notices) | As the buyer-side commands; at least one supplier administrator kept | Edge invalidation feed; certificate revocation list; endpoint feed | X1-S33 |
+| Add a user to the account; remove one | A new `principal_id`, its personal data put to the personal-data store (§3.7); removal ends the user's sessions. Removing the last administrator is refused (below). Removal does **not** erase the user's personal data (D-5): that needs a request (next row) | Edge stream (sessions ended) | X1-S18 |
+| Grant or remove the administrator right of a user (itself included) | Refused, stating that an account keeps at least one administrator, if it would leave none; checked in the account's serial order | Edge stream (sessions of a removed administrator re-issued without the right) | X1-S18, X1-S38 |
+| **Pass on an erasure request** for a user of the account, current or former, the administrator itself included, or for a contact person the account registered (POL-19, POL-32) | An open **erasure request** in the account's partition, with the subject, the administrator, the channel and the time, which starts the `erasure_max` clock (§3.7); compliance is alerted | Compliance's erasure queue (`open_requests`, C12) | X1-S39, X1-S12 |
+| Register, change or remove a webhook endpoint | Endpoint URL validated (§8.3); a new signing secret shown once | Endpoint feed (notifier); edge stream (endpoint → tenant) | X1-S18, X1-S24, X1-S11 |
+| *Supplier administrator*: add or remove supplier users; grant or remove the supplier administrator right; issue, change or revoke supplier keys; issue or revoke an **exporter credential** (a device-CA certificate for a submitted key, naming an exporter of the supplier); register, change or remove the supplier's webhook endpoints (supplier notices); pass on a supplier user's erasure request | As the buyer-side commands; at least one supplier administrator kept | Edge stream; endpoint feed | X1-S33, X1-S39 |
 
 An agent key may read its own record (limits, status, key headroom through the account
 owner, POL-18); account users may list the account's keys without verifiers. Nobody, the
-issuing administrator included, can read a key's secret after issuance. Removing a user
-does not erase its personal data: that is a separate act (§3.7), because the record of
-what the user did stays attributable either way.
+issuing administrator included, can read a key's secret after issuance.
 
-#### 3.3 Caches, the identity status push and the 60-second revocation
+#### 3.3 The edge replica, the identity status push, and the 60-second revocation
 
-**Edge caches.** Each edge node keeps: agent and supplier key records it has used
-recently (positive entries live at most ‹key_cache_ttl› 30 s, RFC-000 §3; negative entries
-for unknown key identifiers 5 s, to absorb floods); the JWKS for user tokens; the session
-deny-list; certificate revocation lists; the catalogue's link → supplier map; the endpoint
-→ tenant map; the placement table; the policy version. A miss or an expiry is filled by a
-follower read of identity's projection (§3.1), at most ‹iam_read_staleness› 1 s behind.
-Entries are **never extended on error**: an agent-key entry that cannot be refreshed
-expires (S4).
+**The edge replica** (C14; R5-21, R5-06, R5-11, R5-12). Each edge node holds in memory a
+full replica of the credential state it authenticates against: agent and supplier key
+records (verifier, account, limits, status, version), sessions (identifier, principal,
+tenant, administrator right, status), device-certificate serials and their status, the
+endpoint → tenant map, and the policy version. Each record is **signed by identity**
+(Ed25519, a per-slot record-signing key certified by the key service for (identity, slot,
+epoch); §10). The replica is filled per identity slot from:
 
-**Two paths for every key entry** (§11, C3). Every committed key entry is published from
-identity's outbox on two Kafka topics: (a) the **edge invalidation feed**, which every edge
-node consumes and on which it evicts or replaces the entry; and (b) the **identity status
-push** to the account owner (RFC-000 §8), applied by its funds module as an entry (RFC-004
-Part A, F4) and read from there by the booking module (RFC-002).
+1. a **snapshot**: every ‹snapshot_interval› 10 min each identity slot's lease holder
+   writes its slot's records at a position to object storage, signed and encrypted under
+   the edge stream key (§5.4); and
+2. the **edge stream**: a gRPC server stream from the slot's lease holder, over mTLS, only to
+   edge workload identities, carrying every change after a position in commit order, and a
+   **heartbeat** every ‹stream_heartbeat› 1 s: (slot, head position, identity's timestamp
+   when it was sent), signed. A heartbeat is sent only after every change up to its head.
+
+The edge applies a record only if its version is higher than the one it holds (a replayed
+or rolled-back record is ignored and alerted). For each slot it keeps `fresh_s`, the
+timestamp of the last heartbeat whose head it has applied. **Invariant**: a credential of
+slot s authenticates only while `now − fresh_s` ≤ ‹edge_staleness_max› 30 s (RFC-000 §3's
+30 s cache bound); otherwise the answer is "temporarily unavailable" (§2.3). There are no
+per-key fills, no negative cache and no extension on error. An edge that starts loads the
+latest snapshot and streams from its position, and serves nothing until every slot is
+fresh. Identity's timestamps and the edge's clock are both within the database's clock
+domain (RFC-000 §5.5, `max_offset`).
+
+On applying a revocation (key revoked, session ended, administrator right removed,
+certificate revoked), the edge **closes every established connection and stream that the
+revoked credential authenticated**, and refuses the credential's next request (D-6).
+
+**The identity status push to the account owner** (C3). Every committed key and KYB entry
+is published from identity's outbox, keyed by account, by the changefeed relay, which also
+emits **resolved timestamps** (a promise that every row committed at or before it has been
+emitted) to every topic partition every ‹resolved_interval› 1 s. The account owner's funds
+module applies events as entries (RFC-004 Part A, F4) and keeps, per account slot,
+`iam_fresh`: the minimum resolved timestamp applied over the topic partitions it consumes,
+or the read timestamp of its last catch-up, whichever is later. Then:
+
+- **Pull when the push is silent** (R5-05). When `now − iam_fresh` exceeds
+  ‹iam_pull_after› 20 s, the slot's lease holder calls identity's **catch-up** (C3) for its
+  account slot every ‹iam_pull_period› 5 s until fresh, and applies the answer in one
+  entry. This needs no Kafka.
+- **Confirm only when fresh.** The booking module (RFC-002) commits a confirmation only in
+  a transaction whose timestamp is at most ‹iam_fresh_max› 45 s after `iam_fresh`;
+  otherwise the request stays undecided (it may wait, or reach its deadline), so a silent
+  push path and an unreachable identity fail safe (S4).
 
 **Timeline of a revocation**, administrator revokes key K at `t0` (the commit of the
 revocation entry, two-region durable, after which the administrator is answered):
 
-| Where | Normally (est.) | Worst case if every push is lost | Bound |
+| Where | Normally (est.) | Worst case | Bound |
 |---|---|---|---|
-| Edge, every operation by K (submission not accepted, request refused, as unauthenticated) | `t0` + about 1 s (outbox publish and Kafka fan-out; the changefeed relays the row if the owner died before publishing, RFC-000 §5.5) | `t0` + 30 s (an entry filled just before `t0` expires) + 1 s (follower-read staleness) = `t0` + 31 s | 60 s (X1-N3, X1-S06) |
-| Account owner, K's undecided requests fail "key revoked" and every later intake with K is refused | `t0` + about 1 s (push, one entry) | Identity and access watches the account owner's applied identity position (a follower read of the account owner's projection row) and alarms at ‹revocation_alarm› 30 s; a new account-owner lease holder catches up from identity and access before deciding anything (C3) | 60 s (POL-25) |
+| Edge, every operation by K (submission not accepted, request refused, as unauthenticated); its connections closed | `t0` + about 0.1 s (edge stream) | Stream to an edge lost just before `t0`: the last heartbeat it applied was sent at most at `t0`, so K is refused from `t0` + 30 s + clock offset ≤ `t0` + 31 s. Kafka plays no part | 60 s (X1-N3, X1-S06) |
+| Account owner, K's undecided requests fail "key revoked" and every later intake with K is refused | `t0` + about 1 s (push, one entry) | Kafka lost: `iam_fresh` ≤ `t0` at `t0`; the pull starts by `t0` + 20 s and applies the revocation by about `t0` + 26 s (est.). Kafka **and** identity unreachable from the account owner: no request of the slot is confirmed after `t0` + 45 s; K's undecided requests fail when the revocation is applied | 60 s (POL-25) |
+| A new account-owner lease holder | — | Catches up from identity (C3) before deciding anything | Before its first decision |
 
 The account owner's log is the **one order** in which the revocation and each request's
 decision are compared (POL-04, RFC-000 A7, D6): a request decided before the revocation
 entry stays decided (P2-S103); one undecided when it is applied fails "key revoked"
-(P2-S72), and its holds are released by RFC-002's request-scoped release. Identity and
-access tracks, per revocation, the positions applied by the account owner and the edge
-fleet's consumer offsets, and alerts if either lags beyond ‹revocation_alarm›.
+(P2-S72), and its holds are released by RFC-002's request-scoped release. The account
+owner exports `now − iam_fresh` per slot and the edges export `now − fresh_s` per slot;
+monitoring (RFC-006) alarms when either passes ‹revocation_alarm› 30 s.
 
-**Session and certificate revocations** use the same feed with the same bound.
+**Sessions and certificates** are in the same replica under the same invariant, so a
+removed user, an ended session and a revoked device certificate stop working within the
+same 31 s, with their connections closed (D-6). Administrator commands are checked
+against identity's own current state.
 
 #### 3.4 Supplier authority over links
 
@@ -260,30 +329,32 @@ changes, and the attempt is recorded (X1-S23).
 
 #### 3.5 Probe principals
 
-The probe accounts and the probe supplier (POL-06; RFC-000 §5.4) are identity-and-access
-tenants flagged *probe*; their keys have permission sets (§4.2) that allow only booking
-**probe links**, reading the probe tenant's own state, submitting from **probe exporters**
-and the probe supplier's own supply commands on probe links, and only over mTLS from the
-probe colocation sites (RFC-000 §5.1). A probe key that leaks therefore cannot buy real
-capacity on Share's credit (threat T-14). Every principal context carries the probe flag,
-which consumers of rating, settlement, supplier reports and quarantine reports use with
-the catalogue's probe designation to exclude probe activity (RFC-006 owns the designation
-contract, C9). Each probe account's `credit_limit` is set by a finance operator through the
-console like any other (X2-S24); the probe accounts count as having passed KYB (POL-06),
-recorded as such by onboarding.
+The probe accounts (at least one per account slot, POL-06 v1.7) and the probe supplier
+(RFC-000 §5.4) are identity-and-access tenants flagged *probe*; their keys have permission
+sets (§4.2) that allow only booking **probe links**, reading the probe tenant's own state,
+submitting from **probe exporters** and the probe supplier's own supply commands on probe
+links, and only over mTLS from the probe colocation sites (RFC-000 §5.1). A probe key that
+leaks therefore cannot buy real capacity on Share's credit (threat T-14). Every principal
+context carries the probe flag, which consumers of rating, settlement, supplier reports
+and quarantine reports use with the catalogue's probe designation to exclude probe
+activity (RFC-006 owns the designation contract, C9). Each probe account's `credit_limit`
+is set by a finance operator through the console like any other (X2-S24); the probe
+accounts count as having passed KYB (POL-06), recorded as such by onboarding. At 1,024
+account slots (RFC-006's design load) that is about 1,024 probe accounts, a few thousand
+keys: negligible in the replica.
 
 #### 3.6 KYB status
 
 Onboarding records each account's KYB result (passed, failed, withdrawn) in identity and
 access, with its principal and time; the KYB documents themselves go to the personal-data
 store (§3.7), never to a log. The result travels to the account owner on the identity status
-push (C3, C10; RFC-000 AI4-2), applied by its funds module. A finance operator's request to
-set a `credit_limit` is checked against it by the console before the action is sent, and
-again by the account owner, against both the KYB status it has applied and the envelope's
-KYB precondition at its identity position (§7.4); an account that has not passed is
-refused, recorded, and keeps no credit limit (P4-S82, X1-S12).
+push (C3, C10; RFC-000 AI4-2, "KYB on F4"), applied by its funds module. A finance
+operator's request to set a `credit_limit` is checked against it by the console before the
+action is sent, and again by the account owner, against the KYB status it has applied
+(with `iam_fresh` within ‹iam_fresh_max›); an account that has not passed is refused,
+recorded, and keeps no credit limit (P4-S82, X1-S12).
 
-#### 3.7 The personal-data store and erasure
+#### 3.7 The personal-data store, erasure requests and erasure
 
 RFC-000 A11 makes this store the only place personal data lives (§8, the personal-data
 store contract). Its design is what lets X1-N11 hold beside a 7-year append-only audit.
@@ -292,18 +363,23 @@ store contract). Its design is what lets X1-N11 hold beside a 7-year append-only
 details, login identifiers, account and supplier contact details, display names of
 accounts (treated as personal data, since a sole trader's business name is one), KYB
 documents (put by onboarding), **case notes** (free text that operators or buyers write,
-§7.5), and the documents behind legal orders (§6.2). Each item is keyed by the
-pseudonymous identifier of its **data subject** (a `principal_id` or a contact identifier)
-and, for a case note, by the note identifier, with the subjects it concerns.
+§7.5), the documents behind legal orders (§6.2), and **non-conforming flow-record
+payloads** (put by metering ingestion, POL-19, P3-S71; below). Each item is keyed by the
+pseudonymous identifier of its **data subject** (a `principal_id` or a contact
+identifier); a case note by its note identifier, tagged with the subjects it concerns; a
+payload by its record identity, tagged with the exporter's supplier and the attributed
+account, if any.
 
 **How it is stored.** A separate CockroachDB database at 2 + 2 + 1, owned by identity and
-access, with no other service's SQL role granted on it. Each subject has a **subject key**
-(AES-256), and every item is encrypted under it (AES-256-GCM, with the subject and item
+access, with no other service's SQL role granted on it, no changefeed, and
+`gc.ttlseconds` ≤ ‹pd_gc_ttl› 1 h on every table, so `AS OF SYSTEM TIME` cannot reach a
+deleted row after an hour. Each subject has a **subject key** (AES-256), and every item is
+encrypted under it (AES-256-GCM, random 96-bit nonce, with the subject and item
 identifiers as associated data). Subject keys are stored only in the store's key table,
 wrapped under the store's **key-encryption key of the current generation** (`KEK_PD,g`),
-held in the Kenyan HSMs. R3's replica, every backup and the database's own files therefore
-hold only items under subject keys, and subject keys under a KEK that never leaves the
-HSMs.
+held only in the Kenyan HSM clusters, never escrowed outside them (D-2). R3's replica,
+every backup and the database's own files therefore hold only items under subject keys,
+and subject keys under a generation KEK that never leaves the HSMs.
 
 **Login lookup.** Login identifiers (an email address) are found through a **blind index**:
 HMAC-SHA-256 of the normalised identifier under an index key of the same generation, held
@@ -311,37 +387,116 @@ in the HSM, mapped to the `principal_id`. The index row is deleted on erasure an
 recomputed at each generation change (below), so an old backup's index rows cannot be
 matched against a guessed address once its generation is destroyed.
 
-**Interface** (C12): `put(subject, item)`, `get(subject, item, purpose)` and
-`erase(subject)`, over gRPC with mTLS. `get` is allowed only to the readers RFC-000 §8
-names, each for its stated purpose: identity and access (login, administrator commands),
-the notifier (contact details at send time), the console (support views and case notes),
-reporting (display names on statements at view time). Readers keep personal data in
-memory for the request only; they never write it to a table, a topic, a cache that
-outlives the request, an application log or a trace. Every `get` is appended to audit with
-the reader, the purpose and the subject (§9.4), never the data.
+**Interface** (C12), over gRPC with mTLS:
 
-**Erasure** (X1-S34). `erase(subject)` is a compliance action (§7.2; RQ5-11), taken at a
-data subject's request or when the law requires it, with a reason, recorded. It commits one
-transaction in the store that deletes the subject's wrapped key, its items and its
-blind-index rows. From that commit, nothing Share runs can read the subject's data: the
-items are ciphertext under a key that no longer exists in any live store. Copies made before
-the commit become unreadable as follows:
+| Operation | Callers (allowlist, §4.4) | Semantics |
+|---|---|---|
+| `put(subject, item)` | Identity (users, contacts, legal-order documents), onboarding through identity (KYB documents), console (case notes) | Idempotent by (subject, item, content digest) |
+| `put_payload(record_id, supplier, account?, received_at, payload)` | Metering ingestion (RFC-003) | Idempotent by `record_id`; at most ‹payload_put_limit› 10/s per exporter and ‹payload_put_global› 1,000/s overall; beyond either, the payload is not kept (its digest is, in ingestion's record), counted and alerted to the supplier and operations (decision RD-1, below) |
+| `get(subject, item, purpose)` | Identity (login, administrator commands), notifier (contact details at send time), console (support views, case notes, payload evidence; with an operator read grant, §7.6), reporting (display names on statements at view time) | Each for its stated purpose; the store verifies the read grant for console reads and **appends every `get` to audit** with the reader, purpose, subject and grant, never the data |
+| `erase(subject, request_ref)` | Identity only, executing a compliance action (below) | Idempotent by `request_ref` |
+| `open_requests()` | Console, through identity (C12) | The open erasure requests, oldest first, with their age, for compliance's work queue |
 
-| Copy | Unreadable from |
-|---|---|
-| The live store, its three Kenyan and one R3 replica | The commit |
-| Owner memory, request-scoped reads | The end of the request (nothing is cached across requests) |
-| Database backups of the store (taken by RFC-006, kept ‹pd_backup_retention› 14 days) | When the generation they were taken under is destroyed: at most ‹kek_generation_period› 30 days plus ‹pd_backup_retention›, so **44 days** after the commit |
-| The HSM escrow of `KEK_PD` (below) | The same destruction ceremony |
+Readers keep personal data in memory for the request only; they never write it to a table,
+a topic, a cache that outlives the request, an application log or a trace.
 
-**Generations.** Every ‹kek_generation_period›, identity and access rewraps every live
-subject key under `KEK_PD,g+1` (about 10⁶ subjects, est., a few minutes of HSM time) and
-recomputes the blind index under the new index key. Once every backup taken under
-generation g has passed ‹pd_backup_retention›, `KEK_PD,g` and its index key are destroyed in
-both Kenyan HSM clusters and in escrow, by a recorded two-person ceremony. A backup is
-therefore restorable only while its generation lives, which is the cost; the store's
-durability rests on the database's two-region commits (RFC-000 §5.3), not on backups.
-`KEK_PD` is a separate key hierarchy from the log keys of §5.4, which are kept for 7 years.
+**Erasure requests** (POL-19, POL-32, X1-N11, X1-S39; R5-02). An erasure is executed only
+on a recorded **erasure request**, an entry in identity's partition of the subject's
+account, supplier or the operator partition, holding the request identifier, the subject,
+the channel, the requesting principal, and **`requested_at`, which starts the
+`erasure_max` clock**. It arrives by one of three channels:
+
+| Channel | Who | How it is recorded |
+|---|---|---|
+| Through an administrator (POL-32) | An account or supplier administrator, for a user of its account (current or former, itself included) or a contact person the account registered | The *pass on an erasure request* command (§3.2); `requested_at` is its commit |
+| By a documented request to support (POL-32; reading RQ-R5-1) | A user principal (account or supplier user, not a key), for **its own** personal data only | Through the marketplace, at the console's documented-request intake (§7.5), which records it on the console log and forwards it to identity (`record_erasure_request`, with the requester's principal context and the intake's commit time); `requested_at` is the intake's commit. An agent or supplier key, or a request naming another subject, is refused and recorded |
+| Operators' own data (reading RQ-R5-6) | Workforce administration, for an operator | A command to identity's operator partition with the approving person's assertion |
+
+There is no erasure without a request: "legal requirement" is not a reason (D-3; RQ-R5-3
+raises the case of an order with no request). Removing a user or closing an account does
+not erase by itself (D-5).
+
+**Execution** (X1-S12 erasure row, X1-S34, X1-S39). The compliance action *erase a data
+subject's personal data* (§7.2) cites `request_ref`; one compliance operator suffices
+(POL-32). Its envelope goes to identity, which checks **in its own state** that the request
+exists, is open and names the envelope's subject, then:
+
+1. commits `erasure_executing` (request, operator, envelope digest) in the request's
+   partition;
+2. calls the store's `erase(subject, request_ref)`, which in one transaction deletes the
+   subject's wrapped key, its items, its blind-index rows, the case notes tagged with it,
+   and the payload keys and payloads of the subject's account or supplier (decision D-4;
+   RQ-R5-2), and appends the erasure to audit;
+3. commits `erasure_executed` with the store's commit timestamp; the action is *applied*.
+
+```mermaid
+stateDiagram-v2
+  [*] --> Open: erasure_requested (requested_at starts erasure_max)
+  Open --> Open: envelope refused (no match, wrong subject, not compliance)
+  Open --> Executing: erasure_executing (compliance envelope citing request_ref)
+  Executing --> Executed: store erase committed, erasure_executed
+  Executed --> Unrecoverable: generation h destroyed (at most e + 14 days)
+  Unrecoverable --> [*]
+```
+
+Crash points: after 1, a recovering lease holder re-drives 2 for every request in
+`erasure_executing` (idempotent; deleting absent rows is a no-op); after 2, it finds the
+store's audit record and commits 3. The store refuses `erase` from any caller but identity,
+and identity refuses an erasure envelope without an open matching request, so neither a
+console compromise nor one compliance operator can erase a subject who has not asked.
+Identity alerts on an open request at ‹erasure_alert› 7 days and raises an incident at
+‹erasure_incident› 20 days; the execution target is ‹erasure_exec_target› 10 days (D-1).
+
+**Generations and destruction** (R5-01, R5-14). Generation g starts at `s_g`; every
+‹kek_generation_period› 7 days a new generation starts. At `s_g+1` identity creates
+`KEK_PD,g+1` and its index key, and rewraps every live subject key: one transaction per
+batch of subjects, each conditional on the subject's key row still existing (serialisable),
+so an erased subject is never rewrapped (about 10⁶ subjects by HSM batch rewrap, about
+10⁴/s per cluster, under 2 minutes, est.); the blind index is recomputed. Each generation
+KEK is created in the HSM with a **usage end date** `s_g+1` + ‹pd_backup_retention› 7 days,
+after which no HSM unwraps under it, and is then **destroyed** by a scheduled HSM quorum
+operation authorised electronically by two of the named security officers (D-2), on every
+member of every Kenyan HSM cluster and in every HSM-native backup (or HSM-native backup is
+disabled for the `KEK_PD` class); each cluster returns a signed destruction attestation,
+appended to audit. A cluster unreachable at the scheduled time is destroyed on reconnection
+and cannot serve the key meanwhile (the usage end date). Store backups (RFC-006) are taken
+without revision history, tagged with every generation they contain, and kept
+‹pd_backup_retention› 7 days, so no backup outlives its generation (RFC-000 AI5-11).
+
+**The bound, from the request** (D-1). Let the request be at `r`, the erasure commit at `e`
+≤ `r` + 10 days, and h the generation the subject's key was wrapped under at `e` (`s_h` ≤ `e`):
+
+| Copy | Unreadable from | Worst case after the request |
+|---|---|---|
+| The live store through `get` | `e` | ≤ 10 days |
+| The live store's MVCC history (`AS OF SYSTEM TIME`) | `e` + ‹pd_gc_ttl› | ≤ 10 days + 1 h |
+| Raft logs and not-yet-compacted files on every replica, R3's included | Destruction of h, at `s_h+1` + 7 days ≤ `e` + 14 days | ≤ 24 days |
+| Backups holding the key under h − 1 | Destruction of h − 1, at `s_h` + 7 days ≤ `e` + 7 days | ≤ 17 days |
+| Backups holding the key under h | Destruction of h, ≤ `e` + 14 days | ≤ 24 days |
+| HSM copies of `KEK_PD` (members, HSM backups) | The same destructions, attested | ≤ 24 days |
+| Escrowed copies | None exist (D-2) | — |
+| Owner memory, request-scoped reads | The end of the request | — |
+
+Every copy is unrecoverable within **24 days** of the request, inside `erasure_max` (30
+days), with 6 days of margin for one missed weekly rotation. Monitoring alarms if any
+generation older than 14 days still exists, or an erasure request is open at 7 days.
+
+**Non-conforming payloads** (POL-19, P3-S71; R5-04, D-4). A payload has no known subject,
+so its item key is **wrapped in layers**: innermost under the **payload key** of the
+attributed account (if any) and then of the exporter's supplier, each a per-tenant key held
+in the store's key table and wrapped under `KEK_PD,g` like a subject key; outermost under an
+**expiry key** `X_d` per UTC receipt day d, held only in the HSMs with a usage end date of
+d's start + `dispute_window` + 7 days and then destroyed like a generation. Expiry therefore
+reaches every copy, backups included, at once, never later than `dispute_window` + 7 days
+after receipt (at most one day earlier, which leaves `dispute_window` + 6 days of evidence).
+An erasure of any subject of the account or the supplier (D-4) deletes that tenant's payload
+key and its payloads at `e` (a new payload key serves later payloads), so every payload it
+received before the erasure, a superset of those before the request, is unreadable in the
+live store at once and in every copy by the generation bound above. A generation change
+rewraps the payload keys (about 10⁵), never the payloads. Finance and support read a
+payload only through the console with a read grant (§7.6), for dispute evidence. Sizing: at
+the global cap, 1,000/s × about 1 KB × 37 days ≈ 3.2 TB per copy (est.); in normal
+operation far less.
 
 **What erasure leaves.** Every log row, audit record, ledger movement and sealed segment
 still carries the subject's `principal_id`, unaltered; no log is rewritten (A4). Recomputing
@@ -349,15 +504,34 @@ a balance or a charge reads only those records, so it gives the same result (X1-
 After erasure the identifier no longer leads to a person. A subject's later return is a new
 `principal_id`.
 
-**No personal data elsewhere** (X1-S37). Enforced in four ways: (1) the owners' row and
-topic schemas carry typed identifier columns and encrypted payloads whose schemas
-(contracts, README) have no free-text field outside case-note references; (2) the shared
-logging and tracing library accepts only typed identifiers and enumerations, and drops
-anything else; (3) the edge strips personal data from requests before any log
-(authorisation headers, bodies of user-management commands); (4) a scanner runs in CI and
-continuously over log tables (after decryption, in the audit enclave), topics, application
-logs and traces for patterns of personal data (DT-14). A field that needs personal data is
-a reference to the store.
+**No personal data elsewhere** (X1-S37; R5-22). Enforced in four ways: (1) **on the write
+path**: the owner runtime refuses a row or event whose typed schema has a free-text field
+outside the enumerated case-note and payload references, and the schema lint refuses such
+a schema at build; (2) the shared logging and tracing library accepts only typed
+identifiers and enumerations, and drops anything else; (3) the edge strips personal data
+from requests before any log (authorisation headers, bodies of user-management commands);
+(4) a **sampling scanner** with its own workload identity in the key-release policy reads
+a ‹scan_sample› 10⁻⁴ sample of log rows, topics, application logs and traces for patterns
+of personal data, in an isolated service whose only output is findings (DT-14). A field
+that needs personal data is a reference to the store.
+
+**Decision RD-1 (payload caps).** Keeping every non-conforming payload of a misconfigured
+exporter at full rate (up to 600,000/s) would cost tens of TB a day in the store. Beyond
+the caps the payload is not kept, only its digest; the supplier is told its exporter is
+non-conforming. The trade-off: dispute evidence beyond the caps is the digest alone, in a
+case that is the supplier's misconfiguration and in which the record is rejected anyway.
+
+#### 3.8 Account recovery
+
+An account (or supplier) whose every administrator has left or lost the authenticator has
+no principal who may make administrator changes, and a documented request cannot help
+(§7.5). Recovery is an **onboarding** action (D-7; RQ-R5-4): onboarding re-verifies the
+business at KYB level, then grants the administrator right to a user it names, as the
+onboarding principal, recorded. Identity notifies every remaining user of the account,
+and the new administrator cannot issue keys, register endpoints or give consent for
+‹recovery_hold› 24 h, during which any existing administrator's or user's objection
+made through the marketplace as a request to support, cancels it. Recovery is the usual takeover path; the hold gives the real
+owner time to object.
 
 ### 4. Authorisation model
 
@@ -365,11 +539,12 @@ a reference to the store.
 
 | Decision | Made by | From | Recorded |
 |---|---|---|---|
-| Is the caller authenticated; who is it; which tenant | Edge | Caches (§3.3) | In the principal context |
-| May this kind of principal call this operation; is the named resource in its tenant (where the edge can know) | Edge | Policy (§4.2), catalogue and endpoint caches | Refusals within the principal's own tenant are recorded by the operation's owner |
+| Is the caller authenticated; who is it; which tenant | Edge | Replica (§3.3) | In the principal context |
+| May this kind of principal call this operation; is the named resource in its tenant (where the edge can know) | Edge | Policy (§4.2), catalogue cache and replica | Refusals within the principal's own tenant are recorded by the operation's owner |
 | Does this resource exist in this partition; is this key still valid here; does this administrator still hold the right | The owner partition (account owner, link owner, reporting, identity and access) | Its own state | In its log row (audit fields, §9.2) |
-| Is this operator action or read in the operator's role, with an allowed reason, approved where four eyes apply, still within `approval_expiry`, with its preconditions holding | Console, then re-verified by the owner from the envelope | Action catalogue (§7.2), envelope signatures | Console log; owner's row |
-| May this supplier see this buyer's identity in this view | Reporting, from the consent registry, at view time | Consent and disclosure registry (§6.2) | The view's registry timestamp |
+| Is this operator action or read in the operator's role, with an allowed reason, signed by its operators, approved where four eyes apply, before its `not_after`, not cancelled, with its preconditions holding | Console, then re-verified by the owner or reader from the operators' own signatures and identity's operator check (C15) | Action catalogue (§7.2), envelope or read grant | Console log; owner's row, or the reader's audit append |
+| May this supplier see this buyer's identity in this view | Identity and access, from the consent registry, at view time (C6) | Consent and disclosure registry (§6.2) | The view's registry timestamp, recorded by reporting |
+| Is there an open erasure request for this subject | Identity and access | Its own erasure requests (§3.7) | The erasure entries |
 
 Every decision names the policy version it used, so any past decision can be explained
 (X1-N8).
@@ -385,16 +560,18 @@ are in §7.2 and are never available at the public edge.
 | Status of own requests; own reservations; balance and headroom | Yes | Yes | Yes (headroom shown as key headroom, POL-18) | No | No | Own |
 | Own statements; own notice list | Yes | Yes | Yes | No | No | Own |
 | Make a documented request to support (§7.5) for a change it may itself make | Yes | Yes | Yes | No | No | No |
+| Make a documented request to erase **its own** personal data (§3.7) | Yes | Yes | Refused, recorded (a key is not a person) | Supplier user: yes; supplier key: refused, recorded | Yes | No |
 | List own account's keys (without verifiers) | Yes | Yes | Its own record only | No | No | No |
 | Issue, change limits of, revoke agent keys | Yes | Refused, recorded | Refused, recorded | No | No | No |
 | Add or remove users; grant or remove the administrator right | Yes (at least one administrator kept) | Refused, recorded | Refused, recorded | No | No | No |
+| Pass on a user's erasure request | Yes | Refused, recorded | Refused, recorded | No | Yes (its supplier's users) | No |
 | Consent to identify the account to a named supplier; withdraw it | Yes | Refused, recorded | Refused, recorded | No | No | No |
 | Register, change, remove the account's webhook endpoints | Yes | Refused, recorded | Refused, recorded | No | No | No |
 | Schedule of an own link (reservations by reference and termination points; identity only where §6 allows) | No | No | No | Yes | Yes | Probe supplier: probe links |
 | Own supplier statement | No | No | No | Yes | Yes | No |
 | Book or cancel maintenance, announce a permanent reduction, record a permanent increase, record an outage or restoration, on an own link | No | No | No | Yes | Yes | Probe supplier: probe links |
 | Add or remove supplier users; grant or remove the supplier administrator right; issue, change, revoke supplier keys and exporter credentials; register, change, remove the supplier's webhook endpoints | No | No | No | Refused, recorded | Yes (at least one administrator kept) | No |
-| Submit flow records and corrected versions of its own records (POL-23) | — | — | — | Exporter credential only | — | Probe exporters only |
+| Submit flow records and superseding versions of its own records (POL-23: measured fields only) | — | — | — | Exporter credential only | — | Probe exporters only |
 
 The matrix is policy data (§3.1), evaluated by a pure function shipped as the principal
 and authorisation library (§11, C2) to the edge, identity and access, the console and
@@ -406,28 +583,41 @@ An agent key acts for its account only (X1-S05): the edge routes its calls to th
 account's slot, and if the call names a different account (in a path or body), the
 submission is not accepted or the read refused with the "not found" answer, and nothing
 is forwarded. The account owner refuses any command whose principal context names a
-tenant other than its partition's account (S3). There is no operation by which any buyer
-principal acts for two accounts.
+tenant other than its partition's account, or a key that is neither in its applied key
+list for that account nor carried by an identity-signed key record naming that account
+(S3, R5-13). There is no operation by which any buyer principal acts for two accounts.
 
 #### 4.4 Internal commands and the substrate's own boundaries
 
 Every internal call is gRPC over mTLS with workload identities (§2.1), and each receiver
 accepts a command only from the components RFC-000 makes its callers. The allowlist is
-part of the policy (§3.1):
+part of the policy (§3.1). Rows marked † are owner-served streams and queries that replace
+cross-owner SQL reads (R5-12) and are raised for RFC-000 §3 and §8 as AI-R5-1.
 
 | Receiver: command | Accepted only from |
 |---|---|
 | Account owner: booking API commands | Edge (with a buyer principal context) |
-| Account owner: identity status push (Kafka) and catch-up query answers | Identity and access (topic ACL: identity is the only producer) |
-| Account owner, link owner, attribution, catalogue, payouts, payments, identity and access, placement (RFC-006, region disaster): operator commands | Console (with an operator envelope, §7.4) |
+| Account owner: identity status push (Kafka) | Identity and access (topic ACL: identity's relay is the only producer) |
+| Account owner, link owner, attribution, catalogue, payouts, payments, identity and access, placement (RFC-006, region disaster): operator commands | Console, relaying an operator envelope (§7.4) |
+| Reporting, status replicas, link owner (schedule read), catalogue, audit query, personal-data store (`get`): operator reads | Console, relaying an operator read grant (§7.6) |
+| Account owner, link owner, catalogue, identity and access, attribution, payouts, payments: target summaries † | Console, relaying a read grant or envelope request (§7.3); answers signed by the owner |
 | Link owner: hold, convert, release, query, leg changes, offer holds | Account owner (RFC-000 §8, link hold port) |
 | Link owner: supply commands | Edge (supplier principal) or console (network-operations envelope) |
 | Ledger: posting | Settlement, payments, payouts (RFC-000 §8) |
 | Payments, payouts, reconciliation: authenticated inputs | Edge payment ingress or the verifier library in-process (with a verdict, §8.1, C7) |
-| Console: documented requests | Edge (with a buyer principal context, §7.5) |
-| Identity and access: endpoint and secret reads | Notifier |
-| Personal-data store: get | Identity and access, notifier, console, reporting (§3.7) |
-| Audit: append (§9.4) | Console, secrets service, key service, personal-data store, identity and access, the platform's access logs |
+| Console: documented requests | Edge (with a buyer or supplier principal context, §7.5) |
+| Identity and access: edge stream † (C14) | Edge |
+| Identity and access: catch-up † (C3) | Account owner |
+| Identity and access: `visibility` † (C6) | Reporting, notifier, provisioning feed |
+| Identity and access: operator check † (C15) | Every owner and reader that accepts operator envelopes or read grants; the console |
+| Identity and access: `record_erasure_request`, `open_requests` † (C12) | Console |
+| Identity and access: endpoint query (C8) | Notifier |
+| Identity and access: account recovery (§3.8), KYB results | Onboarding |
+| Identity and access: role grants, operators' erasure requests | Workforce administration |
+| Personal-data store: `put` | Identity, console (case notes), metering ingestion (`put_payload`) |
+| Personal-data store: `get` | Identity, notifier, console (with a read grant), reporting (§3.7) |
+| Personal-data store: `erase` | Identity only |
+| Audit: append (§9.4) | Console, secrets service, key service, personal-data store, identity and access, every reader of operator read grants, the platform's access logs and database audit channels |
 
 A command from any other caller is refused and raised as a security alert.
 
@@ -436,19 +626,22 @@ by the substrate's own controls and each a threat in §12:
 
 - **Database.** Each owner service has its own SQL role, authenticated by its workload
   certificate, with insert on its own log tables, insert and update on its own projection
-  and head rows, select where RFC-000 lets it read another owner's projection, and nothing
-  else (RFC-000 §5.5). No application role has update or delete on any log table. The
-  database's `root` and administrative roles are reachable only through break-glass (§10).
-  Truncating the live tail after sealing needs a delete; it is a separate role, limited as
-  in §9.3 (AI5-8).
-- **Kafka.** Every topic has one producing workload identity (the owner whose outbox feeds
-  it, or its changefeed relay) and named consumer identities, by ACL; payloads are
-  encrypted and bound to their source row (§5.4), so a consumer can verify that an event is
-  a committed row of its producer (§5.4) and rejects anything else.
+  and head rows, select on another owner's rows only where RFC-000 §8 names the read (A1
+  rev 4.1; this RFC adds none), and nothing else (RFC-000 §5.5). No application role has
+  update or delete on any log table. The database's `root` and administrative roles are
+  reachable only through break-glass (§10). The truncation role (RFC-000 AI5-8) can delete
+  only rows at or below audit's watermark, **enforced by the database** (§9.3).
+- **Kafka.** Every topic has one producing workload identity (the owner's changefeed relay)
+  and named consumer identities, by ACL. Payloads are sealed under the topic's feed key
+  (§5.4), so Kafka's operators and R3 read nothing and cannot alter or inject an event
+  that opens. Between key holders, a consumer could forge an event only if it could also
+  produce to the topic, which the ACL denies: authenticity rests on the ACL and on the
+  source row's chain (§9.3), not on the AEAD (R5-09).
 - **Placement.** The placement table and owner-lease table (RFC-000 §5.2) are written only
-  by the placement service and by lease holders under their own epochs; a forged lease row
-  cannot produce valid payloads, because data keys are released to a workload identity of
-  the owner kind only (§5.4).
+  by the placement service and by lease holders under their own epochs, by grants. A
+  forged lease row written through break-glass could let a process of the same owner kind
+  write; that is detected by the chain (§9.3) and by the lease audit of RFC-006, not
+  prevented by encryption.
 
 ### 5. Tenant isolation
 
@@ -472,8 +665,9 @@ by the substrate's own controls and each a threat in §12:
   supplier (RFC-000 §2) and queried only with the principal's tenant.
 - **Shared infrastructure** (database clear columns, Kafka message keys and topic names,
   metrics, traces, alerts) carries pseudonymous identifiers only, never personal data or
-  another tenant's content (S8); operational dashboards that join across tenants are
-  operator tools behind the console (§7). Topic names name owner kinds, never tenants.
+  another tenant's content (S8); no clear column relates two tenants (§5.4); operational
+  dashboards that join across tenants are operator tools behind the console (§7). Topic
+  names name owner kinds, never tenants.
 - **Webhooks** go only to an endpoint registered by the event's own account (or supplier)
   and carry only that event's own data (§8.3; X1-S24).
 - **Rejections and counter-offers** name no other account or reservation (POL-10; RFC-001
@@ -486,7 +680,7 @@ by the substrate's own controls and each a threat in §12:
 | Booking request | (account, idempotency key) | `principal_id` of the first submission (agent key or user) | Account owner, entry 1 (RFC-000 §4.4) | Not accepted, "reuse by another principal", revealing nothing of the first request or its outcome (P2-S64) |
 | Change request | (account, idempotency key); the same request only with the same reservation, kind of change, new end or rate and `wait` (POL-29, B-RQ-5) | As for bookings | Account owner | As for bookings (P2-S113) |
 | Same key from another account | A different scope by construction | — | — | Decided on its own merits; a poll for a key never used in the account is answered as never used (X1-S08, X1-S09) |
-| Administrator commands (§3.2) | (account or supplier, idempotency key), 24 h | Administrator's `principal_id` | Identity and access | Not accepted |
+| Administrator commands (§3.2) | (account or supplier, idempotency key), 24 h | Administrator's `principal_id` | Identity and access | Not accepted. A replay by the same administrator returns the first answer, never a secret (§3.2) |
 | Operator actions | The console's action identifier, which is the source reference of any money-moving action (POL-29) | Requesting operator's `principal_id` | Console; the owner deduplicates by the same reference | Refused as reuse by another principal (P4-S99) |
 | Payment notifications, transfer confirmations | (provider, transaction reference, event kind) (RFC-000 §4.4) | The provider principal | Payments, payouts | A different principal is refused (RFC-004) |
 
@@ -501,6 +695,7 @@ never a role or a display name, so two operators in the same role are two princi
 | `key_poll_limit` (status polls; POL-25, P2-S67) | **Edge poll limiter** (RFC-000 §2, AI4-6, AI5-1): poll-limiter instances in the leader region, each owning a set of **key shards** from the placement table; every edge, in either region, routes every poll of a key to the instance owning its shard (one round trip from the other region, about 10 ms, est.), which counts per key per UTC second | — |
 | ‹mgmt_rate_limit› 5/s per principal for identity-and-access commands; ‹read_rate_limit› per account for reads served by reporting | Edge | — |
 | ‹preauth_rate_limit› per source address before authentication | Edge | — |
+| ‹operator_read_limit› per operator (read grants and reads per hour) | Every reader of read grants (§7.6) | — |
 
 Polls are not on the booking path and have no latency target of their own, so the extra
 hop costs nothing measured. Counters are soft state (RFC-000 §5.3). **Bound** (RFC-000 §2):
@@ -512,50 +707,77 @@ never counted elsewhere. That is the only relaxation of an exact limit in this R
 `account_rate_limit` also bounds one account's load on its partition, so a noisy tenant
 cannot starve another (RFC-000 R6).
 
-#### 5.4 Payload encryption, at rest and in transit through the substrate
+#### 5.4 Encryption of every application column, at rest and through the substrate
 
 RFC-000 §5.1 and §8 make payload encryption a library this RFC owns (C13). Its hook is in
-the **NestJS owner runtime's write path** (RFC-006 owns the runtime): after the owner has
-built a batch and before the epoch-conditional transaction, the runtime encrypts each row's
-payload; on read, the runtime decrypts. There is no hook in the database or in the log
-convention (RFC-000 §5.5, item 9).
+the **NestJS owner runtime** (RFC-006 owns the runtime): after the owner has built a batch
+and before the epoch-conditional transaction, the runtime seals every row it writes; on
+read, it opens. There is no hook in the database or in the log convention (RFC-000 §5.5,
+item 9).
 
-- **What is in clear.** Only the columns the database needs for keys, ordering and fencing:
-  owner kind, partition, sequence, epoch, row kind, commit timestamp, and the chain hash
-  (§9.3). All carry pseudonymous identifiers only (A11). **Everything else**, the audit
-  fields of §9.2 included, is in two encrypted columns: `payload` and `audit` (separate so
-  that audit's index can be built without decrypting business payloads it does not need).
-- **Keys.** A **data key** (AES-256) per (owner kind, slot, month), generated by the key
-  service in the Kenyan HSMs and stored wrapped under a regional key-encryption key held
-  only in the HSMs of R1 and R2. An owner-lease holder unwraps its slots' current data keys
-  on taking the lease and keeps them in memory (RFC-000 R21).
-- **Binding to position.** Each row is sealed with AES-256-GCM, with associated data
-  (owner kind, partition, sequence, epoch, row kind, data-key identifier). A row copied to
-  another partition or sequence, replayed under another epoch, or written by anyone without
-  the data key **fails to decrypt** and is rejected as corrupt by every reader, which
-  raises a security alert (T-24).
-- **Kafka.** Outbox rows are encrypted the same way, so every event on Kafka is ciphertext
-  bound to its source row; consumers decrypt with data keys the key service releases to
-  their workload identity (below). Kafka keeps no broker in R3; R3's KRaft controller holds
-  topic metadata only, and topic names carry no tenant (§5.1).
-- **Key release policy** (policy partition, §3.1). The key service unwraps a data key only
-  for workload identities the policy names for that owner kind: the owner kind itself, the
-  consumers of its feeds that RFC-000 §8 names, history (sealing), audit (indexing the
-  `audit` column only, with a separate key per column) and the verifier. Every unwrap is
-  appended to audit (§9.4).
+- **Scope** (R5-11). **Every application table**: log rows, outbox rows, projection, head,
+  idempotency, decision, registry and read-model rows. The clear columns are only those
+  the database needs for keys, ordering, fencing and indexed lookups: owner kind,
+  partition, sequence, epoch, row kind, version, commit timestamp, the chain hash (§9.3),
+  and lookup keys that are pseudonymous identifiers, times or tenant-free enumerations.
+  **No clear column relates two tenants**: where a lookup key would join two (the consent
+  registry's (supplier, buyer account), say), the second is a keyed hash under the table's
+  index key (HMAC-SHA-256), so R3 and a database administrator cannot read the relation.
+  The owner's schema lists its clear columns; the schema lint refuses any other (RK-8).
+- **Keys by purpose** (R5-09). Every key is AES-256, generated by the key service in the
+  Kenyan HSMs and stored wrapped under a regional key-encryption key held only in the HSMs
+  of R1 and R2:
+
+| Key | Per | Seals | Released to |
+|---|---|---|---|
+| Log key | (owner kind, slot, month) | Log, projection, head and other table rows of the owner kind except the audit column | The owner kind; history (sealing and history queries); the sampling scanner (§3.7) |
+| Audit-column key | (owner kind, month) | The `audit` column of every row (§9.2) | The owner kind; audit (indexing) |
+| Feed key | (topic, month) | Outbox rows and the events they become | The producing owner kind and the topic's named consumers (RFC-000 §8) |
+| Edge stream key | (month) | Identity's snapshots and stream records (§3.3) | Identity; the edge |
+
+  A feed consumer therefore opens only the feeds it consumes, never the owner's log. Every
+  unwrap is appended to audit (§9.4), at most ‹unwrap_rate_limit› per identity per minute.
+- **Binding to position.** Each row is sealed with AES-256-GCM, associated data (owner
+  kind, table, primary key, version or sequence, epoch, row kind, key identifier). A row
+  copied to another partition, sequence or table, replayed under another epoch, or rolled
+  back to an older version while a reader holds a newer one (readers reject a version
+  lower than one they have seen), or written by anyone without the key, **fails to open**
+  and is rejected by every reader, which raises a security alert (T-24).
+- **Nonces and limits** (R5-10). Each lease holder derives its sealing key per (data key,
+  epoch, holder session) with HKDF, and draws a **random 96-bit nonce** per seal; it counts
+  seals in memory and derives the next sub-key (its index in the key identifier) at 2³¹
+  seals, well below GCM's 2³² limit for random nonces. A batch retried at the same position
+  draws new nonces, so content that differs never shares a nonce; a new epoch or session
+  never shares a sub-key. At the design load the hottest slot seals about 10⁴ rows/s (est.),
+  2.6×10¹⁰ a month: about a dozen sub-keys a month.
+- **Month boundaries** (R5-20). The key service generates each slot's next-month keys from
+  day 25, and lease holders unwrap them ahead, so no month boundary needs an HSM call on the
+  write path.
+- **Kafka.** Kafka keeps no broker in R3; R3's KRaft controller holds topic metadata only,
+  and topic names carry no tenant (§5.1).
+- **System ranges** (R5-11). CockroachDB's own system tables are replicated to R3 too. No
+  secret is put in them: changefeed sinks and backup destinations are external connections
+  that authenticate with workload certificates fetched at run time; statement diagnostics
+  bundles with literal values are disabled in production; job and statement metadata
+  carry only pseudonymous identifiers. What remains (schemas, job metadata, statistics on
+  clear columns) is in T-19's residual.
 - **The database's own encryption at rest** is on for every store, the personal-data store
   included, but it is not what protects R3: R3's database process holds its store key,
-  never a payload key (RFC-000 §5.1).
+  never an application key (RFC-000 §5.1).
 - **Third region.** R3's voting replica stores and votes on ciphertext; it serves no reads
   (RFC-000 §4.6) and is not a preferred leaseholder (RFC-000 §5.1). During a declared region
   disaster the surviving Kenyan region's HSMs serve the owners, and R3's two replicas
   (2 + 2) still hold ciphertext. What R3 can learn is the clear columns: pseudonymous
-  partition identifiers, row counts and timing (T-19).
+  identifiers, row counts and timing, and the system metadata above (T-19).
 - **Sealed segments** in object storage (RFC-000 §5.3, RFC-006) stay encrypted under the
-  same data keys; data keys and their key-encryption keys are retained for 7 years
-  (X2-N6), with escrow (§10).
-- **Cost** (est.): one AES-GCM pass per row at the owner, a few µs per batch; no change to
-  RFC-000's latency budget.
+  same keys; log, audit-column and feed keys and their key-encryption keys are retained
+  for 7 years (X2-N6), with escrow (§10).
+- **A compromised data key** exposes one owner kind's slot for one month (or one topic's
+  month), for 7 years, because rows and sealed segments are insert-only or object-locked and
+  are never re-encrypted (R5-20). That is why keys are per slot and month; re-wrapping
+  protects only against a compromised key-encryption key.
+- **Cost** (est.): one AES-GCM pass per row at the owner, a few µs per batch; one per
+  projection read; no change to RFC-000's latency budget.
 
 ### 6. Supplier visibility and consent (POL-33)
 
@@ -586,12 +808,16 @@ concatenation.
   separate key `K_line(supplier, v)`, so it is used for no other line and is unlinkable to
   the reservation references and to other lines.
 - **Computed, not stored**: reporting, the notifier (supplier notices) and the provisioning
-  feed compute it; a supplier command that names a reference is resolved by the inverse.
-  No owner stores it, so no owner gains a writer duty.
+  feed compute it; no owner stores it, so no owner gains a writer duty.
+- **Resolving a reference** (R5-18). A supplier command that names a reference is resolved
+  by the inverse under the **calling supplier's** key; the resolved reservation must have a
+  leg on a link of the calling supplier, or the answer is "not found" (§2.3), on the same
+  path and with the same timing as any miss.
 
 #### 6.2 Consent, disclosure and the consent check
 
-The **consent and disclosure registry** is partitioned by supplier (§3.1). Its entries:
+The **consent and disclosure registry** is partitioned by supplier (§3.1); the buyer
+account in its lookup keys is a keyed hash (§5.4). Its entries:
 
 - *consent given* (buyer account, supplier, administrator, time) and *consent withdrawn*
   (same fields), from an account administrator's command (§3.2); an agent key or a user
@@ -608,11 +834,12 @@ The **consent and disclosure registry** is partitioned by supplier (§3.1). Its 
 active in a period the order states. A scope can never reach beyond the supplier's own
 links, because a supplier view contains nothing else (§6.3).
 
-**Consent check** (§11, C6): for one supplier view, reporting reads the supplier's
-registry partition by a **consistent read at the present timestamp** (served by the
-leaseholder; RFC-000 §4.6's rule for reads that must see every commit) and gets, for the
-buyer accounts and reservations in the view, *reveal* (with the consent or disclosure
-entry) or *hide*, at the read's timestamp, which it records with the view. Then:
+**Consent check** (§11, C6; R5-12): for one supplier view, reporting calls identity's
+`visibility(supplier, accounts, reservations)`. Identity reads the supplier's registry
+partition by a **consistent read at the present timestamp** (served by the leaseholder) and
+answers, for the buyer accounts and reservations in the view, *reveal* (with the consent or
+disclosure entry) or *hide*, with the read's timestamp, which reporting records with the
+view. No component but identity reads the registry. Then:
 
 - A view started after a withdrawal is acknowledged reads at a timestamp after the
   withdrawal's commit, so **every later view hides** the buyer (X1-S30). Reservations of
@@ -621,16 +848,16 @@ entry) or *hide*, at the read's timestamp, which it records with the view. Then:
 - A disclosure reveals the identity only for reservations within its scope, and only while
   the view's timestamp is before both its end date and any *disclosure ended* entry
   (X1-S35); the order register identifier is recorded with the view (X1-S28, third row).
-- If the registry cannot be read, the view is **served with every identity hidden** (S4):
-  the supplier's own reservations and references are still shown, so reporting's
+- If identity cannot answer, the view is **served with every identity hidden** (S4): the
+  supplier's own reservations and references are still shown, so reporting's
   availability does not depend on the registry, and the failure can only hide.
 - Reporting never caches a consent answer across views.
 - **The buyer is told** of a disclosure only when the entry says it may be; then the
   notifier delivers a notice to the account's notice list (glossary *Told*), with the order
   register identifier and the scope. Otherwise nothing is pushed to the buyer (POL-33).
 
-Supplier views are a few per second (est.), so a leaseholder read per view costs nothing
-material.
+Supplier views are a few per second (est.; tens at the design load), so a leaseholder read
+per view costs nothing material.
 
 #### 6.3 What a supplier view contains
 
@@ -650,15 +877,21 @@ support, network operations, commercial, finance or compliance. A person who wor
 roles has two identities, and the pseudonymous person identifier is what four eyes compares.
 Operators sign in through Share's corporate single sign-on with a FIDO2 authenticator, on
 managed devices, from Share's operator network; console sessions are server-side and end at
-‹operator_session_ttl› 8 h or on idle (15 min).
+‹operator_session_ttl› 8 h or on idle (15 min). The session lets an operator prepare work;
+nothing takes effect or is read without a per-action or per-case signature (§7.3, §7.6).
 
-**Role grants** (POL-32, POL-19, X1-S14). How operators are vetted stays out of scope
+**Role grants** (POL-32, POL-19, X1-S14; R5-23). How operators are vetted stays out of scope
 (X1). A grant or removal of a role reaches identity and access only from workforce
-administration (§2.1), carrying the WebAuthn assertion of the approving person; identity
-and access records it in the operator partition with the granting principal, the
-approving person, the grantee and the time, refuses a grant whose approving person is the
-grantee's person, and raises an alert on every grant (T-31). The console has no action that
-grants roles, so no operator can grant one.
+administration (§2.1), carrying the WebAuthn assertion of the approving person, who must be
+one of the **workforce approvers**: persons registered in identity's operator partition as
+approvers, holding no operator role themselves. Identity records the grant with the
+granting principal, the approving person, the grantee and the time, refuses a grant whose
+approving person is the grantee's person, and raises an alert on every grant. Each person
+identifier is bound to a vetting record that workforce administration attests (out of
+scope), and identity alerts when two operator identities in the same role register the
+same authenticator attestation or are used from the same managed device (T-31's residual:
+a workforce insider can mint two person identifiers for one human). The console has no
+action that grants roles, so no operator can grant one.
 
 #### 7.2 Action catalogue
 
@@ -666,17 +899,17 @@ Each action and each preparatory read belongs to exactly one role (POL-32). An a
 accepted only from that role, with a **reason code** from the action's closed list, and is
 sent to the owner of the state it changes (RFC-000 §2, §3: the console only carries
 authorised intent). Free text is optional and is stored as a case note (§7.5), never in a
-log; the reason code, any order register identifier and any documented-request reference
-are what the audit keeps.
+log; the reason code, any order register identifier and any request reference are what the
+audit keeps. Reads are made with read grants (§7.6).
 
 | Action | Role | Four eyes | Allowed reasons | Owner it is sent to | Scenarios |
 |---|---|---|---|---|---|
-| Read an account's reservations, requests, money and statements | Support | No | Account's documented request, or support case | Reporting, status replicas | X1-S27 |
+| Read an account's reservations, requests, money and statements | Support | No | Account's documented request, or support case | Reporting, status replicas (read grant) | X1-S27 |
 | Act at an account's documented request (cancel, shorten, decrease, change, withdraw), as the account's own change (POL-08) | Support | No | Account's documented request (§7.5) | Account owner | X1-S27 |
-| Read a link's schedule, to record an outage on it | Network operations | No | Outage investigation | Link schedule owner (read) | X1-S23 |
+| Read a link's schedule, to record an outage on it | Network operations | No | Outage investigation | Link schedule owner (read grant) | X1-S23 |
 | Record an unplanned outage; record its restoration | Network operations | No | Outage cause | Link schedule owner | X1-S23 |
-| Terminate a reservation for network abuse (the holder is always told) | Network operations | No | Network abuse (POL-30) | Account owner (reservation command port, RFC-000 §8) | X1-S12, X1-S17, X1-S36 |
-| Declare a region disaster, with the evidence of the loss; declare its end | Network operations | **Yes**, second network operations operator | Region loss with evidence (POL-06) | Placement and probes (RFC-006, the declaration record) | X1-S31, X2-S25 |
+| Terminate a reservation for network abuse (the holder is always told; the action has no *withhold notice* flag, and a request to withhold made with it is refused and recorded while the termination proceeds) | Network operations | No | Network abuse (POL-30) | Account owner (reservation command port, RFC-000 §8) | X1-S12, X1-S17, X1-S36 |
+| Declare a region disaster, with the evidence of the loss **or probe evidence** (admission probes failing in the region for `disaster_probe_minutes` consecutive minutes, POL-06 v1.7); declare its end | Network operations | **Yes**, second network operations operator | Region loss with evidence; probe evidence (POL-06) | Placement and probes (RFC-006, the declaration record, which checks the evidence) | X1-S31, X2-S25, X2-S29 |
 | Issue or revoke a credential for an exporter on Share's own network | Network operations | No | Exporter commissioning or decommissioning | Identity and access | — (POL-32) |
 | Set `reservation_price` or `usage_price` for a product and route | Commercial | **Yes**, second commercial operator | Price decision; notice per POL-27 | Catalogue (RFC-003) | X1-S31 |
 | Set a supplier's split weight | Commercial | **Yes**, second commercial operator | Commercial agreement | Catalogue (RFC-003) | X1-S31 |
@@ -690,41 +923,56 @@ are what the audit keeps.
 | Set `usage_rate_cap` for an account and product | Finance | No | Exposure decision (POL-14) | Catalogue (account-product terms) | X1-S12 |
 | Resolve an escalated payout | Finance | No | Resolution with the provider's evidence (POL-22) | Payouts | X1-S12 |
 | Resolve an escalated reversal whose payment never arrived | Finance | No | Resolution with the partner's evidence (POL-21) | Payments | X1-S12 |
-| Terminate a reservation for fraud, or a sanctions or legal order; optionally **withhold the holder's notice**, citing a legal order that forbids it | Compliance | **Yes**, second compliance operator (one approval covers both) | Fraud; sanctions order; legal order (with order register identifier) | Account owner | X1-S12, X1-S26, X1-S36 |
+| Terminate a reservation for fraud, or a sanctions or legal order; optionally **withhold the holder's notice**, citing a legal order that forbids it, as part of the termination (POL-30 v1.7) | Compliance | **Yes**, second compliance operator (one approval covers both) | Fraud; sanctions order; legal order (with order register identifier) | Account owner | X1-S12, X1-S26, X1-S36 |
 | Disclose a buyer's identity to a supplier under a legal order, with the order's scope, end date and whether the buyer may be told | Compliance | **Yes**, second compliance operator | Legal order (with order register identifier) | Identity and access (consent registry) | X1-S12, X1-S28, X1-S35 |
 | End a disclosure | Compliance | No | Order expired; order withdrawn; purpose met | Identity and access | X1-S35 |
-| Read the audit trail | Compliance | No | Investigation; audit request; legal order | Audit (query) | X1-S31, X1-S13 |
-| Erase a data subject's personal data | Compliance | No | Data subject's request; legal requirement (RQ5-11) | Personal-data store | X1-S34 |
+| Read the audit trail | Compliance | No | Investigation; audit request; legal order | Audit (query, read grant) | X1-S31, X1-S13 |
+| Erase a data subject's personal data | Compliance | No | The data subject's request, cited by `request_ref` (POL-19 v1.7); no other reason exists (D-3) | Identity and access, which executes it in the personal-data store (§3.7) | X1-S12, X1-S34, X1-S39 |
 
 Preparatory reads belong to their action's role (POL-32): finance reads the charges and
-quarantine it corrects or attributes; commercial reads the catalogue and link registry it
-changes; compliance reads what a termination or disclosure targets. Each is a read action
-of that role, recorded like any action. Support's reads are only those in the first row;
-no other role reads the audit trail (X1-S13, "support … read the audit trail").
+quarantine it corrects or attributes, and non-conforming payloads as evidence; commercial
+reads the catalogue and link registry it changes; compliance reads what a termination,
+disclosure or erasure targets. Each is a read of that role, made with a read grant and
+recorded like any action. Support's reads are only those in the first row; no other role
+reads the audit trail, and no role but compliance erases (X1-S13: support's attempts to
+read the audit trail or to erase personal data are refused and recorded).
 
 There is **no action** that ends a reservation for any other reason (X1-S16), that
 changes a link's commercial capacity (X1-S23), that writes off a debt (write-offs are
 automatic, X1-N7), that creates or edits flow records (POL-23, RQ3-2), that grants a role
-(§7.1), that withholds a notice after the termination is decided (RQ5-12), or that alters an
-audit record or any owner's past row (X1-S15). A request for one is refused and recorded.
+(§7.1), that withholds a notice after the termination is decided (POL-30 v1.7; X1-S36 third
+row), that erases without a request, or that alters an audit record or any owner's past row
+(X1-S15). A request for one is refused and recorded.
 
 #### 7.3 The request and approval state machine
 
 The console is a NestJS owner service; its state is in its own log table at 2 + 2 + 1
-(RFC-000 §2, §5.5), partitioned by action identifier. Each action moves through:
+(RFC-000 §2, §5.5), partitioned by action identifier. **What the operators sign** (R5-07):
+every action is rendered for signing by the **signing client**, a separate application on
+the managed device, distinct from the console's web pages. It receives the canonical action
+(type, target, target version, flags, scope, amounts, reason code, references), fetches
+the **target summary** from the target's owner through the console relay, **signed by that
+owner** (so the console cannot alter it), shows both, and itself computes
+
+`digest = SHA-256(canonical action ‖ role ‖ not_after)`, with `not_after` = the request's
+time + `approval_expiry`, fixed by the requester's signing client.
+
+The operator's authenticator signs a WebAuthn assertion whose challenge is that digest. The
+approver's signing client re-renders the same action and summary, recomputes the same
+digest and has the approver sign it. The console server never chooses what is signed.
 
 ```mermaid
 stateDiagram-v2
-  [*] --> Requested: operator submits (role, reason, target, preconditions, authenticator signature)
+  [*] --> Requested: requester signs digest(action, role, not_after)
   Requested --> Refused: not in role, reason not allowed, precondition fails at the console
   Requested --> Pending: four-eyes action
   Requested --> Sent: single-operator action
-  Pending --> Sent: second operator of the same role approves (other person, own signature), within approval_expiry, preconditions re-checked
+  Pending --> Sent: second operator of the same role signs the same digest, other person, before not_after, preconditions re-checked
   Pending --> Lapsed: approval refused because a precondition no longer holds
-  Pending --> Cancelled: requester cancels
-  Pending --> Expired: approval_expiry passes
+  Pending --> Cancelled: requester signs cancel(digest), recorded by identity
+  Pending --> Expired: not_after passes
   Sent --> Done: owner applies the action
-  Sent --> RefusedByOwner: owner precondition fails (target changed, reservation ended, dispute_window passed, approval too late)
+  Sent --> RefusedByOwner: owner check fails (signature, role, cancellation, not_after, target_version, reason)
   Refused --> [*]
   Done --> [*]
   RefusedByOwner --> [*]
@@ -736,37 +984,48 @@ stateDiagram-v2
 - **Four eyes** (X1-S26, X1-S31, X1-S36). A four-eyes action takes no effect, and nothing
   is sent to the owner, until a second operator **in the same role**, a **different
   person** from the requester, approves it with their own authenticator signature over the
-  same action digest. The requester cannot approve their own action under any identity
-  (the person identifier is compared, not the operator identity).
-- **Expiry and cancellation** (X1-S32, POL-32). A pending action expires at
-  `approval_expiry` (72 h) after its request's commit. Approval, cancellation and expiry
-  are each a row conditional on the action being Pending, in the action's partition under
-  one writer, so the first committed wins and a later approval of an Expired or Cancelled
-  action is refused. The console's expiry row is liveness only: the owner also refuses an
-  envelope whose approval commit time is later than `requested_at` + `approval_expiry`
-  (§7.4), so a console that fails to expire an action still cannot make it take effect.
+  same digest. The requester cannot approve their own action under any identity (the
+  person identifier is compared, not the operator identity).
+- **Expiry and cancellation** (X1-S32, POL-32). A pending action expires at `not_after`.
+  Approval, cancellation and expiry are each a row conditional on the action being Pending,
+  in the action's partition under one writer, so the first committed wins. The
+  **owner** enforces both, independently of the console: it refuses an envelope when its
+  own transaction timestamp is later than `not_after` − ε (ε the database's `max_offset`),
+  and when identity reports a cancellation of the digest (C15). A cancellation is a
+  requester-signed *cancel(digest)* that the signing client sends, through the console
+  relay, to identity's operator partition; identity returns a signed receipt, which the
+  signing client shows. A console that drops the cancellation leaves the operator without
+  the receipt, and the signing client tells the operator to raise it. So a compromised
+  console cannot make an action take effect after its expiry, or after a cancellation
+  whose receipt the operator holds.
 - **Preconditions re-checked at approval** (X1-S32, third row). Each action records, at
   request, the target and its **version** (for a reservation, the account owner's row
-  sequence of its last change; for a disclosure, the registry state), read consistently.
-  At approval the console re-reads them at the present timestamp; if the target has ended
-  or changed, the approval is refused and the action **lapses**. The owner checks the same
+  sequence of its last change; for a disclosure, the registry state), from the signed target
+  summary. At approval the console fetches a fresh summary; if the target has ended or
+  changed, the approval is refused and the action **lapses**. The owner checks the same
   version again when it applies the envelope, so a change committed between the console's
   read and the owner's apply is still refused (RefusedByOwner), and the action lapses.
 - **Sending** is synchronous to the owner over gRPC (RFC-000 §3) and retried with the same
   action identifier until the owner answers; the owner deduplicates by it.
 - **Every transition is a row** on the console log with the operator(s), role, reason code
   and time, so every refused attempt (X1-S13, X1-S16, X1-S23, X1-S27 third and fourth rows,
-  X1-S36 first row, P4-S82) and every operator read (X1-S27 first row, X1-S31) is
-  recorded.
+  X1-S36 first and third rows, P4-S82) is recorded. The owner's own row records every applied
+  action, and the reader's audit append every read (§7.6), so neither depends on the console
+  alone.
+- **Out-of-band confirmation.** Every applied operator action is notified by the notifier,
+  from the owner's row, to each signing operator's corporate contact (resolved from the
+  personal-data store at send time), so an action no operator recognises is reported.
 - **Notice to the holder** of a termination (X1-S17, X1-S36, POL-30): the account owner's
   termination entry triggers the notifier as for any reservation end, so the holder is told
   within `affected_notice_time` with the reason. The notice is suppressed only when the
-  termination's envelope carries *withhold notice* with an order register identifier,
-  which only the compliance termination action can carry, and only once approved by a
-  second compliance operator; the owner refuses *withhold notice* on any other action type
-  (a network-abuse termination always notifies, X1-S36 first row). A compliance termination
-  approved without the withholding, or a stand-alone request to withhold, leaves the notice
-  to be sent (X1-S36 third row; RQ5-12).
+  termination's envelope carries *withhold notice* with an order register identifier, in
+  the signed digest, which only the compliance termination action can carry, and only once
+  approved by a second compliance operator; the owner refuses an envelope carrying *withhold
+  notice* on any other action type. A network-abuse termination with a request to withhold
+  takes effect with the request refused and recorded (X1-S36 first row); a compliance
+  termination approved without the withholding, followed by a separate request to withhold,
+  leaves the notice to be sent within `affected_notice_time`, and the later request is
+  refused and recorded (X1-S36 third row).
 
 #### 7.4 The operator envelope, and how owners verify it
 
@@ -777,26 +1036,36 @@ Every operator command carries an **envelope** (§11, C4):
 | `action_id` | The console's action identifier; also the source reference of any money-moving action (POL-29) |
 | `action_type`, `target`, `target_version` | From the catalogue; the target names the account, reservation, link, product and route, payout, reversal, registry entry or data subject |
 | `role`, `reason_code`, `order_ref` or `request_ref`, `note_ref` | As submitted; `note_ref` points to an optional case note in the personal-data store (§7.5) |
-| `flags` | Action-specific options in the digest (for example *withhold notice* on a compliance termination, the scope and end of a disclosure) |
-| `requester` | Operator `principal_id`, person identifier, and the WebAuthn assertion over `digest(action)` |
-| `approver` (four-eyes actions only) | The same three fields for the approver |
-| `requested_at`, `approved_at` | Commit timestamps of the request and approval rows |
-| `preconditions` | Facts the console checked, with their positions (for example KYB status at an identity-and-access position) |
-| `issued_at`, `console_epoch`, signature | Signed by the console's HSM-held key |
+| `flags` | Action-specific options (for example *withhold notice* on a compliance termination, the scope and end of a disclosure) |
+| `not_after` | Request time + `approval_expiry`, fixed by the requester's signing client |
+| `requester` | Operator `principal_id`, person identifier, credential identifier, and the WebAuthn assertion (authenticator data, client data, signature) over `digest` |
+| `approver` (four-eyes actions only) | The same fields for the approver |
+| `console_epoch`, `issued_at` | Informational; not trusted for any check |
 
-An owner applies an operator command only if: the console signature is valid; the
-`action_type` is one the owner accepts and `role` is the catalogue's role for it; the
-reason code is allowed; each authenticator assertion verifies against that operator's
-registered public key, and the operator holds that role, at an identity-and-access
-position no older than ‹envelope_ttl›; for a four-eyes action, the approver's role equals
-the requester's, the person differs, and `approved_at` ≤ `requested_at` + `approval_expiry`;
-`target_version` is still current in its own state; and `issued_at` is within
-‹envelope_ttl› 5 min. Otherwise it refuses, and the console records the refusal. A
-compromised console process therefore cannot create a four-eyes action, or any operator
-action, that no operator signed (threat T-9).
+An owner applies an operator command only if all of the following hold, else it refuses
+with the failed check, and the console records the refusal:
 
-The owner writes the envelope's fields into the audit column of the row that makes the
-change (§9.2), so the change and its authority are one record (RFC-000 §4.1).
+1. it recomputes `digest` from the envelope's fields itself, and the `action_type` is one
+   it accepts, `role` is the catalogue's role for it, and the reason code is allowed;
+2. each assertion verifies under the C4 WebAuthn rules: client data `type` is
+   `webauthn.get`, its `challenge` equals `digest`, its `origin` is the signing client's
+   registered origin; authenticator data's `rpIdHash` is SHA-256 of Share's operator RP
+   identifier; the user-present and user-verified flags are set; the signature verifies
+   under the credential's public key;
+3. identity's **operator check** (C15), called at apply time, answers for each signer:
+   the operator holds that role now, the credential is registered and active, the
+   signature counter is higher than the last one identity recorded for that credential
+   (identity records it, consuming the assertion once per `action_id`), and the digest is
+   not cancelled;
+4. for a four-eyes action, the approver's role equals the requester's and the person
+   differs;
+5. its own transaction timestamp ≤ `not_after` − ε;
+6. `target_version` is still current in its own state.
+
+A compromised console process therefore cannot make an action take effect that its
+operators did not sign, after its `not_after`, or after a cancellation identity recorded
+(threat T-9). The owner writes the envelope's fields into the audit column of the row that
+makes the change (§9.2), so the change and its authority are one record (RFC-000 §4.1).
 
 #### 7.5 Documented requests and case notes
 
@@ -804,17 +1073,20 @@ A **documented request** (glossary *Operator*; POL-32; X1-S27) is a support requ
 **through the marketplace** (the API or portal, through the edge) by an authenticated
 principal of the account **that may itself make the change it asks for**: the console's
 intake evaluates C2 `decide` with the requester's principal context and the requested
-operation, and records the request only on *permit*. The intake records, on the console log
-partition of the account's requests, the requester's `principal_id`, the action and its
-target, and the time; any free text the buyer adds is a case note (below). A support action
-of the "documented request" kind must cite one, and the console checks that the action and
-target match it. The action is sent to the account owner **as the account's own change**
-(POL-08), with the support operator as principal and the request as `request_ref`: the
-account's fees and charges apply, and it is never a termination (POL-30). Without a
-matching request it is refused and recorded (X1-S27 third row). A request received by
-e-mail, telephone or any other channel cannot be entered: the console has no field for it,
-and an attempt to act on one is refused as not a documented request and recorded (X1-S27
-fourth row). The edge → console intake is AI5-9.
+operation, and records the request only on *permit*. One more kind is accepted (POL-19,
+POL-32 v1.7; reading RQ-R5-1): a user principal's request to **erase its own personal
+data**, which the intake records and forwards to identity as an erasure request (§3.7).
+The intake records, on the console log partition of the account's requests, the
+requester's `principal_id`, the action and its target, and the time; any free text the
+buyer adds is a case note (below). A support action of the "documented request" kind must
+cite one, and the console checks that the action and target match it. The action is sent
+to the account owner **as the account's own change** (POL-08), with the support operator as
+principal and the request as `request_ref`: the account's fees and charges apply, and it is
+never a termination (POL-30). Without a matching request it is refused and recorded (X1-S27
+third row). A request received by e-mail, telephone or any other channel cannot be
+entered: the console has no field for it, and an attempt to act on one is refused as not a
+documented request and recorded (X1-S27 fourth row). The edge → console intake is RFC-000
+§3 and §8 (AI5-9, revision 4.1).
 
 **Case notes.** Free text (an operator's explanation, a buyer's message, a legal order's
 document) may carry personal data, so it never enters a log (A11). It is put to the
@@ -822,6 +1094,21 @@ personal-data store as a case note, under its own key, tagged with the data subj
 author names; the log row carries only the note identifier and the note's SHA-256 (so the
 audit proves which note was attached, without holding it). Erasing a subject destroys the
 notes tagged with it; the reason code, which is what POL-32 records as "the reason", stays.
+
+#### 7.6 Operator reads and read grants
+
+Every operator read (X1-N7, X1-S27 first row, X1-S31) carries a **read grant** (R5-08, D-8):
+an operator-signed statement, through the signing client, of (operator, role, read type,
+**one target**: an account, a link, a data subject, a payload, or an audit query's scope,
+reason code, `not_after` = signing time + ‹read_grant_ttl› 1 h). One hardware touch covers
+one case, not one page. The **reader** (reporting, status replicas, the link owner,
+catalogue, the personal-data store, audit's query service) verifies it by the C4 rules and
+the operator check (C15, once per grant and then every ‹operator_check_cache› 60 s),
+answers only within the target, and **itself appends the read to audit** (C5 append) with
+the operator, role, target, grant and time, before answering. Readers enforce
+‹operator_read_limit› per operator and alert on breadth (many targets per operator per
+hour; T-29 extended to the console). The console records the read on its log as well, but
+a compromised console cannot read without a grant, nor read without the reader's record.
 
 ### 8. Webhook and input authenticity
 
@@ -835,7 +1122,7 @@ the verifier framework supports three:
 |---|---|---|
 | **Signature** (HMAC or public-key over the body and a timestamp) | Signature valid under the provider's current or previous key | Timestamp within ‹provider_timestamp_tolerance› 5 min; payments deduplicates by (provider, transaction reference, event kind) anyway (RFC-000 §4.4) |
 | **Mutual TLS** with the provider's pinned certificate, from its published address ranges | The connection's certificate | As above |
-| **Verify by fetch**, for a provider that does not sign its notifications | The notification is treated only as a hint; the verifier queries the provider's authenticated API for the transaction and uses **the fetched content** as the event | The fetch is idempotent by transaction reference |
+| **Verify by fetch**, for a provider that does not sign its notifications | The notification is treated only as a hint; the transaction reference is validated against the provider's format, encoded, and fetched from the provider's authenticated API, at most ‹fetch_rate_limit› per provider and per source address; **the fetched content** is the event (R5-19) | The fetch is idempotent by transaction reference |
 
 The verdict is forwarded with the notification to payments over gRPC (§11, C7):
 
@@ -869,30 +1156,40 @@ notifier (RFC-006) delivers from a Kafka topic; this RFC defines the signature (
 
 - **Endpoints.** Registered, changed and removed only by an administrator of the account
   (or supplier) (§3.2, POL-32), as entries in identity's account (or supplier) partition,
-  each with its tenant. The notifier learns them from the **endpoint feed** (a Kafka topic
-  from identity's outbox) and can query identity for one by endpoint identifier.
+  each with its tenant. The notifier learns them from the **endpoint feed** and can query
+  identity for one by endpoint identifier.
 - **Format** (the Standard Webhooks convention): headers `webhook-id` (the event's
-  identity, stable across retries), `webhook-timestamp` (seconds since the epoch) and
-  `webhook-signature` = `v1,` base64 of HMAC-SHA256(secret, id ‖ "." ‖ timestamp ‖ "." ‖
-  body).
+  identity, stable across retries), `webhook-timestamp` (seconds since the epoch, **set
+  afresh on every delivery attempt**, R5-19) and `webhook-signature` = `v1,` base64 of
+  HMAC-SHA256(secret, id ‖ "." ‖ timestamp ‖ "." ‖ body), computed per attempt.
 - **Secret**: 32 bytes per endpoint, shown once to the administrator who registers or
-  rotates it. Identity stores it inside its encrypted payload and, on the endpoint feed,
+  rotates it. Identity stores it inside its encrypted projection and, on the endpoint feed,
   wrapped under a key the key service releases only to the notifier; it is never in clear
   in the database, in Kafka or in a log. The notifier keeps it in memory.
 - **Verification by the receiver** (X1-S11): recompute the HMAC with the secret Share gave
   them, compare in constant time, reject a timestamp more than 5 min old, and deduplicate
   by `webhook-id` (delivery is at least once, POL-04). Nothing else is needed: "from the
-  webhook alone and what Share has given them".
+  webhook alone and what Share has given them". Retries over `webhook_retry` carry fresh
+  timestamps, so they verify.
 - **Rotation**: a new secret is active at once; for `webhook_retry` (24 h, POL-04) every
-  delivery carries signatures under both secrets, so retries of older events still verify.
-- **One tenant per endpoint** (X1-S24): an endpoint belongs to the account (or supplier)
-  that registered it; the notifier picks endpoints by the event's tenant only, which it
-  takes from the event's partition (the clear column), never from the payload, and the event
-  carries only its own fields.
-- **Endpoint safety**: HTTPS only; the notifier resolves the host itself, refuses private,
-  loopback, link-local and Share address ranges, connects to the address it checked
-  (no re-resolution), follows no redirects, and sends from a dedicated egress with no
-  route into Share's networks (threat T-12).
+  delivery carries signatures under both secrets, so a receiver may switch at its pace.
+  **Rotate now** (after a compromise) makes the new secret the only one at once, with no
+  dual signing.
+- **One tenant per endpoint** (X1-S24; R5-28): an endpoint belongs to the account (or
+  supplier) that registered it; the notifier picks endpoints by the event's tenant only,
+  derived from the event's clear partition, never from the payload: on a topic partitioned
+  by **account**, the account; on a topic partitioned by **link** (supplier notices from
+  the link schedule feed), the link's supplier in the catalogue at the event's position.
+  The event carries only its own fields.
+- **Endpoint safety** (R5-19, D-9): HTTPS on **port 443 only**; the notifier resolves the
+  host itself and accepts only **global unicast** addresses: it refuses private, loopback,
+  link-local, unique-local (`fc00::/7`), carrier-grade NAT (`100.64.0.0/10`),
+  `0.0.0.0/8`, multicast, reserved and documentation ranges, IPv4-mapped and NAT64 forms
+  of any of them, Share's ranges and those of the payment, payout and partner providers
+  Share trusts; it connects to the address it checked (no re-resolution), follows no
+  redirects, and sends from a dedicated egress with no route into Share's networks (threat
+  T-12). Registration answers "endpoint not accepted" for every failure cause alike, so it
+  cannot be used to scan.
 - **Contact details** for e-mail notices are fetched from the personal-data store at send
   time and never stored by the notifier (§3.7); its delivery records carry the contact
   identifier only.
@@ -908,8 +1205,8 @@ partner in the policy partition. A confirmation or report that is not authentic 
 money and confirms no payout; it is recorded in the investigation stream of its provider and
 alerted (the same rule as §8.1). Exporters connect with per-exporter mTLS certificates
 (§2.1), and ingestion refuses a record whose exporter is not the certificate's (RFC-003), so
-one exporter cannot report traffic as another, and only an exporter can submit or correct
-its own records (POL-23).
+one exporter cannot report traffic as another, and only an exporter can submit or supersede
+its own records, changing measured fields only (POL-23 v1.7; RFC-003).
 
 ### 9. Audit trail
 
@@ -921,14 +1218,16 @@ its own records (POL-23).
 | Every change to a link's capacity or registration: outages, restorations, maintenance and its cancellation, reductions, increases, registration, retirement | Link schedule owner, link registry | X1-S14, X1-S22, X1-S23, X1-S31 |
 | Every money movement | Ledger (and the input it came from: payments, payouts, settlement) | X1-S14, X1-S34 |
 | Every key issue, limit change and revocation, with old and new values | Identity and access | X1-S18, X1-S20 |
-| Every user added or removed, every administrator right granted or removed, every endpoint registered, changed or removed | Identity and access | X1-S14, X1-S18, X1-S33 |
+| Every user added or removed, every administrator right granted or removed, every endpoint registered, changed or removed, every account recovery | Identity and access | X1-S14, X1-S18, X1-S33 |
 | Every grant or removal of an operator role | Identity and access (operator partition) | X1-S14 |
 | Every consent, withdrawal, disclosure and end of a disclosure | Identity and access (registry) | X1-S30, X1-S12, X1-S35 |
+| Every erasure request, its execution (operator, request, time) and the store's erase | Identity and access; audit's append log (the store) | X1-S39, X1-S34 |
 | Every change of a price, weight, partner term, `usage_rate_cap` or other policy setting | Catalogue (RFC-003), identity and access (policy partition) | X1-S14, X1-S31 |
-| Every refused attempt to manage keys, users, rights, consent or endpoints | Identity and access | X1-S19, X1-S25, X1-S29, X1-S33, X1-S38 |
-| Every operator action and refused operator attempt, every operator read | Console | X1-S12, X1-S13, X1-S16, X1-S27, X1-S31, X1-S32, X1-S36 |
+| Every refused attempt to manage keys, users, rights, consent, endpoints or erasure requests | Identity and access | X1-S19, X1-S25, X1-S29, X1-S33, X1-S38 |
+| Every operator action and refused operator attempt | Console; the owner's row for each applied action | X1-S12, X1-S13, X1-S16, X1-S27, X1-S31, X1-S32, X1-S36 |
+| Every operator read | The reader's audit append (§7.6), and the console | X1-S27, X1-S31 |
 | Every operator action's effect | The owner's row, with the envelope (§7.4) | X1-S12, X1-S17, X1-S26 |
-| Secret accesses, data-key unwraps, personal-data reads and erasures, break-glass sessions, database administrative sessions, storage-level access and deletion attempts | Audit's own append log (§9.4) | X1-S15, X1-S34 |
+| Secret accesses, key unwraps, personal-data reads and erasures, HSM destruction attestations, break-glass sessions, database administrative sessions and permission-denied events, storage-level access and deletion attempts | Audit's own append log (§9.4) | X1-S15, X1-S34 |
 
 #### 9.2 The audit field set
 
@@ -937,9 +1236,9 @@ identifiers only:
 
 | Field | Content |
 |---|---|
-| `principal` | `principal_id`, kind, tenant, key identifier for an agent key (X1-S07), session or certificate identifier |
+| `principal` | `principal_id`, kind, tenant, key identifier for an agent key (X1-S07), session or certificate identifier, the edge node's workload identity |
 | `on_behalf_of` | For support at a documented request: the account and `request_ref` |
-| `role`, `reason_code`, `order_ref`, `note_ref` and note hash, `approver` | For operator actions, from the envelope |
+| `role`, `reason_code`, `order_ref`, `request_ref`, `note_ref` and note hash, `approver`, envelope digest | For operator actions, from the envelope |
 | `cause` | For a change no principal asked for (release after grace, revocation at the end of `revocation_notice`, a charge posted by settlement, an expiry): `internal_service` as principal, the rule (POL-nn) and the row that triggered it |
 | `received_at`, `request_id` | The edge's receipt time and request identity, from the principal context |
 | `decided_at` | The row's commit timestamp (RFC-000 §4.3, §5.5) |
@@ -952,19 +1251,24 @@ within the partition.
 #### 9.3 Immutability: hash chains over the log tables, checkpoints in two places
 
 An audit record cannot be altered or removed by anyone, operators, engineers and database
-administrators included (X1-S15). Five layers make that so:
+administrators included, without detection, and no reader accepts an altered one
+(X1-S15; RQ-R5-7 asks the scenario to say so for administrators with physical access).
+Five layers make that so:
 
 1. **No mutation path exists.** No owner, console action, API or administrative tool
    rewrites or deletes a row (RFC-000 A4); a correction is a new row. No application SQL
    role has update or delete on a log table (§4.4). An attempt through the console is
-   refused and recorded (§7.2).
+   refused and recorded (§7.2); an attempt by an application role is refused by the
+   database, and its permission-denied event (CockroachDB's `SENSITIVE_ACCESS` audit
+   channel) is routed to audit's append log (R5-15).
 2. **Consensus.** Every range has five voters in three regions; changing a committed row
    through the database needs a transaction that a majority accepts, which only a principal
    with SQL write access can issue (break-glass only, §10).
-3. **Authenticated payloads.** Every row's payload and audit columns are AES-GCM sealed
-   and bound to their position (§5.4). Anyone without the data key, R3's operator and a
-   database administrator included, cannot alter a row's content or insert a row that any
-   reader accepts.
+3. **Sealed columns.** Every row's application columns are AES-GCM sealed and bound to
+   their position (§5.4). Anyone without the key, R3's operator and a database
+   administrator included, cannot alter a row's content or insert a row that any reader
+   accepts. Holders of a key (the owner kind, history) are bound by grants instead, and
+   by layer 4.
 4. **A hash chain written with each row.** Each log row carries
    `chain = SHA-256(chain_prev ‖ owner kind ‖ partition ‖ sequence ‖ epoch ‖ row kind ‖
    payload ‖ audit)`, computed by the owner over the ciphertext in the same transaction,
@@ -985,18 +1289,24 @@ administrators included (X1-S15). Five layers make that so:
    or database. Neither store allows an overwrite or a delete for the retention period, by
    anyone, its own administrators included. An alteration of any row, in the live tables
    or in the archive, is then detected by the next verification against both stores, and
-   an alteration in one store cannot rewrite the other.
+   an alteration in one store cannot rewrite the other. A **second, independent verifier**
+   (separate code base, separate workload identity and operators) rebuilds the checkpoints
+   monthly from the sealed segments and compares roots, so a compromised verifier cannot
+   sign over altered input unnoticed (R5-25, T-36).
 
-**Sealing and truncation.** History (RFC-006) reads the log tables and seals per-partition
-segments to two-region object storage under object lock in compliance mode for 7 years,
-with each segment's Merkle root over its rows (commit timestamps included) and its first
-and last chain values. Audit verifies each sealed segment against its own chain heads and
-checkpoints, and only then writes the partition's **sealed-through watermark**. The live
-tail is truncated below it (RFC-000 §5.5) by a dedicated truncation role whose only grant is
-delete on log tables, used only by the truncation job, which deletes only rows at or below
-the watermark audit wrote; audit checks after each run that no row above a watermark
-disappeared (a gap in the changefeed it consumes is a security incident). Making that
-grant exist is AI5-8.
+**Sealing and truncation** (R5-15). History (RFC-006) reads the log tables and seals
+per-partition segments to two-region object storage under object lock in compliance mode
+for 7 years, with each segment's Merkle root over its rows (commit timestamps included) and
+its first and last chain values. Audit verifies each sealed segment against its own chain
+heads and checkpoints, and only then writes the partition's **sealed-through watermark**
+in a table only audit's role can write. The truncation role (RFC-000 AI5-8) deletes through
+a **row-level security policy** on every log table, `USING (sequence <= watermark of the
+row's partition)`, so the database itself refuses a delete above the watermark, whoever
+runs the job (CockroachDB row-level security; if the spike finds it unavailable, a stored
+procedure owned by audit's role is the only delete path). Audit checks after each run that
+no row above a watermark disappeared. Any **pause, alteration or cancellation of a
+changefeed** is a security incident, recorded through the append log, since gap detection
+relies on the changefeeds.
 
 Verification runs continuously on the changefeeds, on every sealed segment, and monthly
 over a random sample of the whole retention period; a failure is a security incident.
@@ -1004,43 +1314,48 @@ over a random sample of the whole retention period; a failure is a security inci
 #### 9.4 The audit store and its append log
 
 - **Index.** Low-volume records (operator actions and reads, key, user, right, consent,
-  endpoint, role and policy changes, refused attempts) are fully indexed by principal,
-  tenant, target and time. High-volume records (booking rows, link rows, ledger movements;
-  about 100,000 rows/s, est.) are indexed sparsely: per principal and per tenant, per hour,
-  the segments that contain their rows, with a membership filter per segment, so a query
-  reads only the segments it needs. A 7-year full index at about 100,000 rows/s would be
-  about 2×10¹³ entries (est.), which this avoids. Audit decrypts only the `audit` column
-  (§5.4) to index, in an isolated service whose only outputs are the index and query
-  answers.
+  endpoint, erasure, role and policy changes, refused attempts) are fully indexed by
+  principal, tenant, target and time. High-volume records (booking rows, link rows, ledger
+  movements; about 100,000 rows/s, est.) are indexed sparsely: per principal and per
+  tenant, per hour, the segments that contain their rows, with a membership filter per
+  segment, so a query reads only the segments it needs. A 7-year full index at about
+  100,000 rows/s would be about 2×10¹³ entries (est.), which this avoids. Audit opens only
+  the `audit` column (§5.4) to index, in an isolated service whose only outputs are the
+  index and query answers.
 - **Append log.** Sources that are not owners (secrets service, key service,
-  personal-data store, break-glass, database administrative sessions, the platform's
-  storage access logs) append to audit's own log table at 2 + 2 + 1, chained and
-  checkpointed like every other, idempotent by the source's reference, acknowledged once
-  committed (§11, C5).
+  personal-data store, readers of operator read grants, break-glass, database
+  administrative sessions and permission-denied events, the platform's storage access
+  logs, HSM destruction attestations) append to audit's own log table at 2 + 2 + 1,
+  chained and checkpointed like every other, idempotent by the source's reference,
+  acknowledged once committed (§11, C5). Under a flood of refused attempts, sources
+  aggregate (counts, first and last, sample) beyond ‹mgmt_rate_limit› (T-39).
 - **Lag.** The index follows the changefeeds within minutes (RFC-000 §4.2); the record
   itself exists from the owner's commit, so lag never loses a record.
-- **Who reads it.** Only an operator in **compliance**, through the console, as the read
-  action "read the audit trail" (POL-32, X1-S31); every query is itself a recorded
-  operator read. Support and every other role are refused (X1-S13). Finance and auditors
-  receive the checkpoint public keys (§10) to verify exports they are given.
+- **Who reads it.** Only an operator in **compliance**, through the console, with a read
+  grant for the query's scope (POL-32, X1-S31); every query is itself a recorded operator
+  read, appended by the query service. Support and every other role are refused (X1-S13).
+  Finance and auditors receive the checkpoint public keys (§10) to verify exports they are
+  given.
 
 #### 9.5 Retention
 
 Every record is kept for 7 years from its time (POL-19, POL-06); object lock enforces it,
-and History (RFC-006) owns the storage. Data keys for encrypted rows and segments (§5.4)
-are kept as long. Personal data is outside the records (§3.7), so erasing a person's
-data leaves every audit record intact and attributable to its `principal_id` (X1-S34).
+and History (RFC-006) owns the storage. Keys for encrypted rows and segments (§5.4) are
+kept as long. Personal data is outside the records (§3.7), so erasing a person's data
+leaves every audit record intact and attributable to its `principal_id` (X1-S34).
 
 ### 10. Secrets and key management
 
-**Roots of trust.** HSM clusters in both facilities of R1 and of R2 (FIPS 140-3 level 3).
-R3 holds no key that decrypts tenant data, unwraps a data key or signs on Share's behalf;
-it holds only database store keys for its own disks (RFC-000 §5.1) and the audit checkpoint
-copies (§9.3).
+**Roots of trust.** HSM clusters in both facilities of R1 and of R2 (FIPS 140-3 level 3),
+four clusters. R3 holds no key that decrypts tenant data, unwraps a data key or signs on
+Share's behalf; it holds only database store keys for its own disks (RFC-000 §5.1) and the
+audit checkpoint copies (§9.3). Key export and destruction need HSM quorum authentication
+by two named security officers (T-37).
 
-**Key service.** A NestJS service in front of the HSMs that generates and unwraps data
-keys and subject keys for the workload identities the key-release policy names (§5.4), at
-most ‹unwrap_rate_limit› per identity per minute, every unwrap appended to audit.
+**Key service.** A NestJS service in front of the HSMs that generates and unwraps keys for
+the workload identities the key-release policy names (§5.4), at most ‹unwrap_rate_limit›
+per identity per minute, every unwrap appended to audit. At a region-wide failover the
+unwraps of every slot's keys are paced by slot priority, admission first (T-38).
 
 **Secrets service.** A small owner on its own log table at 2 + 2 + 1, values encrypted
 under HSM-held keys (§5.4), released only to the workload identities its access policy
@@ -1050,55 +1365,62 @@ rotation events, and keep them in memory.
 | Key or secret | Purpose | Form | Held | Rotation | On compromise |
 |---|---|---|---|---|---|
 | Internal root and issuing CAs | Workload certificates (gRPC, database, Kafka) | ECDSA P-256 | Root offline in HSM; issuing CAs in HSM, R1 and R2 | Issuing CAs yearly; workload certificates 24 h | Re-issue; revoke the issuing CA; all workload certificates expire within 24 h |
-| Device CA | Exporter, probe and network-operations certificates | ECDSA P-256 | HSM | Device certificates 1 year | Revocation list pushed within 60 s |
+| Device CA | Exporter, probe and network-operations certificates | ECDSA P-256 | HSM | Device certificates 1 year | Serial status in the edge replica: refused within 31 s, connections closed |
 | Public TLS certificates | Edge | Public CA | Edge nodes | 90 days, automatic | Revoke and re-issue |
-| User token signing key | Access tokens (§2.1) | ES256 | HSM | 90 days, previous key valid for one token lifetime | Remove from JWKS: every token signed with it is refused within 60 s |
-| Edge context signing keys | Principal contexts (C1) | Ed25519 per edge node | Memory, certified by the internal CA | 24 h | Revoke the node's certificate |
-| Console envelope key | Envelopes (§7.4) | Ed25519 | HSM | Yearly | Rotate; owners refuse the old key; every envelope still needs operator signatures |
-| Operator authenticators | Operator assertions | WebAuthn credentials | Operators' hardware keys; public keys in identity and access | On loss | Revoke the credential |
-| Agent and supplier key secrets | API access | 256-bit random | Client only; Share keeps SHA-256 | On demand | Revoke (60 s); the `shk_`/`ssk_` prefix and check digit let secret scanners report leaks to Share |
-| Webhook endpoint secrets | Webhook HMAC (§8.3) | 32 bytes | Identity's encrypted payload; notifier memory | On demand, 24 h overlap | Rotate |
+| User token signing key | Access tokens (§2.1) | ES256 | HSM | 90 days, previous key valid for one token lifetime | Remove from the replica's JWKS: every token signed with it is refused within 31 s |
+| Identity record-signing keys | Edge replica records and heartbeats, key records in principal contexts (§3.3) | Ed25519 per (identity slot, epoch) | Lease holder memory, certified by the key service | Each lease epoch | Revoke the certification; edges and account owners refuse its records |
+| Owner summary-signing keys | Target summaries for the signing client (§7.3) | Ed25519 per (owner kind, slot, epoch) | Lease holder memory, certified by the key service | Each lease epoch | As above |
+| Operator authenticators | Operator assertions | WebAuthn credentials | Operators' hardware keys; public keys and counters in identity and access | On loss | Revoke the credential (immediate through C15) |
+| Agent and supplier key secrets | API access | 256-bit random | Client only; Share keeps SHA-256 | On demand | Revoke (31 s); the `shk_`/`ssk_` prefix and check digit let secret scanners report leaks to Share |
+| Webhook endpoint secrets | Webhook HMAC (§8.3) | 32 bytes | Identity's encrypted projection; notifier memory | On demand, 24 h overlap; or *rotate now* | Rotate now |
 | Provider and payout credentials, verification keys | §8.1, §8.4 | Per provider | Secrets service | Per provider | Per provider |
 | Partner credentials | §8.2 | Per partner | Secrets service | Per partner | Rotate |
 | Reference keys `K(supplier, v)`, `K_line(supplier, v)` | §6.1 | AES-128 | Secrets service, wrapped by HSM keys | New version for new reservations or lines only; never retired within 7 years | New version for new reservations; existing references stay linkable by whoever has the old key (RK-5) |
-| Log data keys and their key-encryption keys | §5.4 | AES-256 | KEKs in HSM R1, R2; data keys wrapped | Data keys monthly per slot; KEKs yearly; kept 7 years | Re-wrap; escrow 3-of-5 |
-| Personal-data subject keys and `KEK_PD,g`, blind-index key | §3.7 | AES-256, HMAC-SHA-256 | Subject keys wrapped in the store; KEK and index key in HSM R1, R2 | KEK and index key every ‹kek_generation_period› 30 days; old generation destroyed after ‹pd_backup_retention› | Rewrap under a new generation at once and destroy the old one; erasure is the destruction of a subject key |
+| Log, audit-column, feed and edge stream keys, and their key-encryption keys | §5.4 | AES-256 | KEKs in HSM R1, R2; data keys wrapped | Data keys monthly, generated from day 25; KEKs yearly; kept 7 years | A KEK: re-wrap. A data key: its slot-month stays exposed for 7 years (§5.4); revoke its release, rotate at once; escrow 3-of-5 for KEKs |
+| Personal-data subject keys and payload keys; `KEK_PD,g` and the blind-index key | §3.7 | AES-256, HMAC-SHA-256 | Subject and payload keys wrapped in the store; KEK and index key only in the Kenyan HSM clusters, **no escrow** | KEK and index key every ‹kek_generation_period› 7 days; destroyed at the generation's usage end (+ ‹pd_backup_retention› 7 days) by HSM quorum, attested | Start a new generation at once and destroy the old one; erasure is the deletion of a subject key |
+| Payload expiry keys `X_d` | §3.7 | AES-256 | Only in the Kenyan HSM clusters, no escrow | One per UTC day; destroyed at d + `dispute_window` + 7 days | Destroy early (payloads of that day lost) |
 | Audit checkpoint key | §9.3 | Ed25519 | HSM | Yearly, public keys published to finance and auditors | Re-sign from the last verified checkpoint |
 
-**Escrow.** The log key-encryption keys are backed up, split 3-of-5 among named
-custodians, in sealed storage in Nairobi, Mombasa and one off-site vault, so losing both
-Kenyan HSM clusters does not lose the ability to read the archive or R3's copy. The
-personal-data KEK is escrowed the same way, **one generation at a time**: each destroyed
-generation is destroyed in escrow too, so escrow never defeats an erasure (§3.7).
+**Escrow** (D-2, R5-14). The log, audit-column and feed key-encryption keys are backed up,
+split 3-of-5 among named custodians, in sealed storage in Nairobi, Mombasa and one off-site
+vault, so losing every Kenyan HSM cluster does not lose the ability to read the archive or
+R3's copy. **`KEK_PD` and the expiry keys have no escrow and no copy outside the Kenyan
+HSM clusters.** Losing all four clusters loses personal data (contacts, KYB documents, case
+notes, payloads) but no record and no money; that is accepted, since a copy erasure cannot
+reach would break POL-19.
 
 **Break-glass.** Direct access to production stores (a SQL session under an
 administrative role, a Kafka administrative session, object-storage administration) is
 possible only through a break-glass session approved by two named platform security
 staff, limited to ‹break_glass_ttl› 4 h, recorded through audit's append log, with the
-session's statements captured to it. It grants no payload key, so even a break-glass
+session's statements captured to it. It grants no application key, so even a break-glass
 session cannot produce a row any reader accepts (§9.3, layer 3), and every change it makes
 to a log table is detected by the chain (§9.3, layer 4).
 
 ### 11. Contracts this RFC provides
 
 RFC-000 §8 names them; this section gives their complete semantics. Wire formats belong to
-[contracts](../04-delivery/contracts.md) (README).
+[contracts](../04-delivery/contracts.md) (README). C14 and C15, and the query forms of C3,
+C6 and C12, are raised for RFC-000 §3 and §8 as AI-R5-1.
 
-#### C1. Principal and authorisation context (library and token; every component)
+#### C1. Principal and authorisation context (library and gRPC metadata; every component)
 
 - **Content**: `principal_id` (pseudonymous), kind, tenant (account or supplier, or none),
   rights (administrator), key identifier, session or certificate identifier,
-  authentication method and time, the identity-and-access position and key version it was
-  validated at, the key's limits at that version (agent keys), probe flag, `request_id`,
-  `received_at`, edge region, expiry (‹context_ttl› 60 s), the edge node's signature. No
-  personal data.
+  authentication method and time, the identity slot position the replica was fresh at,
+  for an agent or supplier key the **identity-signed key record** (account, limits,
+  status, version, signature), probe flag, `request_id`, `received_at`, edge region,
+  expiry (‹context_ttl› 60 s). No personal data. Not signed by the edge (R5-24).
 - **Guarantees**: issued only after authentication (§2.2); the tenant is the credential's
-  (S2); signed by an edge node certified by the internal CA, or by the console for
-  operator commands (C4).
-- **Obligations of a receiver**: verify signature and expiry, and refuse as
-  unauthenticated otherwise; for a tenant-scoped command, refuse as "not found" if the
-  tenant is not the partition's; copy the principal fields into the audit column of any
-  row the command causes (C5); never widen what the context allows.
+  (S2); sent only by an edge workload over mTLS, or, for operator commands, accompanied by
+  an envelope (C4).
+- **Obligations of a receiver**: accept a context only from a peer whose mTLS workload
+  identity the allowlist names for that command (an edge for external principals); check
+  expiry; for a tenant-scoped command, refuse as "not found" if the tenant is not the
+  partition's; verify the key record's identity signature and that it names the
+  partition's account; use the record's limits **for that request only**, never as the
+  key's persistent state (C3); copy the principal fields into the audit column of any row
+  the command causes (C5); never widen what the context allows.
 - **Failure**: an invalid context never reaches an effect; there is no fallback identity.
 
 #### C2. Authorisation decision (library; edge, identity and access, console, owners)
@@ -1112,61 +1434,85 @@ RFC-000 §8 names them; this section gives their complete semantics. Wire format
 - The same version gives the same answer anywhere, so the edge and the owner cannot
   disagree except across a policy change; an owner that sees a newer version than the
   context uses decides with the newer one. The console's documented-request intake uses
-  it too (§7.5).
+  it too (§7.5), with the erasure-of-own-data rule of §4.2.
 
 #### C3. Identity status push and catch-up (identity and access → account owner; RFC-004 Part A applies, RFC-002 reads)
 
-- **Events** per key: `issued`, `limits_changed`, `revoked`, with the key's limits; per
-  account: `kyb_status` (RFC-000 AI4-2); each with account, administrator (or onboarding),
-  commit timestamp and (identity partition, sequence).
-- **Delivery**: a Kafka topic fed by identity's outbox and changefeed (RFC-000 §5.5),
-  keyed by account, so ordered per account; at least once. Identity watches the account
-  owner's applied identity sequence and alarms at ‹revocation_alarm› 30 s; the target is
-  60 s from commit (POL-25).
+- **Events** per key: `issued`, `limits_changed`, `revoked`, with the key's limits and
+  version; per account: `kyb_status` (RFC-000 AI4-2); each with account, administrator (or
+  onboarding), commit timestamp and (identity partition, sequence).
+- **Delivery**: a Kafka topic fed by identity's outbox through the changefeed relay
+  (RFC-000 §5.5), keyed by account, so ordered per account; at least once; with **resolved
+  timestamps** to every topic partition every ‹resolved_interval› 1 s.
 - **Application** (RFC-004 Part A, F4): as an entry in the account's log, idempotent by
-  sequence; per key the event of highest sequence wins, from the push or from a principal
-  context (C1), so a request from a just-issued key is admitted with the limits it carries,
-  and an older context can never undo a newer change. `revoked` is terminal. On applying
-  it, the booking module (RFC-002) gives every undecided request of the key an ending entry
-  "key revoked" (P2-S72), and refuses every later intake with the key as unauthenticated;
-  decided requests are unchanged (P2-S103).
-- **Catch-up**: a new account-owner lease holder, after its takeover and before deciding
-  any request, queries identity and access over gRPC for every event of the account above
-  its applied sequence and applies them in one entry.
+  (identity partition, sequence); per key the event of highest version wins, from the push
+  or catch-up **only**. `revoked` is terminal. On applying it, the booking module (RFC-002)
+  gives every undecided request of the key an ending entry "key revoked" (P2-S72), and
+  refuses every later intake with the key as unauthenticated; decided requests are
+  unchanged (P2-S103). A key not yet in the applied list is admitted only with an
+  identity-signed key record in the context naming the account (C1), whose limits govern
+  that request and are held in memory as provisional until the push or catch-up brings
+  the key; a record for a key whose applied state is revoked, or with a version lower than
+  the applied one, is ignored (R5-13).
+- **Freshness**: F4 keeps `iam_fresh` per account slot (§3.3) and exposes it to the
+  booking module, which confirms only when its transaction timestamp ≤ `iam_fresh` +
+  ‹iam_fresh_max› 45 s. F4 records `iam_fresh` with each KYB check it makes (§3.6).
+- **Catch-up**: `catch_up(account_slot, since) → (events, read_timestamp)`, a gRPC query
+  that identity answers by a consistent read of its push events for accounts of that slot
+  committed after `since` (identity keeps them, indexed by (account slot, commit timestamp),
+  for 7 days). Called by a new account-owner lease holder before deciding any request, and
+  by any lease holder when `now − iam_fresh` > ‹iam_pull_after› 20 s, every
+  ‹iam_pull_period› 5 s until fresh; the answer is applied in one entry and sets
+  `iam_fresh` to its read timestamp. Idempotent; at the design load about 100 accounts per
+  slot (est.), so an answer is small.
+- **Bound**: every event is applied within 60 s of its commit while either Kafka or
+  identity is reachable; otherwise no request of the slot is confirmed after 45 s.
 
-#### C4. Operator action envelope (console → every owner that accepts operator actions)
+#### C4. Operator action envelope and read grant (console relays → every owner and reader that accepts operator commands or reads)
 
-Fields and owner checks as in §7.4, including the same-role, other-person,
-`approval_expiry` and `target_version` checks. The owner's answer is *applied* (with its
-row position) or *refused* (with the precondition that failed). Idempotent by `action_id`;
-for money-moving actions `action_id` is the source reference, and its principal the
-requesting operator (POL-29, P4-S99). An owner never applies an operator change that
-arrives without a valid envelope.
+- **Envelope fields and owner checks** as in §7.4: digest recomputed by the owner; the
+  WebAuthn rules (type, challenge = digest, origin, `rpIdHash`, user-present and
+  user-verified flags, signature); identity's operator check (C15) for role, credential,
+  counter and cancellation; same role and other person for four eyes; own transaction
+  timestamp ≤ `not_after` − ε; `target_version` current.
+- **Read grant fields and reader checks** as in §7.6: the same WebAuthn rules over
+  `digest(read type ‖ target ‖ role ‖ reason ‖ not_after)`, the operator check, the
+  target bound, and the reader's own audit append before answering.
+- **Target summaries**: an owner answers a summary request for one target, signed by its
+  summary-signing key (§10), so the signing client can show what it signs.
+- **Answers**: *applied* (with its row position) or *refused* (with the check that
+  failed). Idempotent by `action_id`; for money-moving actions `action_id` is the source
+  reference, and its principal the requesting operator (POL-29, P4-S99). An owner never
+  applies an operator change, and a reader never answers an operator read, without a valid
+  envelope or grant.
 
 #### C5. Audit record (field set in every owner's log table; chain; feed; append)
 
 - **Field set**: §9.2, in the encrypted `audit` column of every row that changes money,
   capacity, a link, a key, a user or right, a role, a consent or disclosure, a policy
-  setting, an endpoint, a standing, a reservation or a request, or applies an operator
-  action or read. Pseudonymous identifiers only.
+  setting, an endpoint, an erasure request, a standing, a reservation or a request, or
+  applies an operator action. Pseudonymous identifiers only.
 - **Owner obligations**: write the `chain` column in the same transaction as each row
   (§9.3, layer 4), through the owner runtime; let the changefeed relay every log table to
-  audit; no operation that rewrites or deletes rows; let truncation happen only below
-  audit's sealed-through watermark.
-- **Append** (for non-owner sources): `append(source, source_ref, record) → position`,
-  acknowledged once committed, idempotent by `source_ref`, never altered.
+  audit; no operation that rewrites or deletes rows; truncation only through the
+  row-level-security policy below audit's watermark.
+- **Append** (for non-owner sources and readers of read grants): `append(source,
+  source_ref, record) → position`, acknowledged once committed, idempotent by
+  `source_ref`, never altered.
 - **Audit guarantees**: chain and continuity verification, checkpoints every
-  ‹checkpoint_interval› written once to two stores in two trust domains, verification of
-  sealed segments before any truncation, a query interface for the compliance read
-  action, retention 7 years (with RFC-006).
+  ‹checkpoint_interval› written once to two stores in two trust domains, a second
+  independent verifier monthly, verification of sealed segments before any truncation, a
+  query interface for the compliance read action, retention 7 years (with RFC-006).
 
-#### C6. Supplier visibility (identity and access, library → reporting, notifier, provisioning feed)
+#### C6. Supplier visibility (identity and access → reporting, notifier, provisioning feed)
 
 - `ref(supplier, reservation_id)`, `ref_line(supplier, line_id)` and their inverses
-  (§6.1); the keys are released only to the three consumers.
-- `visibility(supplier, accounts, reservations) → {reservation: reveal(entry) | hide}` at
-  a registry timestamp, read consistently at the present timestamp; callers must call it
-  per view, must not cache across views, and must hide every identity if it fails.
+  (§6.1), as a library; the keys are released only to the three consumers. The inverse's
+  result is used only if the reservation has a leg on a link of the calling supplier.
+- `visibility(supplier, accounts, reservations) → ({reservation: reveal(entry) | hide},
+  registry_timestamp)`, a gRPC query answered by identity with a consistent read at the
+  present timestamp; callers must call it per view, must not cache across views, must
+  record the timestamp with the view, and must hide every identity if it fails.
   Disclosures are applied with their scope and end (§6.2).
 - Commands: consent given and withdrawn (administrator, §3.2), disclosure and its end
   (compliance envelope, §7.2).
@@ -1180,16 +1526,20 @@ bindings, movements and payout confirmations only from `authentic`; they record
 `not_authentic` in the provider's investigation stream without binding, movement or
 confirmation, and alert (AI5-5); the provider is acknowledged only once the authentic
 event's transaction commits (RFC-004). The provider principal is the principal for POL-29's
-comparison.
+comparison. Verify-by-fetch validates and encodes the reference and is rate-limited
+(§8.1).
 
 #### C8. Webhook endpoints, secrets and signed webhooks (identity and access → notifier, RFC-006; buyers and suppliers)
 
 - **Endpoints and secrets** (RFC-000 §8, AI5-4): the endpoint feed (registrations,
-  changes, removals, each with its tenant, and the secret wrapped for the notifier) and a
-  query by endpoint identifier.
-- **Signed webhook**: signature format, secret custody, rotation and endpoint rules as in
-  §8.3. The notifier must sign every delivery, must pick endpoints only by the event's
-  tenant (from the partition), and must use the safe-egress rules.
+  changes, removals, *rotate now*, each with its tenant, and the secret wrapped for the
+  notifier) and a query by endpoint identifier.
+- **Signed webhook**: signature format with a fresh timestamp and signature per attempt,
+  secret custody, rotation and *rotate now*, and endpoint rules (port 443, global unicast
+  only, no redirects, safe egress) as in §8.3. The notifier must sign every delivery, must
+  pick endpoints only by the event's tenant derived from the clear partition (account;
+  or the link's supplier from the catalogue at the event's position), and must use the
+  safe-egress rules.
 
 #### C9. Probe designation (identity and access → every consumer named in RFC-000 §5.4)
 
@@ -1199,8 +1549,8 @@ restricted permission sets (§3.5). RFC-006 owns the designation contract as a w
 #### C10. KYB status (identity and access → console, account owner)
 
 KYB result per account with its principal, time and position, on the identity status push
-(C3); the console checks it before a credit-limit action; the account owner checks it and
-the envelope's KYB precondition and records both (§3.6).
+(C3); the console checks it before a credit-limit action; the account owner checks it with
+`iam_fresh` within ‹iam_fresh_max› and records both (§3.6).
 
 #### C11. Supplier authority on supply commands (edge and library → link schedule owner, RFC-001)
 
@@ -1209,106 +1559,172 @@ permanent-increase commands only from a principal context whose tenant is the li
 supplier, outage and restoration commands from that supplier or with a network-operations
 envelope, and registration and retirement only with a commercial envelope (§3.4).
 
-#### C12. Personal-data store (identity and access → identity, notifier, console, reporting)
+#### C12. Personal-data store and erasure requests (identity and access → identity, notifier, console, reporting, metering ingestion)
 
-`put(subject, item)`, `get(subject, item, purpose)`, `erase(subject)` (§3.7). `get` only by
-the four named readers, for their purposes, every call audited; readers must not persist
-what they read beyond the request. `erase` only from a compliance envelope; after it
-commits, `get` for the subject fails, and every copy is unreadable within 44 days.
+- `put(subject, item)`, `put_payload(record_id, supplier, account?, received_at,
+  payload)`, `get(subject, item, purpose[, read grant])`, `erase(subject, request_ref)`,
+  with the callers, idempotency and caps of §3.7. Every `get` audited; readers must not
+  persist what they read beyond the request. `get` for an erased subject, an expired or
+  erased payload, fails as "not found".
+- **Erasure requests**: `record_erasure_request(context, intake_ref, intake_time)` from
+  the console's intake (a user principal, for itself); the administrator command of §3.2;
+  workforce administration's command for operators; `open_requests()` for compliance's
+  queue. `requested_at` starts the clock.
+- **Erasure**: executed only by identity, on a compliance envelope citing an open request
+  for the same subject (§3.7); after the store's commit, `get` fails at once; every copy,
+  the live store's history, every replica, every backup and every HSM copy, is unreadable
+  within 24 days of the request, inside `erasure_max` (30 days).
+- **Expiry**: a payload is unreadable in every copy at most `dispute_window` + 7 days after
+  receipt (its day's expiry key destroyed).
+- **Retention obligations on RFC-006**: store backups kept ‹pd_backup_retention› 7 days,
+  without revision history, tagged with their generations; no changefeed on the store;
+  `gc.ttlseconds` ≤ ‹pd_gc_ttl›.
 
-#### C13. Payload encryption (library → every owner, the owner runtime, history, Kafka consumers)
+#### C13. Encryption of application columns (library → every owner, the owner runtime, history, Kafka consumers)
 
-`seal(owner kind, partition, sequence, epoch, row kind, payload, audit) → ciphertexts,
-chain` and `open(...)`, with data keys from the key service per the release policy
-(§5.4). Obligations: every owner seals every row and outbox row before its transaction;
-every reader opens before use and rejects, and alerts on, a row that fails; nothing is
-ever written in clear outside the clear columns of §5.4.
+`seal(key purpose, owner kind, table, primary key, version or sequence, epoch, row kind,
+columns) → ciphertexts` and `open(...)`, with keys from the key service per the release
+policy (§5.4), sub-keys per (key, epoch, session) and random 96-bit nonces, at most 2³¹
+seals per sub-key. Obligations: every owner seals every row of every application table
+and every outbox row before its transaction; every reader opens before use, rejects and
+alerts on a row that fails or whose version is lower than one it has seen; nothing is ever
+written in clear outside the clear columns its schema lists under §5.4's rules; no clear
+column relates two tenants.
 
-**Contracts this RFC consumes**: the catalogue's link registry and probe designations
-(RFC-001, RFC-003); the outcome feed (RFC-002) for webhooks; the substrate conventions
-(RFC-006: log-table schema, owner runtime with the encryption and chain hooks of C13 and C5,
-owner leases, changefeeds and Kafka topics, sealing, retention, backups of the
-personal-data store per §3.7, the truncation role of §9.3); the placement table (edge
-routing, poll-limiter shards).
+#### C14. Identity edge stream (identity and access → edge)
+
+`edge_stream(identity_slot, from_position)`: a gRPC server stream from the slot's lease
+holder, over mTLS to edge workloads only, of identity-signed credential records (agent and
+supplier keys, sessions, device-certificate serials, endpoint → tenant, policy version) in
+commit order after the position, and a signed heartbeat (slot, head, timestamp) every
+‹stream_heartbeat› 1 s, sent only after every record up to its head. Snapshots per slot every
+‹snapshot_interval› in object storage under the edge stream key. Guarantee: a record
+committed at `t` is either delivered, or every heartbeat after `t` is withheld from the
+edge, so the edge's invariant (§3.3) refuses the slot's credentials by `t` + 31 s. The edge
+applies only higher versions.
+
+#### C15. Operator check (identity and access → every owner and reader of operator envelopes and read grants; console)
+
+`operator_check(action_id or grant_id, digest, [(operator, credential, counter)]) →
+per signer: role, credential status, person identifier, counter_ok; cancelled: bool`, a
+gRPC command answered by identity from its operator partition at the present timestamp. It
+records each assertion's counter (consuming it once per `action_id` or `grant_id`;
+repeating the same call is idempotent) and refuses a counter not higher than the last
+recorded for the credential. `cancel(digest, requester assertion) → receipt` records a
+cancellation and returns an identity-signed receipt. A few calls per minute; at most 10/s
+(est.).
+
+**Contracts this RFC consumes**: the catalogue's link registry, link → supplier map and
+probe designations (RFC-001, RFC-003); the outcome feed (RFC-002) for webhooks; the
+substrate conventions (RFC-006: log-table schema, owner runtime with the sealing, schema
+and chain hooks of C13 and C5, owner leases with hot standbys for identity slots,
+changefeeds with resolved timestamps and Kafka topics, sealing, retention, backups of the
+personal-data store per C12, the truncation role with the row-level-security policy of
+§9.3); the placement table (edge routing, poll-limiter shards); the region-disaster
+declaration record and its probe evidence (RFC-006).
 
 ### 12. Threat model
 
 STRIDE per trust boundary. "Scenarios" names what each mitigation makes hold; "T-" numbers
-are cited elsewhere in this RFC. Revision 2 changed T-2, T-18, T-19, T-20 and T-22 for the
-substrate, and added T-24 … T-32.
+are cited elsewhere in this RFC. Revision 3 changed T-2, T-9, T-12, T-17 … T-20, T-24 …
+T-31, and added T-33 … T-41.
 
 | # | Boundary | Threat | STRIDE | Mitigation | Scenarios |
 |---|---|---|---|---|---|
 | T-1 | Internet → edge | Call without credential, or with a guessed or stolen one | S | §2.2 authentication before any lookup; 256-bit secrets; uniform unauthenticated answer; secret-scanning prefixes | X1-S01 |
-| T-2 | Internet → edge | Revoked key keeps working | S, E | Kafka invalidation feed plus 30 s cache bound, never extended on error, fills at most 1 s stale; changefeed relays a row the owner died before publishing; account owner applies in its order; catch-up on lease takeover | X1-S06, P2-S72, P2-S103 |
+| T-2 | Internet → edge | Revoked key, ended session or revoked certificate keeps working | S, E | Edge replica with the 30 s freshness invariant, independent of Kafka; connections closed on revocation; account owner applies in its order, pulls when the push is silent, confirms only when fresh; catch-up on lease takeover | X1-S06, P2-S72, P2-S103 |
 | T-3 | Edge → owner | Principal of one account reads or changes another's data, or learns it exists | I, T | Routing by credential's tenant only; uniform misses; owner re-check | X1-S02, X1-S03, X1-S05 |
 | T-4 | Edge → owner | Idempotency key collision or probing across accounts or principals | I | Scope (account, key), principal compared | X1-S08, X1-S09, P2-S64, P2-S113 |
-| T-5 | Within an account or supplier | Agent key or ordinary user raises limits, issues keys, adds users, grants rights, registers an endpoint, consents | E | Administrator right checked by identity and access on every command; refusals recorded | X1-S19, X1-S25, X1-S29, X1-S33 |
-| T-6 | Within an account | Too many keys to evade per-key limits; last administrator removed, locking the account | E, D | `account_max_keys` and the administrator count in one serial order; `account_rate_limit`, `account_inflight_limit` | X1-S21, X1-S38 |
+| T-5 | Within an account or supplier | Agent key or ordinary user raises limits, issues keys, adds users, grants rights, registers an endpoint, consents, passes on an erasure | E | Administrator right checked by identity and access on every command; refusals recorded | X1-S19, X1-S25, X1-S29, X1-S33 |
+| T-6 | Within an account | Too many keys to evade per-key limits; last administrator removed, locking the account | E, D | `account_max_keys` and the administrator count in one serial order; `account_rate_limit`, `account_inflight_limit`; recovery through onboarding (§3.8) | X1-S21, X1-S38 |
 | T-7 | Supplier → edge | Supplier sees another supplier's links or statements | I | Tenant check on the link registry; "not found" | X1-S04 |
-| T-8 | Supplier → edge | Supplier identifies buyers or links their reservations | I | Opaque permutation references for reservations and charge lines; only own termination points; consent and disclosure read per view, with scope and end; fail to hide; notices never identify | X1-S28, X1-S29, X1-S30, X1-S35 |
-| T-9 | Operator → console → owner | Operator acts outside role, without reason, or alone on a four-eyes action; a stale approval; compromised console forges actions | E, R | Catalogue by role; reason codes; operator hardware signatures verified by owners; person identity compared; `approval_expiry` and `target_version` checked by owners | X1-S12, X1-S13, X1-S16, X1-S26, X1-S31, X1-S32 |
+| T-8 | Supplier → edge | Supplier identifies buyers or links their reservations | I | Opaque permutation references for reservations and charge lines; inverse checked against the caller's links; only own termination points; consent and disclosure read per view by identity, with scope and end; fail to hide; notices never identify | X1-S28, X1-S29, X1-S30, X1-S35 |
+| T-9 | Operator → console → owner | Operator acts outside role, without reason, or alone on a four-eyes action; a stale or cancelled approval; a compromised console substitutes the action, forges times, ignores cancellations or replays assertions | E, R | Catalogue by role; reason codes; signing client computes the digest over action, role and `not_after` and shows owner-signed summaries; owners verify the WebAuthn rules, call identity's operator check (role, counter, cancellation) and compare their own commit time with `not_after`; out-of-band confirmation to signers. Residual: a console that drops a cancellation leaves the operator without a receipt (§7.3) | X1-S12, X1-S13, X1-S16, X1-S26, X1-S31, X1-S32 |
 | T-10 | Support → owner | Support acts on an account without its request, or on an off-channel one | E | Documented request recorded from an authenticated principal of the account who may make the change, matched by the console; no off-channel entry | X1-S27 |
-| T-11 | Provider → edge | Forged or replayed payment notification credits an account; forged transfer confirmation marks a payout paid | S, T | Verifiers (signature, mTLS, verify by fetch); binding, movement and confirmation only from authentic verdicts; deduplication by reference | X1-S10, P4-S01, P4-S04 |
-| T-12 | Notifier → endpoint | Webhook forged by a third party; webhook sent to another tenant; endpoint used to reach Share's internal network | S, I, E | HMAC per endpoint; endpoints by the event's partition; safe egress | X1-S11, X1-S24, P2-S09 |
+| T-11 | Provider → edge | Forged or replayed payment notification credits an account; forged transfer confirmation marks a payout paid | S, T | Verifiers (signature, mTLS, verify by fetch with validated references); binding, movement and confirmation only from authentic verdicts; deduplication by reference | X1-S10, P4-S01, P4-S04 |
+| T-12 | Notifier → endpoint | Webhook forged by a third party; webhook sent to another tenant; endpoint used to reach or scan Share's or a trusted party's network | S, I, E | HMAC per endpoint, fresh per attempt; endpoints by the event's derived tenant; port 443, global unicast only, generic registration errors, safe egress | X1-S11, X1-S24, P2-S09 |
 | T-13 | Anyone → link owner | Forged capacity change or link registration takes away buyers' guarantees | T, E | Supplier authority (C11) at the edge and the owner; network operations only for outages and restorations; registration only by commercial | X1-S22, X1-S23, X1-S31 |
 | T-14 | Probe | Leaked probe key buys real capacity on Share's credit | E | Probe keys limited to probe links, mTLS from probe sites | X2-S24 |
 | T-15 | Partner → adapter | Forged partner callback changes a booking | S, T | Callback as hint; state from authenticated re-query | — (P2-N7) |
-| T-16 | Exporter → ingestion | Records injected or corrected under another exporter's identity, billing a buyer | S, T | Per-exporter certificate bound to record identity; only its supplier administrator (or network operations, for Share's) obtains one | — (P3-N3) |
-| T-17 | Any principal | Denies having made a change | R | Principal in the same row as the change; signed contexts and envelopes | X1-S07, X1-S14, X1-S20 |
-| T-18 | Engineers, database and storage administrators | Alter or delete audit records or past facts, in the live tables or the archive | T, R | No mutation grant; break-glass with two approvers and statement capture; AEAD rows (§9.3, 3); chain verified from the changefeed; checkpoints written once in two trust domains; object lock; truncation only below audit's watermark | X1-S15 |
-| T-19 | R3 operator (third party) | Reads tenant data from R3's database replica, its KRaft controller or its checkpoint bucket | I | Payload and audit columns encrypted with keys only in Kenyan HSMs; no Kafka broker in R3; clear columns pseudonymous; topic names without tenants. Residual: R3 sees pseudonymous partition identifiers, volumes and timing (RK-12) | X1-N2, X1-S37 |
-| T-20 | Internal network | Compromised component sends commands outside its role (a fake hold, a fake key push) | S, E | mTLS workload identity and the command allowlist (§4.4); signed contexts; Kafka producer ACLs; payloads bound to their source row | — |
-| T-21 | Internet → edge | Flood exhausting edge, identity follower reads or refused-attempt recording | D | Pre-authentication shedding; negative caching; per-principal management limits; aggregated recording under flood | — (X2-N1) |
-| T-22 | Secrets and keys | Theft of signing, data or subject keys | I, S | HSMs; key service with release policy, rate limits and audited unwraps; short-lived certificates; rotation table (§10) | X1-S11 |
+| T-16 | Exporter → ingestion | Records injected or superseded under another exporter's identity, billing a buyer | S, T | Per-exporter certificate bound to record identity, checked per message; only its supplier administrator (or network operations, for Share's) obtains one; superseding records change measured fields only (POL-23, RFC-003) | — (P3-N3) |
+| T-17 | Any principal | Denies having made a change | R | Principal in the same row as the change, with the edge's workload identity; operators' signatures and digests in the envelope | X1-S07, X1-S14, X1-S20 |
+| T-18 | Engineers, database and storage administrators | Alter or delete audit records or past facts, in the live tables or the archive | T, R | No mutation grant; permission-denied events recorded; break-glass with two approvers and statement capture; sealed columns (§9.3, 3); chain verified from the changefeed; checkpoints written once in two trust domains, re-verified independently; object lock; truncation only below audit's watermark, enforced by the database. Residual: detection, not prevention, against physical access (RQ-R5-7) | X1-S15 |
+| T-19 | R3 operator (third party) | Reads tenant data from R3's database replica, its KRaft controller or its checkpoint bucket | I | Every application column sealed with keys only in Kenyan HSMs; no clear column relates two tenants; no secrets in system ranges and no value-bearing diagnostics; no Kafka broker in R3; topic names without tenants. Residual: pseudonymous identifiers, volumes, timing, schemas, job and statistics metadata (RK-12) | X1-N2, X1-S37 |
+| T-20 | Internal network | Compromised component sends commands outside its role (a fake hold, a fake key push) | S, E | mTLS workload identity and the command allowlist (§4.4); Kafka producer ACLs; identity-signed key records | — |
+| T-21 | Internet → edge | Flood exhausting the edge or refused-attempt recording | D | Pre-authentication shedding; no per-key fills (full replica); per-principal management limits; aggregated recording under flood | — (X2-N1) |
+| T-22 | Secrets and keys | Theft of signing, data or subject keys | I, S | HSMs; key service with release policy by purpose, rate limits and audited unwraps; short-lived certificates; rotation table (§10) | X1-S11 |
 | T-23 | Webhook receiver side | Replay of an old genuine webhook | S | Timestamp tolerance and `webhook-id` deduplication by the receiver | X1-S11 |
-| T-24 | Database (any replica, R3's included) | A row inserted, altered, copied to another partition or replayed under another epoch, by someone with database access but no data key | T, S | AES-GCM with position-bound associated data: the row fails to open and every reader rejects it and alerts; chain breaks | X1-S15 |
-| T-25 | Kafka | Forged or replayed events on a topic (a fake revocation, a fake standing, a fake outcome) | S, T | One producer identity per topic by ACL; payloads bound to their source row; consumers deduplicate by (partition, epoch, sequence) and reject what fails to open | — |
-| T-26 | Owner → database | An owner (bug or compromise) writes another owner's tables, bypassing A1 | T, E | Per-owner SQL roles from workload certificates, grants on own tables only; data keys released per owner kind, so a foreign row fails to open | — |
-| T-27 | Any component | Personal data leaks into a log, topic, trace or audit record | I | Typed schemas and logging library; edge stripping; case notes in the store; continuous scanner | X1-S37 |
-| T-28 | Personal-data store | Erasure incomplete: a backup, escrow, cache, index or a log still yields the data | I | Subject keys only in the store; KEK generations destroyed in HSMs and escrow; request-scoped reads; blind index regenerated; no personal data in logs | X1-S34 |
-| T-29 | Personal-data store | Bulk exfiltration by a compromised reader | I | Four named readers, per-purpose `get`, unwrap rate limits, every `get` audited and alerted on anomaly | X1-N11 |
-| T-30 | Truncation | Rows deleted before they are sealed, or above the watermark, to erase history | T, R | Separate truncation role, watermark written only by audit after verification, gap detection on the changefeed | X1-S15 |
-| T-31 | Workforce administration | An operator obtains a role, or a second role in another identity, without independent approval | E | Grants only through workforce administration with another person's assertion; self-approval refused; every grant recorded and alerted | X1-S14 |
-| T-32 | Operator → console | An operator withholds a termination notice, or extends a disclosure, alone | E | Withholding only inside an approved compliance termination; disclosure scope and end in the approved digest; ending a disclosure narrows, never widens | X1-S35, X1-S36 |
+| T-24 | Database (any replica, R3's included) | A row inserted, altered, copied to another partition or table, replayed under another epoch, or rolled back to an older version, by someone with database access but no key | T, S | AES-GCM with associated data binding table, key, version and epoch: the row fails to open and every reader rejects it and alerts; version regression rejected by readers that saw the newer one; chain breaks for log rows. Residual: a projection rolled back before any reader saw the newer version is caught only by the owner's rebuild from its log | X1-S15 |
+| T-25 | Kafka | Forged or replayed events on a topic (a fake revocation, a fake standing, a fake outcome) | S, T | One producer identity per topic by ACL; payloads sealed under the topic's feed key, so Kafka's operators cannot forge; consumers deduplicate by (partition, epoch, sequence). Between key holders, authenticity rests on the ACL, not the AEAD | — |
+| T-26 | Owner → database | An owner (bug or compromise) writes another owner's tables, bypassing A1 | T, E | Per-owner SQL roles from workload certificates, grants on own tables only; log keys released per owner kind, so a foreign row written by another owner fails to open | — |
+| T-27 | Any component | Personal data leaks into a log, topic, trace or audit record | I | Typed schemas refused on the write path and at build; logging library; edge stripping; case notes and payloads in the store; sampling scanner | X1-S37 |
+| T-28 | Personal-data store | Erasure incomplete: a backup, escrow, HSM backup, MVCC history, cache, index or a log still yields the data, beyond `erasure_max` | I | Subject keys only in the store; weekly generations destroyed in every HSM member and HSM backup by quorum, attested; no escrow; backups 7 days without revision history; `gc.ttlseconds` 1 h; request-scoped reads; blind index regenerated; no personal data in logs; open requests alerted at 7 days | X1-S34, X1-S39 |
+| T-29 | Personal-data store, readers | Bulk exfiltration by a compromised reader or console | I | Named readers, per-purpose `get`; console reads only with per-target read grants; unwrap rate limits; every `get` and read appended by the reader; per-operator limits and breadth alerts | X1-N11, X1-S27 |
+| T-30 | Truncation | Rows deleted before they are sealed, or above the watermark, to erase history | T, R | Separate truncation role; row-level-security policy against the watermark that only audit writes after verification; gap detection; any changefeed pause or alteration is an incident | X1-S15 |
+| T-31 | Workforce administration | An operator obtains a role, or a second role in another identity, without independent approval | E | Grants only through workforce administration with a workforce approver's assertion; approvers hold no operator role; self-approval refused; every grant recorded and alerted; shared authenticator or device across identities in one role alerted. Residual: a workforce insider minting two person identifiers for one human | X1-S14 |
+| T-32 | Operator → console | An operator withholds a termination notice, or extends a disclosure, alone | E | Withholding only inside an approved compliance termination, in the signed digest; disclosure scope and end in the approved digest; ending a disclosure narrows, never widens | X1-S35, X1-S36 |
+| T-33 | Edge node | A compromised edge node acts as any principal whose traffic it terminates, or injects limits or keys into account state | S, E | Edge has no write path; key records signed by identity, limits used per request only, persistent key state only from the push or catch-up; owners check the key's account. Residual: until its workload certificate is revoked, a node can act as any principal whose credential it sees | — |
+| T-34 | Build and supply chain | A compromised shared library (C1, C2, C13) or dependency reaches every owner | T, E | Reproducible builds; signed artefacts verified at deployment; dependency pinning and review; two-person release approval | — |
+| T-35 | Operator device | Malware on a managed device rides an operator's session | S, E | Nothing takes effect or is read without a per-action or per-case hardware touch over a digest the signing client shows; out-of-band confirmations | X1-S26 |
+| T-36 | Audit verifier | A compromised verifier signs checkpoints over altered rows | T, R | Second, independent verifier rebuilding monthly from sealed segments; both checkpoint stores written once | X1-S15 |
+| T-37 | Key service or HSM administration | An insider exports or destroys keys | I, D | HSM quorum authentication for export and destruction; every operation attested and appended to audit; escrow for log KEKs | — |
+| T-38 | Key service | Unwrap flood at a region-wide takeover delays admission | D | Keys per slot and month unwrapped once per takeover and pre-fetched for the next month; pacing by slot priority; HSMs in four clusters | — (X2-N1) |
+| T-39 | Identity and access | Flood of refused attempts exhausts identity's write path | D | ‹mgmt_rate_limit› per principal; aggregation beyond it (counts, first and last, sample) | — (X2-N1) |
+| T-40 | Compliance operator | Erases a subject who never asked (an operator, an investigation target) | T, E | Identity executes only against an open request for the same subject; no "legal requirement" reason; the store accepts `erase` from identity only | X1-S39 |
+| T-41 | Internet → edge | Timing reveals whether a key identifier exists | I | Dummy verifier for unknown identifiers; fixed floor on unauthenticated answers | X1-S01 |
 
 ### 13. Design parameters
 
 Not business policy (they are not in the register); each can change without a change of
-mechanism. `approval_expiry` (72 h) is now a POL-32 parameter (RQ5-4), no longer listed
-here.
+mechanism. `approval_expiry` (72 h), `erasure_max` (30 days) and `dispute_window` are POL
+parameters, not listed here.
 
 | Parameter | Default | Bound or reason |
 |---|---|---|
-| ‹key_cache_ttl› | 30 s | RFC-000 §3; with ‹iam_read_staleness› gives the 31 s worst case (§3.3) |
-| ‹iam_read_staleness› | 1 s | Bounded-staleness follower reads of identity's projections (§3.1) |
-| ‹revocation_target› / ‹revocation_alarm› | 60 s / 30 s | POL-25 |
-| ‹user_token_ttl› | 5 min | Bounds a stolen access token; administrator commands re-check rights at identity and access |
+| ‹edge_staleness_max› | 30 s | RFC-000 §3's 30 s bound; gives the 31 s worst case (§3.3) |
+| ‹stream_heartbeat›, ‹snapshot_interval› | 1 s, 10 min | Heartbeat well inside the staleness bound; snapshot bounds an edge's catch-up |
+| ‹iam_slots› | 256 | Identity slots; few enough for one stream per slot per edge |
+| ‹resolved_interval› | 1 s | Changefeed resolved timestamps on the identity status push |
+| ‹iam_pull_after› / ‹iam_pull_period› / ‹iam_fresh_max› | 20 s / 5 s / 45 s | Account owner applies a revocation within about 26 s without Kafka; confirms nothing beyond 45 s of staleness, inside POL-25's 60 s |
+| ‹revocation_target› / ‹revocation_alarm› | 60 s / 30 s | POL-25, D-6 |
+| ‹unauth_floor› | 5 ms | Above the p99.9 of every unauthenticated cause's work (est.); inside the edge's 10 ms |
+| ‹user_token_ttl› | 5 min | Bounds a stolen access token; sessions are checked on every call anyway |
 | ‹context_ttl› | 60 s | Longer than any path from edge to entry 1 |
-| ‹envelope_ttl› | 5 min | Bounds replay of a signed envelope and the age of the role check |
+| ‹read_grant_ttl› | 1 h | One hardware touch per case (D-8) |
+| ‹operator_check_cache› | 60 s | Readers re-check a grant's operator while the grant is in use |
+| ‹operator_read_limit› | Set from measured support load | Bounds reads per operator per hour |
 | ‹operator_session_ttl› | 8 h, idle 15 min | |
 | ‹provider_timestamp_tolerance›, receiver webhook tolerance | 5 min | |
+| ‹fetch_rate_limit› | Per provider, set from its API limits | Bounds verify-by-fetch abuse |
 | ‹mgmt_rate_limit› | 5/s per principal | Bounds refused-attempt records |
 | ‹preauth_rate_limit›, ‹read_rate_limit› | Set by RFC-006 from measured load | |
 | ‹workload_cert_ttl› | 24 h | |
 | ‹break_glass_ttl› | 4 h | |
 | ‹checkpoint_interval› | 10 min | Bounds how long an alteration of the live tail can go undetected against a written-once store |
-| ‹kek_generation_period› | 30 days | With ‹pd_backup_retention›, bounds erasure from every copy at 44 days (RQ5-11) |
-| ‹pd_backup_retention› | 14 days | Recovery from operator error on the personal-data store |
+| ‹erasure_exec_target› / ‹erasure_alert› / ‹erasure_incident› | 10 / 7 / 20 days | D-1: with the two below, every copy unreadable within 24 days of the request |
+| ‹kek_generation_period› | 7 days | D-1 |
+| ‹pd_backup_retention› | 7 days | Recovery from operator error on the personal-data store; D-1 |
+| ‹pd_gc_ttl› | 1 h | `gc.ttlseconds` on the store's tables |
+| ‹payload_put_limit› / ‹payload_put_global› | 10/s per exporter / 1,000/s | RD-1 |
+| ‹scan_sample› | 10⁻⁴ | Sampling scanner (§3.7) |
+| ‹recovery_hold› | 24 h | D-7 |
 | ‹unwrap_rate_limit› | Set from measured takeover load (RFC-006) | Bounds bulk unwraps by one identity |
 
 ### 14. Failure behaviour
 
 | Failure | Effect |
 |---|---|
-| Identity-and-access owner-lease holder of a slot lost | A standby takes the lease after expiry (RFC-000 §5.2); reads continue from follower reads; key and administrator commands for those accounts wait for the new holder, within admission's 1 min RTO |
-| Identity-and-access replicas unreachable from an edge | Cached entries keep working until they expire (at most 30 s for keys, token lifetime for users); then "temporarily unavailable" (S4) |
-| Kafka unavailable | Edge invalidations and the identity status push stop; edges fall back to the 31 s cache bound; identity's revocation alarm fires at 30 s; the changefeed replays once Kafka returns (RFC-000 §5.5) |
-| Consent registry unreadable | Supplier views served with identities hidden (§6.2) |
-| Console without quorum or lease holder | No operator action can be taken; owners keep running; pending actions keep their `approval_expiry` clock (owners check it) |
+| Identity-and-access lease holder of a slot lost | The hot standby takes the lease after expiry (RFC-000 §5.2), seconds (est.); its stream resumes from each edge's position; if it takes more than 30 s, edges answer "temporarily unavailable" for that slot's credentials (S4), within admission's 1 min RTO |
+| Edge stream to one edge lost | That edge refuses the slot's credentials 30 s after the last heartbeat; other edges serve; the edge reconnects from its position |
+| Kafka unavailable | Edges are unaffected (the edge stream is gRPC). Account owners stop receiving the push; after 20 s they pull every 5 s from identity (C3); notifier, audit verifier and feeds wait; the changefeed replays once Kafka returns (RFC-000 §5.5) |
+| Kafka and identity both unreachable from an account owner | No request of the slot is confirmed after 45 s of staleness; requests wait or reach their deadlines; RFC-006 alarms at 30 s |
+| Identity cannot answer `visibility` | Supplier views served with identities hidden (§6.2) |
+| Console without quorum or lease holder | No operator action can be taken; owners keep running; pending actions keep their `not_after` (owners check it) |
+| Identity's operator check unavailable | Operator actions and reads are refused by owners and readers (S4); nothing else is affected |
 | Poll-limiter instance lost | Its shards move (seconds); polls of their keys "temporarily unavailable" meanwhile; up to twice `key_poll_limit` for one window after (§5.3) |
-| Key service or HSM cluster in one Kenyan region lost | The other region's serves; owners keep unwrapped data keys in memory, so only lease takeovers and new months need it; during a declared disaster, the surviving region's |
-| Personal-data store unavailable | Logins by identifier, e-mail notices, support views of names and statement display names wait or show identifiers; nothing on the booking or posting path depends on it (RFC-000 R21) |
+| Key service or HSM cluster in one Kenyan region lost | The other region's serves; owners keep unwrapped keys in memory, and next month's keys are pre-fetched, so only lease takeovers need it; during a declared disaster, the surviving region's |
+| An HSM cluster unreachable at a generation's destruction | The usage end date stops it serving the generation; destruction runs on reconnection, attested |
+| Personal-data store unavailable | Logins by identifier, e-mail notices, support views of names, statement display names and payload puts wait or show identifiers; erasures wait (the clock runs; alert at 7 days); nothing on the booking or posting path depends on it (RFC-000 R21) |
 | Audit verifier behind | Records exist from the commit; checkpoints and truncation wait (truncation never runs ahead of verification) |
 | Region loss | As RFC-000 §5.1; identity, console, audit, secrets and the personal-data store are at 2 + 2 + 1 like every owner, reconfigured to 2 + 2 |
 
@@ -1319,167 +1735,222 @@ mechanism).
 
 | # | Test | Serves |
 |---|---|---|
-| DT-1 | Revoke a key with Kafka and every push path blocked; every edge refuses it within 31 s, and the account owner fails its undecided requests on catch-up | X1-S06, P2-S72 |
+| DT-1 | Revoke a key with Kafka blocked and no lease takeover: every edge refuses it within 31 s; the account owner fails its undecided requests by `t0` + 30 s by its pull. With Kafka blocked and identity unreachable from the account owner, no request of the slot is confirmed after `t0` + 45 s. The same for an ended session and a revoked device certificate, whose established connections are closed | X1-S06, P2-S72 |
 | DT-2 | A request decided confirmed one entry before the revocation entry stays confirmed | P2-S103 |
 | DT-3 | For 10⁶ random identifiers, "not found" for another account's resource and for a never-existing one are byte-identical and have the same latency distribution (two-sample test, p > 0.05) | X1-S02, X1-S03 |
-| DT-4 | A context naming tenant b1 sent to b2's partition is refused; a context with a bad signature is refused before any effect | X1-S05 |
+| DT-4 | A context naming tenant b1 sent to b2's partition is refused; a context from a peer that is not an edge workload is refused before any effect | X1-S05 |
 | DT-5 | Concurrent issuance of 10 keys at 95 keys yields exactly 5 issued; concurrent removal of the right from both of an account's two administrators leaves exactly one | X1-S21, X1-S38 |
 | DT-6 | A view issued after a consent withdrawal's acknowledgement never shows the buyer, across a leaseholder move of the registry range | X1-S30 |
-| DT-7 | References of 10⁷ reservations, and of 10⁷ charge lines, for one supplier are distinct; references for one buyer pass a randomness test against references of other buyers | X1-S28 |
-| DT-8 | An envelope with a valid console signature but no, a reused, a same-person or an other-role approver assertion, an approval after `approval_expiry`, or a stale `target_version` is refused by every owner | X1-S26, X1-S32 |
+| DT-7 | References of 10⁷ reservations, and of 10⁷ charge lines, for one supplier are distinct; references for one buyer pass a randomness test against references of other buyers; a reference resolved by another supplier answers "not found" | X1-S28 |
+| DT-8 | Every owner refuses: an envelope with a valid console path but no, a reused (same counter), a same-person or an other-role approver assertion; an assertion whose challenge, origin or `rpIdHash` differs, or without user verification; an envelope applied after `not_after`; one whose digest identity reports cancelled; a stale `target_version`; an envelope whose fields differ from what was signed (a widened scope, another target) | X1-S26, X1-S32 |
 | DT-9 | Altering one byte of a live log row with an administrative SQL session, and of a sealed segment in R1 storage, is each detected at the next verification against both checkpoint stores | X1-S15 |
-| DT-10 | A webhook endpoint resolving to a private address is refused at registration and at delivery (DNS rebinding) | X1-S24 |
-| DT-11 | R3's database replica files and KRaft controller contain no plaintext of a known marker written through an account's log | T-19 |
+| DT-10 | A webhook endpoint resolving to a private, unique-local, CGNAT, IPv4-mapped or NAT64 address, or on a port other than 443, is refused at registration with the same answer as any refusal, and at delivery (DNS rebinding) | X1-S24 |
+| DT-11 | R3's database replica files, system ranges and KRaft controller contain no plaintext of a known marker written through an account's log, its projections and the consent registry | T-19 |
 | DT-12 | 21 polls in one UTC second from one key, spread over edges in R1 and R2: exactly 20 are accepted; with the key's shard moved mid-window, at most 40 | P2-S67 |
 | DT-13 | A notification with a bad signature, one from an unsigned provider whose fetch fails, and a forged payout confirmation move no money, confirm no payout and appear in the investigation stream | X1-S10 |
-| DT-14 | Scan every log table (opened), topic, application log and trace after a full functional run with marker names and addresses: no marker found outside the personal-data store | X1-S37 |
-| DT-15 | Erase a user with recorded changes and movements: `get` fails at once; a store backup taken before the erasure cannot be read after its generation is destroyed; every audit record and movement is unchanged and every balance and charge recomputes identically | X1-S34 |
-| DT-16 | A row copied to another partition or sequence, or re-inserted under another epoch, fails to open at every reader and raises an alert | T-24 |
-| DT-17 | The truncation job cannot delete a row above the sealed-through watermark; a manual delete above it is detected as a gap | T-30 |
+| DT-14 | After a full functional run with marker names and addresses, the write path has refused every free-text field, and the scanner finds no marker in log tables, topics, application logs or traces | X1-S37 |
+| DT-15 | Erase a user with recorded changes and movements: `get` fails at once; `AS OF SYSTEM TIME` before the erasure fails after `pd_gc_ttl`; a store backup taken before the erasure, restored after its generation's destruction, cannot unwrap the key; every HSM cluster has a destruction attestation; every audit record and movement is unchanged and every balance and charge recomputes identically | X1-S34 |
+| DT-16 | A row copied to another partition, sequence or table, re-inserted under another epoch, or a projection rolled back to an older version, fails at every reader that saw the newer one and raises an alert | T-24 |
+| DT-17 | The truncation role cannot delete a row above the sealed-through watermark, even in a manual session; a delete above it by break-glass is detected as a gap | T-30 |
 | DT-18 | A disclosure without stated scope reveals only the buyer's reservations on that supplier's links; after its end date or a compliance end, the next view hides them | X1-S35 |
-| DT-19 | A network-abuse termination with a withhold request notifies; a compliance termination with withholding approved by a second compliance operator does not; one without approval does | X1-S36 |
+| DT-19 | A network-abuse termination with a withhold request takes effect, refuses the request and notifies; a compliance termination with withholding approved by a second compliance operator does not notify; one without withholding followed by a separate request to withhold notifies within `affected_notice_time` and refuses the request | X1-S36 |
+| DT-20 | For both channels (administrator pass-on, the user's own documented request), with parameters compressed in time: the request is recorded with its time; one compliance operator erases it citing the request; an erasure envelope without a matching open request is refused; every copy (live, history, backups, HSM) is unreadable within 24 days of the request | X1-S39, X1-S12 |
+| DT-21 | A non-conforming payload is readable by a finance read grant, is unreadable in live and backup copies after its day's expiry key is destroyed, and after an erasure of a user of its attributed account | P3-S71 |
+| DT-22 | A batch retried at the same position, and 10⁹ seals under one sub-key, never repeat a nonce; a new sub-key is derived at 2³¹ | T-24 |
+| DT-23 | Unauthenticated answers for malformed, unknown and known-with-wrong-secret credentials have the same latency distribution (two-sample test, p > 0.05) | X1-S01 |
+| DT-24 | A read by the console of reporting, the personal-data store or the audit query without a read grant is refused; with one, the reader's own audit append exists before the answer | X1-S27, X1-S31 |
+| DT-25 | A context carrying a forged key record, or a genuine record with a lower version than the applied one, changes nothing in the account's applied key state | — (T-33) |
 
 ## Benefits
 
 | Target | How this design meets it |
 |---|---|
-| Authentication on every call within the 10 ms edge budget (X1-N1, POL-04) | In-memory verification from pushed caches, about 50 µs of CPU per call (est.); no remote call or database read on the booking path |
-| Revocation within 60 s (X1-N3, POL-25) | 31 s worst case at the edge even if Kafka and every push are lost; about 1 s normally; one order with each request's decision at the account owner (RFC-000 D6) |
+| Authentication on every call within the 10 ms edge budget (X1-N1, POL-04) | In-memory verification from a full replica, about 20 µs of CPU per call (est.); no remote call or database read on the booking path |
+| Revocation within 60 s, for every credential (X1-N3, POL-25, D-6) | 31 s worst case at every edge by one invariant that needs no Kafka; about 0.1 s normally; connections closed; at the account owner, about 26 s without Kafka by the pull, and no confirmation beyond 45 s of staleness; one order with each request's decision (RFC-000 D6) |
 | Zero cross-account reads, changes or disclosures (X1-N2, X1-N4) | Tenant from the credential only, so isolation does not depend on any check being remembered at each endpoint; misses are the same code path as genuine misses; owners re-check |
-| Zero supplier disclosures without consent or order (X1-N2, POL-33) | Permutation references for reservations and lines, own termination points only, consistent registry read per view with disclosure scope and end, failure hides |
-| Zero operator actions outside role, without four eyes, after expiry or on changed preconditions (X1-N7, POL-32) | Catalogue by role and read; owners verify operators' own hardware signatures, same role, other person, `approval_expiry` and target version, so neither a console defect nor a console compromise can produce such an action |
+| Zero supplier disclosures without consent or order (X1-N2, POL-33) | Permutation references for reservations and lines, checked against the caller's links; own termination points only; consistent registry read per view by identity, with disclosure scope and end; failure hides |
+| Zero operator actions outside role, without four eyes, after expiry, after cancellation or on changed preconditions; every operator read recorded (X1-N7, POL-32) | Catalogue by role and read; operators sign, on hardware, a digest their own signing client computed over the action, the role and `not_after`; owners verify it, check role, counter and cancellation with identity, and compare their own commit time; readers record reads themselves. A compromised console cannot make an action take effect that its operators did not sign, after its expiry or after a confirmed cancellation, nor read without a record |
 | Zero money from unproven inputs (X1-N5) | Binding, movement and payout confirmation only from authentic verdicts, for every money-moving input |
-| Every webhook verifiable (X1-N6) | HMAC per endpoint with stable event identities and rotation overlap |
-| Every change attributable, zero altered records (X1-N8, POL-19) | Principal in the same row as the change (no audit write to lose, RFC-000 §4.1); AEAD rows, a chain per row, checkpoints written once in two trust domains, even against database administrators |
-| Personal data erasable without breaking the audit (X1-N11) | No personal data in any log, topic or archive; per-subject keys destroyed on erasure, every copy unreadable within 44 days; records and sums untouched |
-| Tenant data safe from the third-party region and the substrate (X1-N2) | R3, Kafka and the database hold ciphertext only, at a few µs per batch (est.) |
-| Policy changes without mechanism changes | Permission matrix, action catalogue, reason codes, verifier configurations and key-release policy are versioned data |
+| Every webhook verifiable (X1-N6) | HMAC per endpoint, fresh per attempt, with stable event identities, rotation overlap and *rotate now* |
+| Every change attributable, zero altered records accepted (X1-N8, POL-19) | Principal in the same row as the change (no audit write to lose, RFC-000 §4.1); sealed rows, a chain per row, checkpoints written once in two trust domains and re-verified independently; truncation bounded by the database itself |
+| Personal data erasable without breaking the audit, at the subject's request, within `erasure_max` (X1-N11) | No personal data in any log, topic or archive; erasure only on a recorded request; every copy, live history, replicas, backups and HSM copies included, unreadable within 24 days of the request (30 allowed); no escrow; non-conforming payloads expire in every copy at once; records and sums untouched |
+| Tenant data safe from the third-party region and the substrate (X1-N2) | Every application column sealed; no clear column relates two tenants; no secrets in system ranges; at a few µs per batch (est.) |
+| Policy changes without mechanism changes | Permission matrix, action catalogue, reason codes, verifier configurations, allowlist and key-release policy are versioned data |
 
 ## Competition
 
 | Alternative | Why it loses |
 |---|---|
 | **A central policy decision service called on every request** | One more remote call on the 200 ms path, at 125,000 calls/s with polls, and admission's availability tied to it. The library with pushed policy gives the same decisions locally (C2). |
-| **Self-contained signed tokens (JWT) as agent keys** | No revocation before expiry without a deny-list, which is the cache this design has anyway; long-lived bearer tokens with embedded limits would also go stale when an administrator lowers a limit. Opaque keys with a 30 s cache meet X1-N3 directly. |
+| **Per-key cache fills by follower reads** (revision 2) | About 1.7×10⁵ follower reads/s at the design load (est.), a negative cache, an SQL grant and a data key for the edge, and a bound that holds only if every code path honours the TTL. A full replica with one freshness invariant is simpler, cheaper and checkable. |
+| **Edge replica fed by Kafka** | Would tie the 60 s bound to Kafka's health; the gRPC stream from identity's lease holder has no intermediary, and its heartbeat gives the freshness invariant directly. |
+| **Self-contained signed tokens (JWT) as agent keys** | No revocation before expiry without a deny-list, which is the replica this design has anyway; long-lived bearer tokens with embedded limits would also go stale when an administrator lowers a limit. |
 | **Request signing (an HMAC over each request, as cloud APIs do) for agent keys** | Protects against a secret seen in transit, which TLS 1.3 already covers, at the cost of a harder client for every AI agent. Can be added later as an option without changing the model. |
 | **Client certificates for agents** | Strong, but certificate handling is a poor fit for self-serve agents and short-lived experiments; kept for exporters, probes, network operations and providers, which are few and managed. |
+| **Edge-signed principal contexts** (revision 2) | 125,000 signatures/s with no record kept and no gain over the mTLS peer identity the owner already checks. Identity-signed key records give the one thing a signature adds: an edge cannot invent a key's limits (R5-24). |
 | **Revocation only at the edge** | An undecided request already past the edge would still be confirmed after revocation, with no defined order against its decision (POL-04, P2-S72). Applying it in the account owner's log gives the one order (RFC-000 D6). |
+| **Identity calls the account owner to force a catch-up** (review 16's proposal) | Needs a new identity → account owner path and identity to watch every slot. The account owner pulling when its own freshness lapses uses the existing catch-up query, and its 45 s confirm guard fails safe even if identity is unreachable. |
 | **Audit as a separate write to an audit service** | A dual write that can be lost or reordered relative to the change; RFC-000 §4.1 already rejects it. |
-| **Database encryption at rest only** (no owner-side payload encryption) | R3's database process holds its store key, so the third party could read every row; so could any database administrator and every Kafka broker. Owner-side encryption keeps them all at ciphertext (RFC-000 §5.1). |
+| **Database encryption at rest only** (no owner-side encryption) | R3's database process holds its store key, so the third party could read every row; so could any database administrator and every Kafka broker. |
+| **One data key per owner kind for log and feeds** (revision 2) | Every feed consumer could read the owner's whole log, and authenticity claims between holders were false. Keys by purpose confine each consumer to its feeds. |
+| **Per-batch Ed25519 signatures over chain heads for row authenticity** | Would make rows attributable to the lease holder even against other key holders, at a signature per batch and a verification per reader; the remaining threat (a workload of the same owner kind or history forging rows) is already bounded by grants and detected by the chain. Kept as an option if the spike finds it cheap. |
+| **Deterministic nonces from the row position** | A batch retried at the same position with different content would reuse a nonce, which breaks GCM. Random nonces under per-epoch sub-keys cannot. AES-GCM-SIV was the other option; it costs a second pass per row. |
 | **Hash chain computed only at sealing** (revision 1) | On the substrate the live tail sits in a database whose administrators can rewrite rows for hours before a seal; a chain in the same transaction, verified from the changefeed, closes that window to ‹checkpoint_interval›. |
-| **A keyed (HMAC) chain instead of a plain hash over AEAD ciphertext** | The AEAD already denies forgery to anyone without the data key; a plain hash lets the verifier run without any key, which keeps audit's verifier out of the key-release policy. |
+| **A keyed (HMAC) chain instead of a plain hash over AEAD ciphertext** | The AEAD already denies forgery to anyone without the key; a plain hash lets the verifier run without any key, which keeps audit's verifier out of the key-release policy. |
 | **Database row-level TTL or partition drops for live-tail truncation** | Deletes by age, not by verified seal, so a stalled seal would lose rows; the watermark ties deletion to audit's verification. |
-| **A public blockchain or third-party timestamping as the anchor** | Adds an external dependency and discloses activity patterns; a retention-locked bucket in a separate cloud organisation gives an independent trust domain at no such cost. Third-party timestamping can be added to checkpoints later. |
-| **Erasure by rewriting or redacting log rows** | Breaks A4 and the chain, and cannot reach archives under object lock; POL-19 rejects it. Crypto-shredding of a store that alone holds personal data reaches every copy without touching a record. |
-| **Crypto-shredding with per-subject keys inside the owner logs** (each log row encrypted per person) | Every row of a busy account would need a person's key, so erasing one user would make the account's own history unreadable and its sums irreproducible, against X1-S34. Keeping personal data out of logs entirely is simpler and keeps every record readable. |
-| **Personal-data store backups kept as long as other backups** | A backup would hold a wrapped subject key that the live KEK still unwraps, so erasure would not reach it; generation-scoped KEKs with short backup retention do. |
+| **A public blockchain or third-party timestamping as the anchor** | Adds an external dependency and discloses activity patterns; a retention-locked bucket in a separate cloud organisation gives an independent trust domain at no such cost. |
+| **Erasure by rewriting or redacting log rows** | Breaks A4 and the chain, and cannot reach archives under object lock; POL-19 rejects it. |
+| **Crypto-shredding with per-subject keys inside the owner logs** | Every row of a busy account would need a person's key, so erasing one user would make the account's own history unreadable and its sums irreproducible, against X1-S34. |
+| **No backups of the personal-data store** | Would meet the bound trivially, but one operator error would lose every contact and KYB document with no recovery. Seven days of generation-scoped backups cost 6 days of margin. |
+| **Per-subject exclusion lists applied on backup restore** | An insider restoring a backup bypasses the list; only key destruction reaches every copy. |
+| **Monthly generations with 14-day backups** (revision 2) | 44 days from the erasure commit, plus unbounded time to execution: outside `erasure_max`. |
+| **Escrow of `KEK_PD` one generation at a time** (revision 2) | Escrow is a copy erasure must reach; a weekly vault ceremony at three sites would not be done reliably (D-2). |
+| **Payload keys under the generation KEK only** | A payload's expiry would need a per-payload deletion in every backup; a per-day expiry key reaches every copy at once. Per-payload generation rewrap (billions of items) is replaced by per-tenant payload keys (about 10⁵). |
 | **Consent as a column in reporting's read model** | Reporting lags by minutes (RFC-000 §4.2), so a view right after a withdrawal could still show the buyer, against X1-S30. |
-| **Consent partitioned by buyer account** | One supplier view would read many account partitions; partitioning by supplier makes it one read. |
-| **Random references stored with each reservation** | Needs a writer (the account owner) and a lookup index for the inverse, and a lookup in every consumer; the keyed permutation is computed anywhere the key is released, and distinct by construction. A keyed hash would not be (collisions are possible, against "used for no other reservation"). |
-| **Four eyes and approval expiry enforced only by the console** | A console defect or compromise would bypass them; owners verifying the operators' own signatures, the role, the expiry and the target version close that. |
-| **Withholding a termination notice as a separate, later action** | The notice is due within `affected_notice_time` (60 s); a later four-eyes request cannot beat it, so it would either be useless or would need the notice delayed for every termination. Deciding it with the termination is the only form that works. |
-| **Asymmetric webhook signatures** (one Share key, buyers verify with a public key) | A leak of one Share key would allow forging to every buyer, and Ed25519 signing at webhook volume needs software keys anyway; per-endpoint HMAC confines a leak to one endpoint and is the more widely supported scheme. Worth offering as a second scheme if buyers ask. |
+| **Reporting reading the consent registry by SQL** (revision 2) | A cross-owner read RFC-000 §8 does not name (A1 rev 4.1); identity answering `visibility` keeps the same consistency with no grant. |
+| **Random references stored with each reservation** | Needs a writer and a lookup index for the inverse; the keyed permutation is computed anywhere the key is released, and distinct by construction. |
+| **Four eyes and approval expiry enforced only by the console** | A console defect or compromise would bypass them. |
+| **Console-signed timestamps for expiry** (revision 2) | A compromised console forges them; `not_after` in the operators' digest and the owner's own commit time cannot be forged by it. |
+| **Withholding a termination notice as a separate, later action** | The notice is due within `affected_notice_time` (60 s); a later four-eyes request cannot beat it. POL-30 v1.7 decides it with the termination. |
+| **Asymmetric webhook signatures** | A leak of one Share key would allow forging to every buyer; per-endpoint HMAC confines a leak to one endpoint and is the more widely supported scheme. |
 | **Exact poll limits at the account owner** | Polls would then touch the owner's write path, which RFC-000 §4.6 keeps them off. |
-| **One role per person with role switching** | POL-32 asks that every operator act under exactly one role; a switchable role makes "which role" a session property that is easy to misattribute. Separate identities per role make it a property of the credential. |
+| **One role per person with role switching** | POL-32 asks that every operator act under exactly one role; separate identities per role make it a property of the credential. |
 
 ## Risks and open issues
 
 | # | Risk or issue | Mitigation or next step |
 |---|---|---|
-| RK-1 | **The 60 s revocation bound depends on edge discipline**: a code path that extends a cache entry on error, or reads keys from anywhere but the cache, would break it silently. | DT-1 in continuous testing; identity and access tracks acknowledgement per revocation and alarms at 30 s (§3.3). |
+| RK-1 | **The 60 s revocation bound depends on the edge's freshness invariant** and the account owner's confirm guard; a code path that bypasses either would break it silently. | One invariant per side, in the shared runtime; DT-1 in continuous testing; staleness exported and alarmed at 30 s. |
 | RK-2 | **Providers without signatures** need a verify-by-fetch round trip, which may put top-ups through them near or over the 10 s p99 target (X2-N3). | Measure per provider before go-live; prefer signed or mTLS integrations commercially; RFC-004 reports the latency per provider. |
-| RK-3 | **Four-eyes availability**: fraud terminations, disclosures, notice withholding, price changes and region-disaster declarations each need two operators of one role; at night there may be one, and `approval_expiry` lapses an unattended request. | Network abuse needs only one operator (POL-30); a region disaster counts from the loss, not the declaration (POL-06, RQ-B), so a late declaration costs nothing; staffing is an operational requirement; pending actions are visible and alerted well before expiry. |
+| RK-3 | **Four-eyes availability**: fraud terminations, disclosures, notice withholding, price changes and region-disaster declarations each need two operators of one role. | Network abuse needs only one operator (POL-30); a region disaster counts from the loss or the first failing probe minute, not the declaration (POL-06); pending actions are visible and alerted well before `not_after`. |
 | RK-4 | **Linkability beyond the reference**: rates, windows, termination points and timing may still let a supplier link one buyer's reservations. | RQ5-1 removed the route's ends; supplier views show the minimum POL-33 lists. |
 | RK-5 | **A leaked reference key** lets its holder link that supplier's references of that version. | Released only to three consumers; reads audited; a new version for new reservations at once. |
-| RK-6 | **Recording refused and unauthentic attempts under a flood** could itself become a denial of service. | Pre-authentication shedding; aggregated recording beyond the limit (§8.1); per-principal limits on management commands. |
-| RK-7 | **Social engineering of support**: an attacker who controls an account user can create a documented request. | That attacker could make the change directly, since a documented request needs a principal who may make it; the control is that support cannot act without one. MFA for account users is recommended; for administrators it is mandatory. |
-| RK-8 | **Envelope verification and payload encryption are duties of every owner** (RFC-001 … RFC-004): an owner that skips either re-opens T-9 or T-19. | Both are in the shared libraries and the owner runtime (C2, C4, C13); DT-8, DT-11 and DT-16 run against every owner. |
-| RK-9 | **HSM and key-service dependence**: payload encryption puts the key service on every lease takeover, and a region-wide failover unwraps every slot's keys at once (RFC-000 R21). | Data keys per slot and month, not per partition; unwrapped once per takeover and kept in memory; HSM clusters in both facilities of both Kenyan regions; the spike measures a full failover's unwrap load against admission's 1 min RTO. |
-| RK-10 | **Clock dependence** of token expiry, envelope freshness, `approval_expiry` and webhook timestamps. | All are bounded in minutes or hours, far above the database's `max_offset` (100 ms, RFC-000 §5.5); `approval_expiry` uses commit timestamps. |
+| RK-6 | **Recording refused and unauthentic attempts under a flood** could itself become a denial of service. | Pre-authentication shedding; aggregated recording beyond the limit; per-principal limits on management commands (T-39). |
+| RK-7 | **Social engineering of support**: an attacker who controls an account user can create a documented request, including an erasure of that user's own data. | That attacker could make the change directly; erasure of its own data harms no record. MFA for account users is recommended; for administrators it is mandatory. |
+| RK-8 | **Sealing, schema rules, envelope and read-grant verification are duties of every owner and reader** (RFC-001 … RFC-004, RFC-006). | In the shared libraries and the owner runtime (C1, C2, C4, C13); schema lint at build; DT-8, DT-11, DT-16, DT-24 run against every owner. |
+| RK-9 | **HSM and key-service dependence**: takeovers unwrap keys, a region-wide failover unwraps every slot's at once, and generation destruction and payload expiry depend on HSM operations on time. | Keys per slot and month, pre-fetched from day 25, unwrapped once per takeover; pacing by slot priority; four HSM clusters; usage end dates make destruction fail safe; the spike measures a full failover's unwrap load against admission's 1 min RTO. |
+| RK-10 | **Clock dependence** of token expiry, edge freshness, `not_after`, `iam_fresh` and webhook timestamps. | All are bounded in seconds or more, far above the database's `max_offset` (RFC-000 §5.5); edges, identity and owners are in the database's clock domain; owners compare `not_after` with their own commit timestamps less ε. |
 | RK-11 | **Audit query cost** over sparse indexes for high-volume records. | Queries are rare and by principal or tenant over bounded periods; RFC-006 sizes the segment filters. |
-| RK-12 | **Metadata visible in clear**: partition identifiers, sequences and commit timestamps are clear in the database and visible to R3 and to database administrators, so per-tenant activity volumes and timing are observable. | Identifiers are pseudonymous; topic names carry no tenant. Hiding volumes would need padding or a different substrate; accepted. |
-| RK-13 | **Erasure is not instant in every copy**: backups of the personal-data store stay readable for up to 44 days after an erasure. | Short backup retention and KEK generations; legal confirms the bound per market (RQ5-11, POL-24). |
-| RK-14 | **Case-note tagging is the author's**: a note naming a person who is not tagged survives that person's erasure. | The console proposes subjects from the action's target; notes are retained only for their purpose (RQ5-11 asks the retention); the scanner flags untagged notes with personal data. |
-| RK-15 | **Database administrative access is a vendor-shaped surface** (CockroachDB `root`, console, support bundles that may contain rows). | Break-glass only; support bundles generated without row data; AEAD and the chain make any change detectable and any forged row unreadable (T-18, T-24). |
+| RK-12 | **Metadata visible in clear**: pseudonymous identifiers, sequences, commit timestamps, schemas and statistics are visible to R3 and to database administrators, so per-tenant activity volumes and timing are observable. | No clear column relates two tenants; hiding volumes would need padding or a different substrate; accepted. |
+| RK-13 | **Erasure depends on weekly HSM operations and on executing requests within 10 days.** A missed rotation or a backlog eats the 6-day margin. | Alarms at 7 days for open requests and for any generation older than 14 days; usage end dates stop old generations serving even if destruction is late; `erasure_max` is *Assumed* and legal confirms it per market (POL-24). |
+| RK-14 | **Case-note tagging is the author's**: a note naming a person who is not tagged survives that person's erasure. | The console proposes subjects from the action's target; the sampling scanner flags untagged notes with personal data. |
+| RK-15 | **Database administrative access is a vendor-shaped surface** (CockroachDB `root`, console, support bundles, system ranges). | Break-glass only; support bundles and statement diagnostics without values; secret-free system ranges; sealed columns and the chain make any change detectable and any forged row unreadable (T-18, T-24). |
+| RK-16 | **Identity is on the authentication path through the freshness invariant**: an identity slot without a lease holder for more than 30 s makes its credentials unauthenticable at every edge. | Hot standbys for identity slots; takeover in seconds (est.); measured in the spike against admission's 1 min RTO. |
+| RK-17 | **The account owner's confirm guard** stops confirmations in a slot when both Kafka and identity are unreachable from it for 45 s. | That combination already stops edges authenticating within 30 s; the guard only aligns the owner with the edge. Monitored per slot. |
+| RK-18 | **Row-level security on the substrate**: the truncation predicate assumes CockroachDB's row-level security. | Spike confirms; fallback is a stored procedure owned by audit's role as the only delete path (§9.3). |
+| RK-19 | **Signing client** is a second operator application on managed devices. | Small, separately built and signed (T-34); it holds no secret, only renders and computes the digest. |
 
 ## Requirements issues
 
-Revision 1's RQ5-1 … RQ5-10 were raised against `requirements-v1.5` and are all **resolved
-in `requirements-v1.6`** ([review 11](../reviews/11-requirements-amendments-from-detailed-rfcs.md)).
-New issues are raised against `requirements-v1.6`; none blocks this design, and each states
-the reading this draft takes.
+Revision 1's RQ5-1 … RQ5-10 were resolved in `requirements-v1.6`
+([review 11](../reviews/11-requirements-amendments-from-detailed-rfcs.md)); revision 2's
+RQ5-11 and RQ5-12 were resolved in `requirements-v1.7`
+([review 12](../reviews/12-requirements-amendments-from-rfc-revision-2.md)). New issues
+RQ-R5-1 … RQ-R5-7 come from [review 16](../reviews/16-rfc-005-review.md) and are raised
+against `requirements-v1.7`; none blocks this design, and each states the reading this
+revision takes.
 
-| # | Issue | Resolution (v1.6) or proposal | Implemented in |
-|---|---|---|---|
-| RQ5-1 | "Endpoints" could link a buyer's reservations | **Resolved**: the endpoints a supplier sees are its own link's termination points; usage-priced shares by an opaque charge-line reference (POL-33; X1-N2; X1-S28 amended) | §6.1, §6.3 |
-| RQ5-2 | No role read the audit trail; only support read at all | **Resolved**: a preparatory read belongs to its action's role and is recorded; reading the audit trail is a compliance read (POL-32; X1-S31, X1-S13) | §7.2, §9.4 |
-| RQ5-3 | Disclosure under a legal order had no scope, duration or end | **Resolved**: the order's scope (default: the buyer's reservations on that supplier's links), to the order's end date or until compliance ends it (one operator); the buyer told only if the order allows (POL-33; X1-S35) | §6.2, §7.2 |
-| RQ5-4 | A pending four-eyes action had no lifetime | **Resolved**: `approval_expiry` 72 h (POL-32 parameter); the requester may cancel; preconditions re-checked at approval (X1-S32) | §7.3, §7.4 |
-| RQ5-5 | Management of users, administrator rights, endpoints and supplier credentials was unassigned | **Resolved**: account administrators manage users, rights (at least one kept) and endpoints; supplier administrators manage supplier users, credentials (exporters' included) and endpoints (POL-32; X1-S18, X1-S19, X1-S25, X1-S33, X1-S38) | §3.2, §4.2 |
-| RQ5-6 | Role grants were not attributable | **Resolved**: role grants, administrator rights, consents, policy settings and endpoints are attributable; vetting stays out of scope (POL-19; X1-N8; X1-S14 amended) | §7.1, §9.1 |
-| RQ5-7 | Who decides that the law forbids a termination notice | **Resolved**: the holder is always told, unless compliance, with four eyes, records a legal order forbidding it (POL-30; X1-S36, X1-S17 amended) | §7.2, §7.3 |
-| RQ5-8 | Immutable 7-year audit against personal-data erasure | **Resolved** (coordinator): personal data never in logs or audit; pseudonymous identifiers; an erasable store (POL-19; X1-N11; X1-S34, X1-S37) | §3.7, §9.5 |
-| RQ5-9 | "Documented request" had no evidence standard | **Resolved**: made through the marketplace by an authenticated principal of the account who may make that change, and recorded; other channels refused (POL-32; X1-S27 rows) | §7.5 |
-| RQ5-10 | Withdrawn consent cannot unlearn | **Resolved**: a withdrawal stops all new disclosure; reservations confirmed after it are unlinkable; references already seen stay (POL-33; X1-S30 amended) | §6.1, §6.2 |
-| **RQ5-11** (new) | **Erasure has no owner, trigger or time bound.** POL-19 and X1-N11 say personal data is erased "when it must be", but POL-32, which names an owner for every action, names none for erasure; nor is it said whether removing a user or closing an account triggers it, how long after the request every copy must be unreadable, or how long case notes are kept. | Erasure is a **compliance** action, one operator, with a reason (data subject's request; legal requirement), recorded; removing a user or closing an account does not erase by itself; every copy unreadable within 44 days of the erasure (live store at once); case notes kept as long as the record they explain. Legal confirms the bound per market (POL-24). This draft implements that (§3.7, §7.2). |
-| **RQ5-12** (new) | **X1-S36 can be read as a later request to withhold.** Its rows say a termination happened and then someone "asks that its holder not be told"; but POL-30 tells the holder within `affected_notice_time` (60 s), which a four-eyes request cannot beat. | State that withholding is decided with the termination, in the same compliance action and approval; a later request cannot withhold a notice already due, and is refused. This draft implements that (§7.3); X1-S36's results hold under this reading. |
+| # | Issue | Resolution or proposal | Reading adopted | Implemented in |
+|---|---|---|---|---|
+| RQ5-1 … RQ5-10 | (Revision 1) | **Resolved** in `requirements-v1.6` (review 11) | — | §3.2, §4.2, §6, §7, §9 |
+| RQ5-11 | Erasure had no owner, trigger or time bound | **Resolved** in `requirements-v1.7` (review 12): requested through an administrator or by a documented request, executed by one compliance operator, complete in every copy within `erasure_max` (30 days) of the request (POL-19, POL-32; X1-N11; X1-S39) | — | §3.2, §3.7, §7.2 |
+| RQ5-12 | X1-S36 read as a later request to withhold | **Resolved** in `requirements-v1.7` (review 12): withholding is part of the termination and approved with it; a later request is refused (POL-30, POL-32; X1-S36 rewritten) | — | §7.2, §7.3 |
+| RQ-R5-1 | **A documented request cannot ask for erasure** as POL-32 defines it ("a principal who may make that change itself"; no buyer principal erases), so X1-S39's second row contradicts the definition | Amend POL-32: "… or, for erasure, a request by the data subject's own user principal concerning its own personal data", routed to compliance | A user principal may make a documented request to erase its own data; keys may not (§4.2, §7.5) | §3.7, §4.2, §7.5 |
+| RQ-R5-2 | **"An erasure it falls under" is undefined** for non-conforming payloads (POL-19), and whether expiry covers backups is unstated | Adopt D-4, and state that expiry covers every copy | D-4: a payload falls under an erasure of any subject of its attributed account or its exporter's supplier; expiry covers every copy | §3.7 |
+| RQ-R5-3 | **No erasure the law requires without a request** (a court order; KYB documents of a closed account after their retention) | Compliance erases without a request only under a recorded legal order, four eyes; a retention per class of personal data after account closure, set by legal (POL-24) | No erasure without a request (D-3) | §3.7, §7.2 |
+| RQ-R5-4 | **Account recovery has no owner** in POL-32 | Adopt D-7 as an onboarding action | D-7 (§3.8) | §3.8 |
+| RQ-R5-5 | **X1-N3's 60 s bound covers agent keys only** | Adopt D-6 in X1-N3 or POL-25 | Every credential within 60 s (D-6) | §2.1, §3.3 |
+| RQ-R5-6 | **Operators' own erasure** has no request path | Operators ask through workforce administration; compliance executes | As proposed | §3.7 |
+| RQ-R5-7 | **X1-S15 "the attempt is refused"** cannot hold against an administrator with physical access | Reword: "refused, or, if made below the application with administrative access, detected at the next verification and recorded; no altered record is accepted by any reader" | Detection and non-acceptance below the application; refusal above it | §9.3, T-18 |
 
 ## Architecture issues
 
-Revision 1's AI5-1 … AI5-7 were raised against RFC-000 revision 3.2 and are all **resolved
-in RFC-000 revision 4** ("Revision 4 resolution"). New issues are raised against revision
-4; none changes a component, an owner or a principle.
+Revision 1's AI5-1 … AI5-7 were resolved in RFC-000 revision 4; revision 2's AI5-8 …
+AI5-11 were applied in RFC-000 revision 4.1 ("Revision 4.1 errata"). New issues AI-R5-1 …
+AI-R5-4 come from review 16 and are raised against revision 4.1; none changes a component,
+an owner or a principle.
 
-| # | Issue | Resolution (RFC-000 rev 4) or proposal |
+| # | Issue | Resolution or proposal | Reading adopted |
+|---|---|---|---|
+| AI5-1 … AI5-7 | (Revision 1) | **Resolved** in RFC-000 revision 4 | — |
+| AI5-8 | Live-tail truncation needed a delete §5.5 forbade | **Resolved** in revision 4.1: the truncation role, below audit's verified watermark (§5.5, §8) | §9.3 adds the database-enforced predicate |
+| AI5-9 | Documented requests had no flow | **Resolved** in revision 4.1: edge → console intake (§2, §3, §8) | §7.5 |
+| AI5-10 | §2 said four eyes was compliance-only; audit's scope was narrow | **Resolved** in revision 4.1 (§2) | — |
+| AI5-11 | Store backups must not outlive a key generation | **Resolved** in revision 4.1 (A11, §5.3, §5.5 item 9, §8) | §3.7, C12 (7-day backups, 7-day generations) |
+| AI-R5-1 | **Cross-owner reads and flows that §3 and §8 do not name** (A1 rev 4.1). Revision 3 replaces every cross-owner SQL read with an owner-served stream or query, which needs naming: the identity **edge stream** (C14, replacing §3's "local cache refreshed by push"); **catch-up** by account slot, called by the account owner when its push is silent (C3); **`visibility`** served by identity to reporting, notifier and provisioning feed (C6); the **operator check** for every owner and reader of envelopes and read grants (C15); **target summaries** served by owners to the console (C4); **read grants** carried by console reads to reporting, status replicas, the link owner, catalogue, audit query and the personal-data store, with the readers' audit appends (§7.6); the console → identity **erasure-request** intake and queue (C12); metering ingestion → personal-data store `put_payload` (already in §8) | Add these to §3 and §8 as owner-served queries, streams and commands, not SQL grants | This RFC specifies them; no SQL grant across owners is used |
+| AI-R5-2 | **"R3 holds ciphertext only"** (§5.1, Benefits) is true only if every application column is sealed and system ranges hold no secrets; RFC-000 speaks of "payloads" only, and of one data key per owner | Scope §5.1 and §8's payload-encryption row to "every application column except pseudonymous keys, ordering and fencing; keys by purpose (log, audit column, feed)"; require secret-free job definitions and no value-bearing diagnostics | §5.4 as written |
+| AI-R5-3 | §8's personal-data store row does not separate `put` from `get`, nor state time-based expiry for payloads | "put (identity, console, ingestion); get (identity, notifier, console with a read grant, reporting); erase (identity, on a compliance action citing a request); expire (payloads at `dispute_window` + 7 days)" | C12 |
+| AI-R5-4 | **The identity status push is Kafka-only**, yet §8 promises application within 60 s | Add: the account owner pulls catch-up from identity when its push is silent for 20 s, and confirms only within 45 s of identity freshness (changefeed resolved timestamps). This replaces review 16's proposed identity → account owner call | C3, §3.3 |
+
+## Revision 3 resolution
+
+Every finding of review 16 and every rebase item, and where it is addressed.
+
+| Finding or item | Change | Where |
 |---|---|---|
-| AI5-1 | The exact poll limit had no enforcement point | **Resolved**: the edge enforces `key_poll_limit` exactly, by key-sharded poll counters in the leader region, with a stated bound across a shard move (RFC-000 §2, AI4-6). This RFC: §5.3 |
-| AI5-2 | Authenticity of other money inputs was unallocated | **Resolved**: RFC-005 owns the authenticity of every money-moving input, by one verifier (RFC-000 §2, §7, §8). This RFC: §8.4, C7 |
-| AI5-3 | R3 held every log in plaintext | **Resolved**: owners encrypt every payload with Kenyan-HSM keys; R3 and every Kafka node hold ciphertext; no Kafka broker in R3; segment Merkle roots in the archive (RFC-000 §5.1, §5.5 item 9, §8). This RFC: §5.4, §9.3, C13 |
-| AI5-4 | Webhook endpoints had no owner | **Resolved**: identity and access owns endpoints and signing secrets; the notifier reads them (RFC-000 §2, §8). This RFC: §3.2, §8.3, C8 |
-| AI5-5 | Where unproven notifications are recorded was unstated | **Resolved**: payments' investigation stream, partitioned by provider, never creating a binding (RFC-000 §2, §8). This RFC: §8.1, C7 |
-| AI5-6 | Refused attempts recorded outside the console | **Resolved**: identity and access records refusals of its own commands; audit indexes both (RFC-000 §2). This RFC: §3.1, §9.1 |
-| AI5-7 | The interaction diagram missed three flows | **Resolved**: console → reporting, console → status replicas, identity → notifier, reporting → identity (RFC-000 §3) |
-| **AI5-8** (new) | **Live-tail truncation needs a delete that §5.5 forbids.** RFC-000 §5.5 says no role is granted update or delete on a log table, and also that the live tail is truncated after sealing and verification; one of them must give. | A dedicated truncation role, the only one with delete on log tables, used only by the truncation job and only at or below the sealed-through watermark that audit writes after verifying the sealed segment; audit detects any row lost above it (§9.3). RFC-000 §5.5 should say so; RFC-006 implements the job. |
-| **AI5-9** (new) | **Documented requests have no flow.** RFC-000 §3 and §8 have no edge → console path, yet a documented request (POL-32, v1.6) is made through the marketplace by a buyer principal and must reach the console's log. | Add edge → console (documented-request intake, with a buyer principal context) to §3 and to §8 as part of the booking API's surface, owned by RFC-005 (§7.5). |
-| **AI5-10** (new) | **RFC-000 §2 still says four eyes is compliance-only.** The operator console's responsibility reads "four-eyes actions wait for a second compliance approval"; v1.6 has four eyes in compliance, commercial and network operations, always by the same role. RFC-000 §2 also lists audit's scope as "money, capacity, links or keys", narrower than X1-N8 v1.6. | Reword both cells: "a second approval by another operator of the same role" and X1-N8's list (§7.3, §9.1). No design change. |
-| **AI5-11** (new) | **The personal-data store's backups must not outlive a KEK generation.** RFC-000 §5.5 item 9 asks RFC-006 to add "the personal-data store's backups and key destruction", without the constraint that makes erasure reach them. | RFC-006's backup policy for the store: retention ‹pd_backup_retention› 14 days, each backup tagged with its KEK generation, no copy outside that policy (§3.7). |
+| R5-01 (Blocker) erasure bound and live-store claim | Bound from the request: execution ≤ 10 days, weekly generations, 7-day backups, 24 days worst case; `gc.ttlseconds` 1 h; copy table with every copy (MVCC, Raft logs, replicas, both generations of backups, HSM copies); destruction by scheduled HSM quorum with usage end dates and attestations; DT-15 from the request, with `AS OF SYSTEM TIME` and a restored backup | §3.7, §10, §13, C12, DT-15, RK-13, Benefits |
+| R5-02 (Blocker) erasure request path, X1-S39 | Erasure requests in identity with `requested_at`; administrator *pass on* command; own-data documented request; workforce path for operators; erase only against an open request, checked by identity; "legal requirement" removed; X1-S39 in Satisfies, Traceability and DT-20 | §3.2, §3.7, §4.2, §7.2, §7.5, C12, T-40, DT-20 |
+| R5-03 rebase | Header on `requirements-v1.7` and RFC-000 rev 4.1; RQ5-11, RQ5-12 resolved by review 12; AI5-8 … AI5-11 resolved by rev 4.1; "(v1.7)" traceability rows; X1-S36 and region-disaster rows conformed | Header, §7.2, §7.3, Requirements and Architecture issues, Traceability |
+| R5-04 non-conforming payloads | `put_payload` for ingestion; per-tenant payload keys and per-day expiry keys; D-4; caps (RD-1); DT-21 | §3.7, §4.4, C12, DT-21 |
+| R5-05 revocation at the account owner without Kafka | Changefeed resolved timestamps; pull catch-up after 20 s; confirm only within 45 s of freshness; DT-1 without takeover | §3.3, C3, §14, DT-1, AI-R5-4 |
+| R5-06 sessions and certificates | Sessions and certificate serials in the replica under the same invariant; connections and streams closed on revocation; restart from snapshot | §2.1, §3.3, §10, DT-1 |
+| R5-07 compromised console and operator signatures | Signing client, owner-signed target summaries, digest over action, role and `not_after`; owners compare their own commit time; cancellations recorded by identity with receipts; WebAuthn rules; operator check with counters; out-of-band confirmations; S5, T-9 and Benefits restated; DT-8 extended | §1, §7.3, §7.4, C4, C15, T-9, DT-8 |
+| R5-08 operator reads bypassing the record | Read grants per case, verified by readers, which append the read to audit themselves; per-operator limits and breadth alerts | §7.6, §4.4, C4, C5, T-29, DT-24 |
+| R5-09 AEAD authenticity and key release | Keys by purpose (log, audit column, feed, edge stream); authenticity claims removed and stated as resting on grants, ACLs and the chain; "the verifier" removed from release | §4.4, §5.4, §9.3, T-25, T-26, Competition |
+| R5-10 nonces | Random 96-bit nonces under per-(key, epoch, session) sub-keys, new sub-key at 2³¹ seals; DT-22 | §5.4, C13, DT-22 |
+| R5-11 rows outside log tables, system ranges | Every application table sealed with version in the associated data; no clear column relates two tenants; readers reject version regression; edge fed by identity's stream, not SQL; secret-free system ranges, no value-bearing bundles; DT-11 extended | §5.4, §3.3, T-19, T-24, DT-11, DT-16, AI-R5-2 |
+| R5-12 unnamed cross-owner reads | Each replaced by an owner-served stream, query or command; listed for RFC-000 | §3.1, §4.4, §6.2, §11, AI-R5-1 |
+| R5-13 edge compromise and context limits | Identity-signed key records; context limits per request only; persistent key state only from push or catch-up; account check; T-33; DT-25 | §2.2, §4.3, C1, C3, T-33, DT-25 |
+| R5-14 escrow and HSM copies | No escrow of `KEK_PD` (D-2); destruction scope every member, every HSM backup; attestations | §3.7, §10 |
+| R5-15 truncation predicate, changefeed tampering, refused SQL | Row-level security against the watermark (fallback stored procedure); changefeed pause or alteration is an incident; permission-denied events to audit | §9.3, §4.4, T-30, DT-17, RK-18 |
+| R5-16 timing oracle | Dummy verifier; fixed floor for unauthenticated answers; DT-23 | §2.2, §2.3, T-41, DT-23 |
+| R5-17 idempotent replay of secrets | Replay returns the identifier and "secret already issued" | §3.2, §5.2 |
+| R5-18 inverse reference | Resolved reservation must have a leg on the caller's link, else "not found" | §6.1, C6, DT-7 |
+| R5-19 webhooks and verify-by-fetch | Per-attempt timestamp; global unicast and port 443 only, generic errors; *rotate now*; reference validation, encoding and rate limit | §8.1, §8.3, C7, C8, DT-10 |
+| R5-20 data-key compromise and month boundaries | Residual stated; next month's keys from day 25 | §5.4, §10, RK-9 |
+| R5-21 fill load | Full replica with freshness invariant; sizing stated | §3.1, §3.3, Competition |
+| R5-22 scanner keys | Write-path schema refusal; sampling scanner with its own identity and release | §3.7, §5.4, DT-14 |
+| R5-23 approver set and person identifiers | Workforce approvers holding no role; vetting binding; shared-authenticator alerts; T-31 residual | §7.1, T-31 |
+| R5-24 per-request context signatures | Dropped; mTLS peer identity; identity-signed key records kept | §2.2, C1, §10, Competition |
+| R5-25 STRIDE gaps | T-34 … T-39 (supply chain, operator device, audit verifier, key insider, unwrap flood, refused-attempt flood); second verifier; HSM quorum | §9.3, §10, §12 |
+| R5-26 account recovery | Onboarding recovery with re-verification, notice and 24 h hold (D-7) | §3.8, RQ-R5-4 |
+| R5-27 NABC | Benefits, Competition (no backups; exclusion lists; revision 2's choices) and Risks updated | Benefits, Competition, Risks |
+| R5-28 tenant derivation for supplier notices | Account partition → account; link partition → the link's supplier from the catalogue | §8.3, C8 |
+| D-1 … D-9 | Applied as written; none conflicts with v1.7 (D-3 and D-5 follow POL-19 v1.7's request-only erasure) | §3.2, §3.3, §3.7, §3.8, §7.6, §8.3, §10 |
+| RQ-R5-1 … RQ-R5-7, AI-R5-1 … AI-R5-4 | Raised for the coordinator, with readings adopted | Requirements issues, Architecture issues |
+| v1.7 changes in scope: X1-N7, X1-N11, X1-S12, X1-S13 (erasure rows), X1-S36 (rewritten), X1-S39, X2-N1 (probe per slot; declaration on probe evidence), POL-06, POL-07, POL-23, POL-30, POL-32 | Erasure row in the catalogue and support's refused attempt; X1-S36's three rows; probe accounts per account slot; region-disaster declaration on probe evidence (X2-S29); superseding records measured fields only | §3.5, §7.2, §7.3, §8.4, Traceability |
 
 ## Revision 2 resolution
 
-| Change | Where |
-|---|---|
-| Rebased on `requirements-v1.6` and RFC-000 revision 4; Status, Satisfies (X1-S01 … S38), Policies, Builds on, Specifies | Header |
-| Substrate mapping: identity, console, audit, secrets and the personal-data store as NestJS owners over CockroachDB log tables with owner leases, epoch-conditional writes, follower reads, outbox and Kafka; edge routing to owner-lease holders by the placement table | §2.2, §3.1, §3.3, §4.4, §7.3, §10 |
-| Personal-data store with per-subject keys, generation-scoped KEKs, blind index, request-scoped readers, erasure reaching every copy within 44 days; case notes for free text | §3.7, §7.5, C12 |
-| Payload encryption hook in the owner runtime's write path, AEAD bound to row position, per-slot monthly data keys, key-release policy, Kafka ciphertext without R3 brokers | §5.4, C13 |
-| Audit: chain written in each row's transaction over ciphertext, verified from the changefeed; checkpoints every 10 min written once to an object-locked Kenyan bucket and a retention-locked R3 bucket in a separate organisation; truncation only below a verified watermark | §9.3, C5 |
-| Contracts aligned with RFC-000 §8 rev 4: identity status push carries KYB and is applied by RFC-004 Part A; endpoint feed; authenticity of every money-moving input; personal-data store; payload encryption; exact poll limiter with the twice-the-limit bound | §11, §5.3 |
-| v1.6 decisions: POL-32 role catalogue with commercial, finance additions, network-operations disaster declaration and exporter credentials, reads per role, audit read by compliance; supplier administrator; administrator count; `approval_expiry` as policy with cancel and re-check; legal-order disclosure scope, end and buyer notice; documented-request evidence; role grants recorded; consent withdrawal semantics; termination points and charge-line references; notice withholding | §3.2, §4.2, §6, §7 |
-| Threat model: T-2, T-18, T-19, T-20, T-22 revised; T-24 … T-32 added | §12 |
-| Issues: RQ5-1 … RQ5-10 and AI5-1 … AI5-7 marked resolved; RQ5-11, RQ5-12, AI5-8 … AI5-11 raised | Requirements issues, Architecture issues |
+Revision 2 rebased revision 1 on `requirements-v1.6` and RFC-000 revision 4: substrate
+mapping (NestJS owners over CockroachDB, owner leases, outbox and Kafka); the personal-data
+store with crypto-shredding; payload encryption in the owner runtime; the chain written
+with each row and checkpoints in two trust domains; contracts aligned with RFC-000 §8 rev 4;
+the v1.6 role catalogue; threats T-24 … T-32; RQ5-1 … RQ5-10 and AI5-1 … AI5-7 resolved;
+RQ5-11, RQ5-12 and AI5-8 … AI5-11 raised (now resolved, above).
 
 ## Traceability
 
 Every X1 scenario, and every scenario of another spec this RFC contributes to. Rows marked
-"(v1.6)" are new or changed in `requirements-v1.6`.
+"(v1.6)" or "(v1.7)" are new or changed in that baseline.
 
 | Scenario | Where this RFC satisfies it | Primary RFC (if not this one) |
 |---|---|---|
-| X1-S01 | §2.2 (authentication before lookup), §2.3 (uniform unauthenticated answer) | — |
+| X1-S01 | §2.2 (authentication before lookup), §2.3 (uniform unauthenticated answer, timing floor), DT-23 | — |
 | X1-S02 | §1 S2, §2.3, §5.1 (routing by tenant, uniform misses), C1, C2, DT-3 | — |
 | X1-S03 | §5.1, §4.3, C1 (owner re-check) | — (RFC-002 holds the reservation) |
 | X1-S04 | §3.4, §4.2, §5.1, §6.3 | — |
 | X1-S05 | §4.3, C1, DT-4 | — |
-| X1-S06 | §2.3, §3.3 (timeline), C3, DT-1 | — |
+| X1-S06 | §2.3, §3.3 (replica invariant, timeline), C3, C14, DT-1 | — |
 | X1-S07 | §9.1, §9.2 (`principal` with key identifier), C1, C5 | — |
 | X1-S08 | §5.2 | RFC-002 (idempotency check in entry 1) |
 | X1-S09 | §5.2, §5.1 | RFC-002 |
 | X1-S10 | §8.1, C7, DT-13 | RFC-004 (investigation stream) |
 | X1-S11 | §8.3, C8 | RFC-006 (delivery) |
-| X1-S12 (v1.6: `usage_rate_cap`, attribution reversal rows) | §7.2 (catalogue), §7.3, §7.4, §3.6, §6.2 (disclosure), §9.1 | Owners apply: RFC-002 (terminations), RFC-003 (price correction, attribution and its reversal, `usage_rate_cap`), RFC-004 (credit limit, escalations) |
-| X1-S13 (v1.6: commercial, finance-price, support-audit, network-operations-link rows) | §7.2 (catalogue by role; audit read by compliance only), §7.3 (refused and recorded), §9.4 | — |
+| X1-S12 (v1.6: `usage_rate_cap`, attribution reversal rows; v1.7: erasure row) | §7.2 (catalogue), §7.3, §7.4, §3.6, §3.7 (erasure execution), §6.2 (disclosure), §9.1, DT-20 | Owners apply: RFC-002 (terminations), RFC-003 (price correction, attribution and its reversal, `usage_rate_cap`), RFC-004 (credit limit, escalations) |
+| X1-S13 (v1.6: commercial, finance-price, support-audit, network-operations-link rows; v1.7: support erase row) | §7.2 (catalogue by role; audit read and erasure by compliance only), §7.3 (refused and recorded), §9.4 | — |
 | X1-S14 (v1.6: roles, rights, consent, policy, endpoints; pseudonymous) | §9.1, §9.2 (`principal`, `cause`, `decided_at`), §7.1 (role grants), §3.7, C5 | Each owner writes the fields (RFC-001 … RFC-004) |
-| X1-S15 | §9.3 (five layers, truncation watermark), §7.2 (no such action), §10 (break-glass), DT-9, DT-17 | RFC-006 (storage, object lock, truncation job) |
+| X1-S15 | §9.3 (five layers, second verifier, database-enforced truncation), §7.2 (no such action), §10 (break-glass), DT-9, DT-17 | RFC-006 (storage, object lock, truncation job) |
 | X1-S16 | §7.2 (no action for other reasons), §7.3 | — |
 | X1-S17 (v1.6: told within `affected_notice_time`, with the reason) | §7.2, §7.3 (notice), §9.1 | RFC-002 (termination, charges stop), RFC-003 (charges stop at termination), RFC-006 (notice delivery) |
 | X1-S18 (v1.6: users, rights, endpoints) | §3.2, §4.2, §6.2 | — |
@@ -1488,37 +1959,41 @@ Every X1 scenario, and every scenario of another spec this RFC contributes to. R
 | X1-S21 | §3.1 (one serial order), §3.2, DT-5 | — |
 | X1-S22 (v1.6: permanent increase, cancel maintenance rows) | §3.4, §2.3, C11 | RFC-001 (owner re-check) |
 | X1-S23 (v1.6: permanent increase, link registration rows) | §3.4, §7.2 (network operations actions; registration is commercial), §7.3 | RFC-001 |
-| X1-S24 | §8.3 (one tenant per endpoint, safe egress), §5.1, DT-10 | RFC-006 (delivery) |
+| X1-S24 | §8.3 (one tenant per endpoint, derived tenant, safe egress), §5.1, DT-10 | RFC-006 (delivery) |
 | X1-S25 (v1.6: endpoint, self-grant rows) | §3.2, §4.2, §9.1 | — |
-| X1-S26 | §7.3 (four eyes, same role, other person), §7.4 (owner verifies), DT-8 | RFC-002 (applies the termination) |
-| X1-S27 (v1.6: through the marketplace; e-mail or telephone refused) | §7.2, §7.5 (documented request, account's own change), §7.3 (reads recorded) | RFC-002 (the change under POL-08) |
-| X1-S28 (v1.6: termination points) | §6.1 (reference), §6.2 (consent check, disclosure), §6.3, DT-7 | RFC-004 (reporting builds the view) |
+| X1-S26 | §7.3 (four eyes, same role, other person, signing client), §7.4 (owner verifies), DT-8 | RFC-002 (applies the termination) |
+| X1-S27 (v1.6: through the marketplace; e-mail or telephone refused) | §7.2, §7.5 (documented request, account's own change), §7.6 (reads recorded by readers), DT-24 | RFC-002 (the change under POL-08) |
+| X1-S28 (v1.6: termination points) | §6.1 (reference, inverse check), §6.2 (consent check, disclosure), §6.3, DT-7 | RFC-004 (reporting builds the view) |
 | X1-S29 | §3.2, §4.2, §6.2 | — |
-| X1-S30 (v1.6: later reservations unlinkable; R keeps its reference) | §6.1 (stable, unlinkable), §6.2 (consistent read per view), §9.1, DT-6 | RFC-004 (reporting) |
-| X1-S31 (v1.6, new) | §7.2 (commercial, network-operations disaster declaration, compliance audit read), §7.3 (four eyes by role), §9.1, §9.4 | RFC-003 (prices, weights, partner terms), RFC-001 (link registration and retirement), RFC-006 (declaration record) |
-| X1-S32 (v1.6, new) | §7.3 (expiry, cancellation, re-check at approval), §7.4 (owner checks expiry and `target_version`), DT-8 | RFC-002 (refuses on a changed reservation) |
-| X1-S33 (v1.6, new) | §3.2 (supplier administrator commands), §4.2, §2.3, §9.1 | — |
-| X1-S34 (v1.6, new) | §3.7 (store, erasure, generations), §9.5, §7.2 (erasure action), C12, DT-15 | RFC-006 (store backups), RFC-004 (sums recomputed from records) |
-| X1-S35 (v1.6, new) | §6.2 (scope, end, disclosure ended), §7.2, DT-18 | RFC-004 (reporting builds the view) |
-| X1-S36 (v1.6, new) | §7.2 (withholding only in a compliance termination), §7.3 (notice), §7.4 (`flags`), DT-19 | RFC-002 (termination entry), RFC-006 (notice delivery) |
-| X1-S37 (v1.6, new) | §3.7 (no personal data elsewhere), §5.1, §5.4 (clear columns pseudonymous), §7.5 (case notes), §9.2, DT-14 | Every owner (schemas), RFC-006 (logging, tracing) |
-| X1-S38 (v1.6, new) | §3.1 (administrator count in the serial order), §3.2, DT-5 | — |
+| X1-S30 (v1.6: later reservations unlinkable; R keeps its reference) | §6.1 (stable, unlinkable), §6.2 (consistent read per view by identity), §9.1, DT-6 | RFC-004 (reporting) |
+| X1-S31 (v1.6) | §7.2 (commercial, network-operations disaster declaration, compliance audit read), §7.3 (four eyes by role), §7.6, §9.1, §9.4 | RFC-003 (prices, weights, partner terms), RFC-001 (link registration and retirement), RFC-006 (declaration record) |
+| X1-S32 (v1.6) | §7.3 (`not_after`, cancellation recorded by identity, re-check at approval), §7.4 (owner checks its commit time, cancellation and `target_version`), DT-8 | RFC-002 (refuses on a changed reservation) |
+| X1-S33 (v1.6) | §3.2 (supplier administrator commands), §4.2, §2.3, §9.1 | — |
+| X1-S34 (v1.6) | §3.7 (store, execution, generations, copy table), §9.5, §7.2 (erasure action), C12, DT-15 | RFC-006 (store backups), RFC-004 (sums recomputed from records) |
+| X1-S35 (v1.6) | §6.2 (scope, end, disclosure ended), §7.2, DT-18 | RFC-004 (reporting builds the view) |
+| X1-S36 (v1.7: rewritten; withholding part of the termination; later request refused) | §7.2 (no flag on network abuse; withholding only in a compliance termination), §7.3 (notice, refused requests), §7.4 (`flags`), DT-19 | RFC-002 (termination entry), RFC-006 (notice delivery) |
+| X1-S37 (v1.6) | §3.7 (no personal data elsewhere: write-path refusal, scanner), §5.1, §5.4 (clear columns pseudonymous), §7.5 (case notes), §9.2, DT-14 | Every owner (schemas), RFC-006 (logging, tracing) |
+| X1-S38 (v1.6) | §3.1 (administrator count in the serial order), §3.2, DT-5 | — |
+| X1-S39 (v1.7, new) | §3.2 (*pass on an erasure request*), §3.7 (erasure requests, execution, the bound from the request), §4.2, §7.2, §7.5 (own-data documented request), C12, T-40, DT-20 | RFC-006 (store backups, HSM operations) |
 | P2-S09 | §8.3 (the signature) | RFC-002 (outcome), RFC-006 (delivery and retry) |
 | P2-S64 | §5.2 (principal compared), C1 | RFC-002 |
 | P2-S113 | §5.2 (change-request sameness, principal compared) | RFC-002 |
 | P2-S67 | §5.3 (edge poll limiter and its bound), DT-12 | RFC-002 |
 | P2-S72 | §3.3, C3 | RFC-002 (ending entry, release), RFC-004 Part A (applies the push) |
 | P2-S103 | §3.3 (one order), C3, DT-2 | RFC-002 |
+| P3-S71 (v1.7) | §3.7 (non-conforming payloads: put, expiry, erasure), C12, DT-21 | RFC-003 (rejection, record of identity, digest and reason) |
 | P4-S82 | §3.6, §7.2, §7.3 (refused and recorded), C10 | RFC-004 (credit limit) |
 | P4-S99 | §5.2 (operator principal), C4 | RFC-004 (source-reference deduplication) |
 | X2-S24 | §3.5, §7.2 (finance sets the credit limit) | RFC-006 (probes), RFC-004 (credit hold) |
 | X2-S25 | §7.2 (declaration with four eyes in network operations), §7.3, §7.4 | RFC-006 (declaration record and measurement) |
+| X2-S29 (v1.7) | §7.2 (declaration on probe evidence, four eyes) | RFC-006 (probe evidence and the declaration record) |
 
 Scenarios allocated elsewhere that rely on these contracts without being satisfied here:
 P1-S17 (rejections disclose nothing; RFC-001, under §5.1's rule), P2-S41 and P2-S68
 (booking rate limits; RFC-002 and RFC-004 Part A, exact at the account owner), P3-S30 and
 P3-S66 (only the exporter corrects its records; RFC-003, under §8.4's certificate binding),
-P3-S31 and P4-S29 (records and movements cannot be altered; RFC-003 and RFC-004, with §9.3's
+P3-S72 and P3-S73 (superseding records change measured fields only; RFC-003), P3-S31 and
+P4-S29 (records and movements cannot be altered; RFC-003 and RFC-004, with §9.3's
 mechanism and the console's refusal record), P3-S65 (reversal of a mistaken attribution;
 RFC-003, under §7.2's finance action), P4-S01 … P4-S05 (payment idempotency and malformed
 events; RFC-004, after C7's verdict).
