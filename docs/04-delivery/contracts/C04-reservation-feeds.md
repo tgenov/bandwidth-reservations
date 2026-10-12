@@ -3,8 +3,8 @@
 | | |
 |---|---|
 | Contract ID | C04 |
-| Version | 2.2 (draft). Version 2.2 renames `pending_answered` to `pendingAnswered` and states the covered-parts rule of C02 draft.3. Version 2 revised version 1 per [review 43](../../reviews/43-contract-C04-review.md). Version 2.1 revises version 2 per [review 58](../../reviews/58-contract-C04-review.md). See [Review 43 resolution](#review-43-resolution) and [Review 58 resolution](#review-58-resolution) |
-| Status | **Draft**, for fix verification of review 58. The orchestrator settled every point (see [Settled](#settled)). The contract becomes Frozen after the fix verification gives ACCEPT (tag `contract-C04-v2.2`) |
+| Version | 2.3. Frozen at C4 on fix verification 61; errata owed listed below. Version 2.3 applies the C04 items of [review 61](../../reviews/61-contracts-C02-C03-C04-fix-verification.md) (V61-5, V61-6). Version 2.2 renames `pending_answered` to `pendingAnswered` and states the covered-parts rule of C02 draft.3. Version 2.2 renames `pending_answered` to `pendingAnswered` and states the covered-parts rule of C02 draft.3. Version 2 revised version 1 per [review 43](../../reviews/43-contract-C04-review.md). Version 2.1 revises version 2 per [review 58](../../reviews/58-contract-C04-review.md). See [Review 43 resolution](#review-43-resolution) and [Review 58 resolution](#review-58-resolution) |
+| Status | **Frozen.** Frozen at C4 on fix verification 61; errata owed listed below (see [Consumer obligations](#consumer-obligations-errata-required-by-settled-points)). Tag `contract-C04-v1` |
 | Provider | RFC-002 (the account owner: the booking module, and RFC-004 Part A's funds module, writing to the same log) |
 | Consumers | RFC-006 (the notifier, alerting and history), RFC-003 (rating, and the catalogue's locked-price read model), RFC-004 (Part A owns the release-after-grace rule; Part B settlement reads this feed only through RFC-003's charge lines), RFC-005 (envelope verification on the command port), the operator console, reporting |
 | Transport | **Kafka event** for both feeds, published from the transactional outbox (direct publish plus changefeed relay; C01 §2.5, RFC-006 §5.3). **Synchronous gRPC command** for `terminate`, routed by account slot with C01's `CommandEnvelope`. **In-process** for release after grace: the funds module's F7 outcome feeds the booking module's E11 in the same entry, and nothing goes on the wire |
@@ -559,6 +559,7 @@ Every event is written as an outbox row in the transaction of the entry it repor
   revision 1. It never adds a part. If a revision ≥ 2 adds a part, the owner answers
   `MISMATCH`, writes nothing and alerts. `covered_parts` on each `cut` is the set of the
   revision that the event applies.
+- **Ended part (V61-5).** A part is ended from minute m when its applied end, after every applied end_leg, reduce_parts to 0 or window end, is at or before m. A later revision that drops an ended part never raises the rate of any part.
 - **`target`.** It is the per-minute `min` of everything recorded. A piece above the
   recorded one is ignored at that minute and alerted.
 - **Not applied.** `part_rates` is `[]` and `applied.status` says why.
@@ -653,10 +654,11 @@ P1-S50, P1-S72, P2-S91, P4-S23, X1-S17):
 
   Every revision above the highest recorded produces a `cut` (V52-1), so the hold always releases at the highest
   applied revision.
-- **Late extension.** Minutes already closed at the uncut rate are amended down to the
-  `cut`'s `part_rates`. The amendment has reason "late POL-07 cut", and carries (link,
-  reduction) and the extension chunk from C03's `REDUCTION_EFFECTIVE`. Settlement posts it
-  as M6, or M7 in own mode (P4-S117). The same applies to a late `ended(revoked)`.
+- **Late cuts (V61-6).** This rule applies to any `cut` (or `ended(revoked)`) that covers
+  minutes that are already closed. A late extension and a late offer-scoped cut (N-03) are
+  examples. Rating amends the closed minutes down to the `cut`'s `part_rates`. The
+  amendment has reason "late POL-07 cut". It carries (link, reduction) and the target
+  revision (C03 rule 5, V52-4). Settlement posts it as M6, or M7 in own mode (P4-S117).
 
 ### Reservation command port: `terminate` (M-05, m-12, m-15)
 
@@ -872,7 +874,7 @@ X1-S12, X1-S16, X1-S17, X1-S36, P4-S23, P4-S97.
 | CN-3 | Notifier | `cut` with `rate_cut`, `ended(revoked \| released)`, `partner_leg_affected`, `offer_made`, `offer_accepted`, `offer_declined`, `offer_lapsed`, `offer_failed` and `offer_cut_kept` (N-11) give one notice each. Duplicates give none. There is no second release notice from the funds or standing feeds | P1-S26, P1-S75, P2-S91, P4-S23 |
 | CR-1 | Rating | Accrual uses `part_rates`. A booking starts at `max(window.start, floor_min(decided_ts))`, an added part at `part.window.start`, and accrual ends at `ended.effective` | P3-S02, P3-S04, P3-S42, P3-S45 |
 | CR-2 | Rating | Nothing closes past `resolved`. `hold_2` releases only with `REDUCTION_FINAL` and a `cut` at the highest `CUT_DECIDED` revision seen before it, including when that revision's `cut` has `part_rates: []`. A lower revision keeps the hold. `offer_cut_kept` never holds | P3-S58 |
-| CR-3 | Rating | A `cut`, or an `ended(revoked)`, covering already-closed minutes gives downward "late POL-07 cut" amendments and leaves the originals unchanged | P3-S08, P4-S117 |
+| CR-3 | Rating | Any `cut`, or `ended(revoked)`, that covers already-closed minutes gives downward "late POL-07 cut" amendments, keyed by (link, reduction) and the target revision. The originals do not change. This includes a late offer-scoped cut, which has no extension chunk (V61-6) | P3-S08, P4-S117 |
 | CR-4 | Rating | Fee lines as named, alerted against RFC-003 §5.4. `moved.fees_due` gives Share-borne fee lines. Each `fee_id` is charged once, and a new path's fee is not dropped | P3-S60, P3-S63, P3-S74 |
 | CR-5 | Rating | `moved`: route relabelled from `move_at`, price `min(price, shown_price)`. `price_step`: re-price from `effective` | P3-S59, P3-S64 |
 | CR-6 | Rating | Probe accounts per the catalogue give no lines. A differing `account_is_probe` is alerted. An unknown `kind` without `rating_ignorable` stops the partition, as does a feed-event identity with different content | X2-S20 |
@@ -1000,3 +1002,5 @@ Every fix that review 58 proposes is applied. Its decisions D58-1 to D58-4 are b
 | D58-4 | Decision | The C05 row is an erratum against frozen C05 version 1 (a C05 1.1). It is not a precondition to freeze C04 |
 | AI-58-1 | Architecture | Added to the RFC-000 §8 obligations row |
 | v2.2 edit | Orchestrator | `pending_answered` is renamed to `pendingAnswered` everywhere, to agree with C01, which owns the `ReportMarker` schema. The Cut section and `covered_parts` now state the C02 draft.3 rule: revision 1 sets the covered parts, a later revision can only omit ended parts, and a revision that adds a part gets `MISMATCH` |
+| V61-5 | Review 61 (Minor) | The Cut section now defines an ended part, word for word as the orchestrator gave it. A later revision that drops an ended part never raises the rate of any part |
+| V61-6 | Review 61 (Minor) | The "Late extension" bullet is now "Late cuts". It applies to any `cut` or `ended(revoked)` that covers closed minutes. The amendment key is (link, reduction) and the target revision, not the extension chunk. This agrees with C03 rule 5, V52-4 and CR-3. CR-3 is aligned |
