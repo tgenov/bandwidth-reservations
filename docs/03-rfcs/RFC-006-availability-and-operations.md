@@ -2,7 +2,7 @@
 
 | | |
 |---|---|
-| Status | **Draft, revision 6.** Revision 6 answers [review 33](../reviews/33-rfc-006-review.md) (ACCEPT WITH CHANGES: Majors R33-01 … R33-04, Minors R33-05 … R33-18, decisions D1 … D4, binding) and two interface points of RFC-005 revision 5 (no passphrase fallback for the backup key; a signed target summary of the probe-account set); see "Revision 6 resolution" at the end. Revision 5 answered [review 27](../reviews/27-rfc-006-review.md) (REJECT: R27-01 … R27-27, decisions D1 … D7, binding) and rebases revision 4 on `requirements-v1.9` ([review 28](../reviews/28-requirements-amendments-from-c3-round-2.md): `slot_probe_limit` 1 s for the per-slot rule, a maintenance booking cut at a reduction's effect told to its supplier, a non-conforming payload that may be dropped beyond the caps, counted) and on RFC-000 **revision 4.3** (its errata AI6-6 … AI6-9, AI-27-1 … AI-27-3, B-AI-12). See "Revision 5 resolution" at the end. Revision 4 answered [review 20](../reviews/20-rfc-006-review.md) (REJECT: R6-01 … R6-32, decisions D1 … D7) and rebases revision 3 on `requirements-v1.8` ([review 22](../reviews/22-requirements-amendments-from-c3-reviews.md): measured failing minutes and slot-minutes, at least 3 probes per account slot from two locations, the earlier-of rule, many notices per delivery, payload expiry in every copy) and on RFC-000 **revision 4.2** (its errata AI-R6-1 … AI-R6-4, AI-17-2, AI-17-4, AI-17-5, B-AI-10, AI-R5-2, AI-R5-3, AI3-13, risks R23, R24). Revision 3 rebased revision 2 on `requirements-v1.7` and RFC-000 revision 4.1. Revision 2 rewrote the platform for RFC-000 revision 4's substrate (CockroachDB at 2 + 2 + 1, NestJS owners with epoch-fenced owner leases, Kafka fed by a transactional outbox). Revision 1 specified a custom multi-group Raft platform, now a rejected alternative (Competition). See "Revision 4 resolution" at the end |
+| Status | **Accepted, revision 6.** Accepted at C3 on [fix verification 34](../reviews/34-rfc-006-fix-verification.md) (V-1 … V-4 applied). Revision 6 answers [review 33](../reviews/33-rfc-006-review.md) (ACCEPT WITH CHANGES: Majors R33-01 … R33-04, Minors R33-05 … R33-18, decisions D1 … D4, binding) and two interface points of RFC-005 revision 5 (no passphrase fallback for the backup key; a signed target summary of the probe-account set); see "Revision 6 resolution" at the end. Revision 5 answered [review 27](../reviews/27-rfc-006-review.md) (REJECT: R27-01 … R27-27, decisions D1 … D7, binding) and rebases revision 4 on `requirements-v1.9` ([review 28](../reviews/28-requirements-amendments-from-c3-round-2.md): `slot_probe_limit` 1 s for the per-slot rule, a maintenance booking cut at a reduction's effect told to its supplier, a non-conforming payload that may be dropped beyond the caps, counted) and on RFC-000 **revision 4.3** (its errata AI6-6 … AI6-9, AI-27-1 … AI-27-3, B-AI-12). See "Revision 5 resolution" at the end. Revision 4 answered [review 20](../reviews/20-rfc-006-review.md) (REJECT: R6-01 … R6-32, decisions D1 … D7) and rebases revision 3 on `requirements-v1.8` ([review 22](../reviews/22-requirements-amendments-from-c3-reviews.md): measured failing minutes and slot-minutes, at least 3 probes per account slot from two locations, the earlier-of rule, many notices per delivery, payload expiry in every copy) and on RFC-000 **revision 4.2** (its errata AI-R6-1 … AI-R6-4, AI-17-2, AI-17-4, AI-17-5, B-AI-10, AI-R5-2, AI-R5-3, AI3-13, risks R23, R24). Revision 3 rebased revision 2 on `requirements-v1.7` and RFC-000 revision 4.1. Revision 2 rewrote the platform for RFC-000 revision 4's substrate (CockroachDB at 2 + 2 + 1, NestJS owners with epoch-fenced owner leases, Kafka fed by a transactional outbox). Revision 1 specified a custom multi-group Raft platform, now a rejected alternative (Competition). See "Revision 4 resolution" at the end |
 | Satisfies | X2-S01 … X2-S32 (all 32 X2 scenarios, as primary RFC), including X2-S30 (amended in `requirements-v1.9`: `slot_probe_limit`), X2-S31 and X2-S32 (new in `requirements-v1.8`) and X2-S27, X2-S29 (amended in v1.8). Contributes the platform, history, notifier, alerting and backup contracts to P1-S26, P1-S33, P1-S40, P1-S78, P3-S71, X1-S39, P1-S50, P1-S54, P1-S62, P1-S63, P1-S72, P1-S75, P2-S04, P2-S09, P2-S10, P2-S22, P2-S23, P2-S51, P2-S53, P2-S93, P2-S99, P2-S104, P2-S106, P2-S107, P2-S108, P2-S111, P3-S31, P3-S36, P3-S39, P4-S23, P4-S54, P4-S71, P4-S72, P4-S80, P4-S81, P4-S90, P4-S91, P4-S104, X1-S11, X1-S14, X1-S15, X1-S24, X1-S31, X1-S34, X1-S37, whose primary RFC is named in the traceability table |
 | Policies | POL-04 (`ack_budget`, `status_staleness`, `webhook_retry`, "told", v1.8: one delivery carries many notices, each first attempted when the delivery is), POL-06 (targets, available minute with v1.8's **measured failing slot-minute**, a probe failing for that rule only without a correct answer within **`slot_probe_limit`** (1 s, v1.9), every account slot probed at least 3 times a minute from at least two locations, probe accounts and probe supplier, p99 per calendar month and serving region, declared region disaster with four eyes, counted from the recorded loss or from the first of `disaster_probe_minutes` **measured failing minutes**, whichever is earlier when the run leads up to the loss, go-live fibre condition), POL-07 (`affected_notice_time`; "begun committing" judged by the displacement record, v1.8; v1.9: a maintenance booking cut at a reduction's effect is told to its supplier within `affected_notice_time`), POL-14 (`attribution_lag_max`, `max_lateness`, the 430 s lateness bound), POL-15 (each probe account's `credit_limit`), POL-16 (notices), POL-18, POL-19 (`erasure_max`, erasure complete in every copy; v1.8: a non-conforming payload unrecoverable in every copy by `dispute_window` + 7 days; v1.9: its identity, keyed digest and reason always kept, the payload itself kept only if the caps and the store allow, each drop counted and reported), POL-24 (retention pending legal confirmation), POL-26 (`release_grace`, the deadline, the commit fence), POL-29 (7-year identities), POL-32 (network operations declares and ends disasters with four eyes; `approval_expiry`; compliance four eyes for an erasure without request; v1.9's held recovery changes nothing the platform runs) |
 | Builds on | [RFC-000](RFC-000-architecture.md) **revision 4.3** (revision 4, its "Revision 4.1 errata", "Revision 4.2 errata" and "Revision 4.3 errata"), and the requirements at tag **`requirements-v1.9`** ([review 28](../reviews/28-requirements-amendments-from-c3-round-2.md)), which include v1.8. As in revision 4, from RFC-000: §1 principles A1 … A11, §2 components (placement and time, history, notifier, probes), §3 latency budget with batching waits and leader placement, §4.3 the confirm fence, `ε`, `δ_x_cfg`, `τ` and the monitored quantities, §4.5 closed timestamps, §4.6 positions, read leases and status replicas, §5.1 topology, §5.2 owner leases, revocation, generations and fencing, §5.3, §5.4, §5.5 (the substrate mapping, items 10 and 11), §6 sizing, §8 the substrate-conventions, account-slot-map and probe-designation contracts, R1, R2, R4, R13, R14, R16, R18 … R21, R23, R24. The requirements at tag **`requirements-v1.8`** ([review 22](../reviews/22-requirements-amendments-from-c3-reviews.md)), which include v1.6 ([review 11](../reviews/11-requirements-amendments-from-detailed-rfcs.md)) and v1.7 ([review 12](../reviews/12-requirements-amendments-from-rfc-revision-2.md)) |
@@ -210,10 +210,13 @@ region's load balancing. **Whether the other region is passing is decided by an 
 outside both regions** (R33-02, review 33 decision D1): the **probe sites** (three per
 serving region, outside Share's facilities, §17.1) each make an **unicast canary booking**
 through every region's unicast edge address every 2 s and serve, over the public internet
-and mutually authenticated, a signed verdict per region: "region X passing" if its last 3
-canaries passed. A region **withdraws** its anycast prefix only when (a) more than half of
-its edge nodes fail three consecutive canaries **and** (b) a **majority of the probe sites
-it can reach** report the other region passing; if it reaches none, or no majority says so,
+and mutually authenticated, a signed verdict per region: "region X **announcing and
+passing**" if its last 3 canaries passed and X's edges stated in their signed answers to
+those canaries that X's anycast prefix is announced (V-1); a region with a withdrawn prefix
+is never reported as a reason to withdraw the other. A region **withdraws** its anycast
+prefix only when (a) more than half of its edge nodes fail three consecutive canaries
+**and** (b) a **majority of the probe sites it can reach** report the other region
+announcing and passing; if it reaches none, or no majority says so,
 it does not withdraw (R27-07, review 27 decision D3). So **the last announcing region is
 never withdrawn** and the rule fails closed: when both regions fail (a takeover gap under
 T1, a facility loss, a database-wide fault) both keep announcing and serve errors, which
@@ -720,8 +723,8 @@ stateDiagram-v2
   can have written the slot's partitions, since the epoch is still its own, so its memory
   stays valid; it is an acquisition all the same and applies the **full resume** (R33-01;
   RFC-000 AI-27-1): after the re-home commits, a **resolution read** at the present
-  timestamp (step 1, reading the new session row so `T_res` is above the re-home's
-  commit), steps 2 and 3, and **step 4: each re-homed slot's report position is set to
+  timestamp (step 1, whose read of the re-homed `owner_slot` rows, written by the re-home,
+  puts `T_res` above the re-home's commit), steps 2 and 3, and **step 4: each re-homed slot's report position is set to
   `T_res`**, so no read lease is ever granted with `P_grant` below it; then the takeover
   entry and the `read_lease` + ε reporting wait apply. (The floor matters exactly when the
   session was revoked because a sibling slot was taken during a lapse, so a rule-3 read may
@@ -1325,8 +1328,8 @@ Consumers see closure only through `onResolved` (§12.5), per destination partit
 | A broker | Produce to every partition that had it in sync **stalls** (`acks=all`) until it leaves the in-sync set or its leaders move: at most about 4 s (§5.2, R27-06); then 3 in sync | None; replaced as a node. Feeds 4 s late at worst: no breaching X2-S22 or X2-S17 event (§10.3) |
 | A facility (lost or drained) | Every partition loses one replica: produce to **every** partition stalls up to about 4 s on a loss (none on a drain, which moves leaders first); then 3 in sync | Placement lowers `min.insync.replicas` to 2 at once (D3), so a further broker failure elsewhere stops no partition; restored to 3 after recovery (R6-12) |
 | A Kenyan region | 2 replicas in sync; producers fail with `NotEnoughReplicas` until placement lowers `min.insync.replicas` to 2 (seconds after the topology state changes) | Automatic (§7.3); feeds resume from the surviving region; the takeover republish and the changefeed cover the gap |
-| A correlated in-sync shrink (both R2 replicas, or both R1 followers, of many partitions behind for more than 4 s: heavy loss or a stall on the Nairobi–Mombasa paths short of a cut; R33-10) | With `min.insync.replicas` 3, produce to those partitions fails with `NotEnoughReplicas` | Placement lowers `min.insync.replicas` to 2 once more than 2% of partitions show it for 2 s ("Kafka degraded", §7.3; D4), so produce continues within about 3 s; restored to 3 after 10 min fully in sync. The window with one region's replicas only is seconds; facts are in the database |
-| A metro split (R33-03) | About half the partition leaders stay in the cut-off facility, reachable by the controller and R2 but not by the chosen side's producers and consumers | Automatic leader consolidation through the controller: preferred replicas reordered (chosen facility, then R2), preferred leader election; a controlled shutdown of the cut-off brokers after 20 s; `min.insync.replicas` 2 (§7.3 step 4; review 33 D2) |
+| A correlated in-sync shrink (both R2 replicas, or both R1 followers, of many partitions behind for more than 4 s: heavy loss or a stall on the Nairobi–Mombasa paths short of a cut; R33-10) | With `min.insync.replicas` 3, produce to those partitions fails with `NotEnoughReplicas` | Placement lowers `min.insync.replicas` to 2 once more than 2% of partitions show it for 2 s ("Kafka degraded", §7.3; D4), so produce continues within about 3 s of the in-sync shrink (about 7 s from the stall's start: 4 s to the shrink, 2 s to the trigger, then the admin call; at §10.3's 7 s bound); restored to 3 after 10 min fully in sync. The window with one region's replicas only is seconds; facts are in the database |
+| A metro split (R33-03, V-2) | About half the partition leaders stay in the cut-off facility, reachable by R2 but not by the chosen side's producers and consumers; the replicas that cannot reach their leader leave the in-sync sets within 4 s; a controller in the cut-off facility would fence the chosen side's brokers | Automatic, by admin calls through an R2 broker: a cut-off controller restarted through R2 (preferred-region rule suspended); for each partition led in the cut-off facility, its first in-sync R2 replica put first and elected, then the chosen facility's once back in sync; a controlled shutdown of the cut-off brokers after 20 s; `min.insync.replicas` 2 (§7.3 step 4; review 33 D2) |
 | The Kenyan link cut (both Nairobi–Mombasa paths, R6-11) | R2's two replicas of every partition fall out of sync; R1 keeps two in sync; R2's consumers and brokers are cut off from R1 (no transit through R3, §20.1) | Placement lowers `min.insync.replicas` to 2 ("Kafka degraded", §7.3), so R1's producers continue; the active controller is in R1 (§5.2), so R1's brokers stay unfenced; R2's brokers rejoin and catch up after repair. Residual: a cut at the instant the controller is outside R1 fences R1's brokers until RB-15's controlled restart of that controller (RK29) |
 | The whole cluster | Feeds stop; facts keep committing (owners do not wait for Kafka); consumers fall behind | RB-15: restore the cluster, then recreate each changefeed from the oldest resolved timestamp any consumer applied (within the outbox's 25 h); consumers fill gaps from the logs (§5.5). Admission is unaffected except for webhooks and status of `pending` outcomes by webhook (polls still answer) |
 
@@ -1625,20 +1628,29 @@ owner to the leaseholders on the other side through its own facility's gateways.
    unreachable without a gateway path for gRPC) and leave the region's load balancing; the
    region keeps announcing (§2).
 4. **Kafka leader consolidation (automatic, about 10 to 20 s, est.; R33-03, review 33
-   decision D2).** About half of the partition leaders are in the cut-off facility; they
-   still reach the controller quorum and R2's followers, so Kafka neither fences nor moves
-   them, while producers and consumers on the chosen side, which have no gateway tier for
-   Kafka, cannot reach them. Placement therefore, through the active controller (kept in the
-   preferred region and reachable from both sides, §5.2), **reorders the preferred replicas**
-   of every partition led in the cut-off facility so that the chosen facility's replica,
-   then R2's, come first, and triggers **preferred leader election** for them; a partition
-   whose chosen-facility replica is out of the in-sync set elects R2's. The cut-off brokers
-   stay replicas. If an election does not complete within 20 s, placement makes a
-   **controlled shutdown** of the cut-off brokers through an R2 path. Meanwhile the cut-off
-   facility's replicas leave the in-sync sets (about 4 s, §5.2) and `min.insync.replicas` is
-   lowered to 2 ("Kafka degraded"). Consumers in the chosen facility fetch from leaders or
-   from R2's replicas until their own rack's replica is in sync. Restored with the database
-   preference, by operator order.
+   decision D2, V-2).** About half of the partition leaders are in the cut-off facility; they
+   still reach R2's followers, while producers and consumers on the chosen side, which have
+   no gateway tier for Kafka, cannot reach them. The **replicas that cannot reach their
+   leader leave the in-sync sets** within about 4 s (`replica.lag.time.max.ms`): for the
+   partitions led in the cut-off facility that is the chosen facility's replica, and for
+   those led on the chosen side the cut-off facility's. Placement then:
+   1. issues every admin call **through an R2 broker**, which both sides reach;
+   2. if the active controller is in the cut-off facility, makes a **controlled restart of
+      that controller through an R2 path**, and suspends §5.2's preferred-region restart rule
+      for the split's duration, so a controller on the chosen side or in R2 is accepted;
+      with the controller there, the cut-off brokers that cannot heartbeat to it are fenced
+      by Kafka itself (4 s), and the chosen side's brokers are not;
+   3. for each partition still led in the cut-off facility, puts **its first in-sync
+      replica among R2's first** in the assignment and triggers preferred leader election
+      (Kafka elects only the first assigned replica, and only if it is in sync); once the
+      chosen facility's replica is back in sync with the new leader, puts it first and
+      elects again;
+   4. if a partition is still led in the cut-off facility 20 s after the split, makes a
+      **controlled shutdown** of the cut-off brokers through an R2 path.
+   The cut-off brokers stay replicas. `min.insync.replicas` is lowered to 2 ("Kafka
+   degraded"). Consumers in the chosen facility fetch from leaders or from R2's replicas
+   until their own rack's replica is in sync. Restored with the database preference, by
+   operator order.
 
 Expected effect (est.): renewals and epoch reads skip a dead gateway tier after one
 per-tier timeout (400 ms, §4.7) and the circuit breaker opens at the topology state, so
@@ -2337,7 +2349,7 @@ runtime (§4); the delivery phase defines the exact signatures.
 | Kafka `replica.lag.time.max.ms`, `broker.session.timeout.ms`, `broker.heartbeat.interval.ms` | 4 s, 4 s, 1 s | §5.2 |
 | Gateway tiers; per-tier timeout for renewals, epoch reads and session polls | own facility, metro peer, other Kenyan region; 400 ms, circuit breaker after 3 timeouts or on the topology state | §4.7 |
 | In-sync-driven `min.insync.replicas` drop | more than 2% of partitions with both replicas of one region out of sync for 2 s | §5.2, §7.3 |
-| Kafka leader consolidation on a metro split | preferred leader election at once; controlled shutdown of cut-off brokers after 20 s | §7.3 |
+| Kafka leader consolidation on a metro split | admin calls through an R2 broker; in-sync R2 replica first, then the chosen facility's once in sync; controlled shutdown of cut-off brokers after 20 s | §7.3 |
 | `batch_retries` | 5 | §4.3 |
 | `heartbeat_interval` (owner → readers) | 100 ms | §4.6 |
 | `read_lease` | 400 ms | §4.6 |
@@ -3237,7 +3249,7 @@ the owner runtime, status readers, the outbox and a Kafka cluster:
 | Renewal across expiry (R6-01): a renewal delayed past `session_ttl` while a standby acquires | The renewal fails every time (revocation) |
 | Owner takeover (process kill, host kill), with expiry seen by the present-time poll | p99 ≤ 5 s (AI3-9); expected about 3.3 to 3.8 s |
 | **Kafka broker kill** and facility loss: produce stall; in-sync flapping under the design load with 4 s timeouts (R27-06) | Stall p99 ≤ 4 s; no flapping that stalls produce more than once an hour |
-| R2's fetch stalled for 6 s on the Nairobi–Mombasa paths, not a cut (R33-10) | Produce continues within 3 s (in-sync-driven `min.insync.replicas` 2) |
+| R2's fetch stalled for 15 s on the Nairobi–Mombasa paths, not a cut (R33-10, V-4) | Produce resumes within 7 s of the stall's start (in-sync-driven `min.insync.replicas` 2) |
 | Changefeed CPU of about 40 changefeeds (outbox and narrow audit) at the design load (R27-13) | Within 180 vCPU per facility ± 25%; else nodes are added |
 | Closure emitter lag (§5.3) | `R_min` p99 ≤ 3 s behind now |
 | Range-lease failover (database node kill) | p99 ≤ 6 s |
@@ -3297,7 +3309,7 @@ Each cites the scenario it serves (docs/README.md conventions).
 | DT-37 **Moves fence readers** (R27-02): with request q of account X pending at a move from slot A to B, after B decides and reports q no reader of A or B answers q `pending`; a reader of A that applied `moved` answers X by rule 4; `adopt` does not commit before A's `report_through` passes `moved` | P2-S108, P2-S10 (with RFC-002) |
 | DT-38 **Closure** (R27-03): kill a holder between commit and publish while one relay instance lags; no consumer of the lifecycle or link schedule feed receives a row at or below a resolved or `CLOSED` marker it has already received; `CLOSED(t, feed_seq)` carries the last `feed_seq` committed at or below `t` | X2-S13, X2-S22 (with RFC-001, RFC-003) |
 | DT-39 Kill a Kafka broker, then a facility's brokers: produce stalls at most 4 s; no X2-S22 or X2-S17 minute breaches | X2-S22, X2-S17 |
-| DT-40 Force both regions' canaries to fail: neither region withdraws; after one region recovers, the other is withdrawn only while a majority of the probe sites it reaches report the recovered one passing; with every probe site unreachable, neither withdraws; **a double Nairobi–Mombasa cut withdraws R2, and an R1 isolated from R2 and R3 withdraws R1** once the probe sites see the other region passing; a withdrawn region re-announces after 10 s of passing canaries | X2-S01, X2-S10 |
+| DT-40 Force both regions' canaries to fail: neither region withdraws; after one region recovers, the other is withdrawn only while a majority of the probe sites it reaches report the recovered one passing; with every probe site unreachable, neither withdraws; **a double Nairobi–Mombasa cut withdraws R2, and an R1 isolated from R2 and R3 withdraws R1** once the probe sites see the other region passing; a withdrawn region re-announces after 10 s of passing canaries; **while a recovered region has not yet re-announced, the other region does not withdraw** (V-1) | X2-S01, X2-S10 |
 | DT-41 Double the account slot count under the design load: every account keeps its slot until moved; every slot, old and new, has exactly one probe account and its 3 probes a minute throughout; no command is refused other than with `Moving` or `Moved`; **a moved account's commands are served by its new slot between its `adopt` and its old slot's split version, with no `Moved` ping-pong; an upper-half account created while its slot is splitting is created in the new slot and served** | X2-S27, X2-S03 |
 | DT-42 Move a hot link at 2,500 requests/s: unavailable (`Moving`) for at most about 100 ms (p99 ≤ 200 ms), no cold rebuild, its deadline timers fire on the new slot (`onAdopt`) and not on the old (`onMovedOut`); a takeover of the new slot right after is warm | X2-S10 (and P1-S54, P1-S62 via RFC-001) |
 | DT-43 Lose the connection after the commit of a handoff: within one present-time read, exactly one of the old holder and the successor serves the slot | X2-S10 |
@@ -3809,6 +3821,10 @@ AI-33-2 pending its revision 4.4.
 | R33-18 follower reads | §19.2 separate follower-read line |
 | RFC-005 rev. 5: no passphrase fallback | §14.1: if EKM is unusable, backups wait (page after two missed incrementals); R6-24 row annotated |
 | RFC-005 rev. 5: signed probe-set summary | §7.1, §12.7 `probeSetSummary(v)`: slot map at `v`, slot count, probe-account count, digest, signed |
+| V-1 (review 34) verdict without announcement state | §2 verdict "announcing and passing", the edges' announcement signed in the canary answer; DT-40 case |
+| V-2 (review 34) Kafka consolidation premises | §7.3 step 4 rewritten (admin calls through R2, cut-off controller restarted through R2 with the preferred-region rule suspended, first in-sync R2 replica first, then the chosen facility's; 20 s fallback); out-of-sync sentence corrected; §5.6 row; §12.10 |
+| V-3 (review 34) | §4.2 re-home: `T_res` lifted by the read of the re-homed `owner_slot` rows |
+| V-4 (review 34) | §5.6 about 7 s from the stall's start; §22.1 a 15 s stall, produce within 7 s of its start |
 
 **Joint items for neighbouring RFCs** (R33-13; not edited here):
 
