@@ -47,8 +47,8 @@ Feature: Non-functional targets
         | 12     | 12        | available   | every probe succeeds, during planned maintenance too |
 
     @X2-S30 @need-X2-N1 @POL-06
-    Scenario Outline: A minute of admission or the wallet is unavailable when one account slot's measured probes all fail, or when it was not probed as required
-      Given <capability> in a serving region, every account slot of which is probed at least 3 times a minute from at least two locations (POL-06)
+    Scenario Outline: A minute of admission or the wallet is unavailable when every probe one account slot got failed, however few, or when it was not probed as required
+      Given <capability> in a serving region, every account slot of which is to be probed at least 3 times a minute from at least two locations (POL-06)
       When in one minute <what>
       Then the minute counts as <counted> for <capability>
 
@@ -57,8 +57,22 @@ Feature: Non-functional targets
         | the admission API | 99% of its probes succeed, and account slot 17 had 3 probes, from two locations, none of which got a correct answer within `slot_probe_limit` (POL-06: 1 s) | unavailable |
         | the admission API | 99% of its probes succeed, and account slot 17 had 3 probes, from two locations, each answered correctly in 400 ms, slower than the 200 ms per-probe limit but within `slot_probe_limit` | available |
         | the wallet        | 99% of its probes succeed, and account slot 17 had 3 probes, from two locations, 2 of which failed                            | available   |
-        | the admission API | 99% of its probes succeed, and account slot 17 had only 2 probes, both failing, so it is not a measured failing slot-minute    | available   |
+        | the admission API | 99% of its probes succeed, and account slot 17 had only 2 probes, both failing, so it is a failing slot-minute however few its probes | unavailable |
+        | the admission API | 99% of its probes succeed, and account slot 17 had no probe at all, a probing fault, while every other slot was probed as required | available   |
         | the admission API | 11 probes are made, all from one location, and all succeed                                                                   | unavailable |
+
+    @X2-S33 @need-X2-N1 @POL-06
+    Scenario Outline: An account slot probed short in a minute is a probing fault, alerted to network operations
+      Given admission in a serving region, every account slot of which is to be probed at least 3 times a minute from at least two locations (POL-06)
+      When in one minute account slot 17 <probed>
+      Then network operations is alerted to a probing fault for slot 17 in that minute
+      And the shortfall alone does not make the minute unavailable
+
+      Examples:
+        | probed                                                   |
+        | gets no probe at all                                     |
+        | gets 2 probes, from two locations, both answered correctly |
+        | gets 3 probes, all from one location, all answered correctly |
 
     @X2-S18 @need-X2-N1 @POL-06 @POL-18
     Scenario Outline: Each capability is probed by its own operation, against its own per-probe limit

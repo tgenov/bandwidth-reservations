@@ -583,6 +583,19 @@ Feature: Selling capacity on one link without overselling
       Then from 10:00 on day D + 10 B is on the equivalent path, at the lower of its original price and the path's price
       And from that minute B holds no capacity on the link
 
+    @P1-S84 @need-P1-N8 @POL-07 @POL-08
+    Scenario Outline: A move that becomes final after the reduction's cut carries the reservation at its cut rate
+      Given the link's supplier announced a permanent reduction of its capacity to 6 Mbps on day D, which affects 2 Mbps of B
+      And the holder of B was offered an equivalent path for all 4 Mbps of B only on day D + 27, late in the notice, every leg of the path a Share link, for `offer_window` (POL-07), 4 Mbps being held for B on every leg of it
+      When the holder of B accepts the offer <when>
+      Then <result>
+      And A stays confirmed at 4 Mbps on the link
+
+      Examples:
+        | when                                                                                         | result                                                                                                                                                   |
+        | on day D + 29, before `revocation_notice` (POL-07) after the announcement has passed          | from the end of the notice all 4 Mbps of B continue on the equivalent path, and B holds nothing on the link                                               |
+        | on day D + 32, after the notice has ended and B has been cut to 2 Mbps on the link            | from its move B continues on the equivalent path at 2 Mbps, the rate the reduction left it; the 2 Mbps held beyond that are released at the move; and the holder is told at acceptance that the cut is kept and that it may book an increase on the path (POL-08) |
+
     @P1-S55 @need-P1-N8 @need-P1-N1 @POL-07
     Scenario: An equivalent-path offer is firm: the path's capacity is held for the reservation while the offer is open
       Given an equivalent path exists for B, every leg of it a Share link

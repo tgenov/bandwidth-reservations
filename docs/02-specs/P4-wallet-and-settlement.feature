@@ -638,7 +638,7 @@ Feature: Wallet, funds holds, ledger and supplier settlement
       When buyer "b1" asks for its statement for a period
       Then it shows each charge and amendment with its reason, each top-up with its conversion rate, each reversal and each write-off
 
-  Rule: Supplier earnings are final, except for the supplier's own errors
+  Rule: Supplier earnings are final, except for the supplier's own errors and a late POL-07 cut
 
     @P4-S41 @need-P4-N11 @POL-23
     Scenario: A correction caused by Share's error is borne by Share in full
@@ -722,6 +722,17 @@ Feature: Wallet, funds holds, ledger and supplier settlement
         | exporter                                       | result                                                                                                       |
         | the Share exporter that produced the record    | A, B and C keep what they were paid, and no movement is posted to any supplier (POL-23)                      |
         | supplier A's exporter that produced the record | A owes its own reduction, 1,500 micro-USD, as a supplier debt (POL-22): its share of 5,000 micro-USD is 1,500 (POL-12); B and C keep what they were paid |
+
+    @P4-S117 @need-P4-N11 @POL-23 @POL-07 @POL-12 @POL-22
+    Scenario: A late POL-07 cut lowers every party to its split of the corrected total, recovered from later payouts if already paid
+      Given route "R1" with supplier A weighted 3000, supplier B 3333, supplier C 2167 and Share's commission 1500
+      And buyer "b1"'s reservation on "R1" was charged 1,500 micro-USD for a minute after a permanent reduction's notice ended, at 100 Mbps and 15 micro-USD per Mbps-minute, split 450 to A, 500 to B, 325 to C and 225 to Share's commission (POL-12)
+      And supplier A's 450 micro-USD was then paid out to it
+      When the reduction's cut to 60 Mbps is applied to that minute after it was charged, a late POL-07 cut (POL-07, POL-23)
+      Then the minute's charge is amended to 900 micro-USD and "b1" is credited 600 micro-USD
+      And A falls by 180, B by 200, C by 130 and Share's commission by 90 micro-USD, to 270, 300, 195 and 135, the split of 900 micro-USD (POL-12)
+      And A owes its 180 micro-USD, netted against its next payouts (POL-22), and its statement shows the reduction with the reason "late POL-07 cut"
+      And it is not a correction: no party bears another party's reduction
 
   Rule: Payouts are weekly, exact and made once
 
@@ -827,6 +838,19 @@ Feature: Wallet, funds holds, ledger and supplier settlement
       Then a payout of 15,540 KES is issued, exactly 15,540.5914265 KES rounded down
       And supplier A is still owed 0.004567 USD, the residue of 0.5914265 KES converted back at the same rate
       And the rate is recorded
+
+    @P4-S118 @need-P4-N12 @POL-22 @POL-32
+    Scenario Outline: A change of payout destination applies from the next payout run, and every supplier administrator is told
+      Given supplier A, with supplier administrators "v1" and "v2", is owed 120.000000 USD and its payout destination is bank account K1
+      When "v1" changes A's payout destination to mobile-money account K2 <when>
+      Then <result>
+      And "v1" and "v2" are each told of the change, with when it was made and the run it applies from
+
+      Examples:
+        | when                                                                        | result                                                                                         |
+        | before this week's payout run starts                                        | this week's payout of 120.00 USD is instructed to K2                                            |
+        | after this week's payout run has started                                    | this week's payout of 120.00 USD is instructed to K1, and the next run's payouts go to K2       |
+        | after this week's payout to K1 was reported failed as final, before the next run starts | the 120.00 USD is instructed in the next run, under a new reference, to K2                |
 
   Rule: Reversals and bad debt are borne by Share, never by suppliers
 

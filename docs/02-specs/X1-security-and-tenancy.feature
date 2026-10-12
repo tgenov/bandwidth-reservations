@@ -266,6 +266,18 @@ Feature: Security, tenancy and audit
       Then it is refused, the recovery being within `recovery_hold` (POL-32), and nothing changes
       And the attempt is recorded
 
+    @X1-S46 @need-X1-N9 @POL-32 @POL-22
+    Scenario Outline: A supplier administrator held in a recovery cannot change the supplier's payout destination
+      Given the only supplier administrator of supplier "s1" has lost its means of authentication
+      And onboarding re-verified "s1"'s business and granted the supplier administrator right to user "v2" of "s1" at 10:00
+      When "v2" changes the payout destination of "s1" <when>
+      Then <result>
+
+      Examples:
+        | when                                                       | result                                                                                                      |
+        | at 11:00                                                   | it is refused, the recovery being within `recovery_hold` (POL-32: 24 h), the destination is unchanged, and the attempt is recorded |
+        | at 11:00 the next day, no prior administrator having objected | it takes effect from the next payout run (POL-22), and every supplier administrator of "s1" is told         |
+
     @X1-S21 @need-X1-N9 @POL-25
     Scenario: An account cannot have more than account_max_keys keys
       Given account "b1" has `account_max_keys` (POL-25: 100) agent keys that are not revoked

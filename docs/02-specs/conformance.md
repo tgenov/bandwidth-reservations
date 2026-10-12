@@ -99,6 +99,7 @@ plan, not in the scenario.
 | P1-S47 | Only just enough Mbps are taken from the newest part, and its holder may then cancel without fee | TBD | — | not assessed |
 | P1-S52 | When part of a reservation is affected, the equivalent path is offered for all of it | TBD | — | not assessed |
 | P1-S53 | The holder of an accepted offer may move before the notice ends, from a minute boundary it chooses | TBD | — | not assessed |
+| P1-S84 | A move that becomes final after the reduction's cut carries the reservation at its cut rate | TBD | — | not assessed |
 | P1-S55 | An equivalent-path offer is firm: the path's capacity is held for the reservation while the offer is open | TBD | — | not assessed |
 | P1-S56 | Capacity held for an open equivalent-path offer counts as committed for new sales | TBD | — | not assessed |
 | P1-S57 | The capacity held for an equivalent-path offer becomes the reservation's on acceptance, and is released at once otherwise | TBD | — | not assessed |
@@ -388,6 +389,7 @@ plan, not in the scenario.
 | P4-S110 | The difference Share bears on a dearer equivalent path is the path's charge rounded down once, less the buyer's charge | TBD | — | not assessed |
 | P4-S115 | A later correction of the buyer's price does not change the difference Share bore on a dearer path | TBD | — | not assessed |
 | P4-S116 | A cost Share has paid a supplier is final, except that supplier's own reduction when its exporter erred | TBD | — | not assessed |
+| P4-S117 | A late POL-07 cut lowers every party to its split of the corrected total, recovered from later payouts if already paid | TBD | — | not assessed |
 | P4-S43 | A supplier owed at least the minimum is paid at the weekly payout | TBD | — | not assessed |
 | P4-S44 | A balance below the minimum carries forward | TBD | — | not assessed |
 | P4-S45 | A payout is complete only when the transfer is confirmed | TBD | — | not assessed |
@@ -403,6 +405,7 @@ plan, not in the scenario.
 | P4-S67 | A supplier debt posted while a payout is being prepared is netted exactly once | TBD | — | not assessed |
 | P4-S49 | A supplier debt open for more than 90 days is invoiced | TBD | — | not assessed |
 | P4-S50 | A supplier paid in another currency is converted at the shown rate, rounded down, with the residue carried in USD | TBD | — | not assessed |
+| P4-S118 | A change of payout destination applies from the next payout run, and every supplier administrator is told | TBD | — | not assessed |
 | P4-S51 | A reversal after the top-up was spent is applied at once and suspends the account if headroom goes negative | TBD | — | not assessed |
 | P4-S52 | A negative balance is collected from the next top-up | TBD | — | not assessed |
 | P4-S53 | A negative balance not recovered within 90 days of the reversal is written off automatically, at Share's cost | TBD | — | not assessed |
@@ -446,6 +449,7 @@ plan, not in the scenario.
 | X1-S40 | An account none of whose administrators can act is recovered only by onboarding, and an existing administrator can object for recovery_hold | TBD | — | not assessed |
 | X1-S44 | What a held administrator does during recovery_hold is held too, and a cancellation undoes the rights it granted but keeps the users it added | TBD | — | not assessed |
 | X1-S45 | A supplier administrator held in a recovery cannot issue the supplier's credentials | TBD | — | not assessed |
+| X1-S46 | A supplier administrator held in a recovery cannot change the supplier's payout destination | TBD | — | not assessed |
 | X1-S21 | An account cannot have more than account_max_keys keys | TBD | — | not assessed |
 | X1-S08 | The same idempotency key used by two accounts gives two independent requests | TBD | — | not assessed |
 | X1-S09 | An idempotency key reveals nothing about another account's request | TBD | — | not assessed |
@@ -472,7 +476,8 @@ plan, not in the scenario.
 | X1-S37 | Logs and records hold no personal data | TBD | — | not assessed |
 | X2-S01 | Availability per capability | TBD | — | not assessed |
 | X2-S16 | A minute is available only if at least 90% of its probes succeed | TBD | — | not assessed |
-| X2-S30 | A minute of admission or the wallet is unavailable when one account slot's measured probes all fail, or when it was not probed as required | TBD | — | not assessed |
+| X2-S30 | A minute of admission or the wallet is unavailable when every probe one account slot got failed, however few, or when it was not probed as required | TBD | — | not assessed |
+| X2-S33 | An account slot probed short in a minute is a probing fault, alerted to network operations | TBD | — | not assessed |
 | X2-S18 | Each capability is probed by its own operation, against its own per-probe limit | TBD | — | not assessed |
 | X2-S20 | Probes run end to end as designated probe accounts, without business side effects | TBD | — | not assessed |
 | X2-S24 | Each probe account books on a credit limit set by finance, and is never invoiced | TBD | — | not assessed |
