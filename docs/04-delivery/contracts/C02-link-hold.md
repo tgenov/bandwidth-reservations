@@ -4,13 +4,13 @@
 |---|---|
 | Contract ID | C02 |
 | Name | link-hold |
-| Version | 1.0.0-draft.3 |
-| Status | **Draft**, for re-review. [Review 54](../../reviews/54-contract-C02-review.md) rejected draft.2 with 1 Blocker (B1), 5 Majors (M1 to M5) and 8 Minors (m1 to m8). This draft applies all of them. [Review 42](../../reviews/42-contract-C02-review.md) rejected draft.1, and its fixes stay applied. The C02 parts of [review 52](../../reviews/52-contract-C03-fix-verification.md)'s V52-1 and V52-2 are applied with their exact text, so C02 uses the same revision rule as C03 v2.1 and C04 v2. No mismatch is open (see "Settled"). **Freeze gate (review 54 m8):** C02 is not tagged until RFC-001 and RFC-002 both cite P1-S84 |
+| Version | 1.0.0 |
+| Status | **Frozen.** Frozen at C4 on fix verification 61; errata owed listed below. [Fix verification 61](../../reviews/61-contracts-C02-C03-C04-fix-verification.md) accepted C02 with changes, and this version applies its C02 items V61-1, V61-2, V61-4 and V61-5 (see "Fix verification 61 resolution"). Earlier rounds: [review 54](../../reviews/54-contract-C02-review.md) rejected draft.2, [review 42](../../reviews/42-contract-C02-review.md) rejected draft.1, and [review 52](../../reviews/52-contract-C03-fix-verification.md) gave V52-1 and V52-2. All their fixes stay applied. C02 uses the same revision rule as C03 v2.3 and C04 v2.2. No mismatch is open (see "Settled"). C02 freezes with RFC errata owed: RFC-001 and RFC-002 must cite P1-S84 (orchestrator) |
 | Provider | RFC-001 (link schedule owner): the link hold port, the link waiting port, the link availability query and the link displacement read. RFC-002 (account owner): the outcome and expiry port and the reservation command port's `cut_target` |
 | Consumers | RFC-002 (account owner) consumes the RFC-001 ports. RFC-001 (link schedule owner) consumes the RFC-002 ports. Not part of C02: the partner-adapter side of the outcome and expiry port, and the other operations of the reservation command port (offer, terminate, release after grace) |
 | Transport | **HTTP**: gRPC over HTTP/2 carries the synchronous commands between NestJS owners. The commands go by slot through the placement cache, and each carries C01's `CommandEnvelope` as gRPC metadata. **Kafka event**: the C01 runtime relays the link's waiting-port notifications from the link outbox and delivers them through `onNotification`; this is their guaranteed path. **Database read** (RFC-000 A1, §5.5): the account owner reads `link_displacement` inside its serialisable confirm transaction |
-| Pinned to | `requirements-v1.10`. RFC-000 revision 4.4: the §8 rows (link hold port, link waiting port, outcome and expiry port, link availability query, link displacement read, reservation command port `cut_target`) and the "Revision 4.4 errata" C4-1 to C4-4 and C4-7. RFC-001 revision 5: §2, §4.1 to §4.5, §5.1, §5.4, §5.6, §7.1, §11. RFC-002 revision 5: §2.2, §2.5, §4.3, §5.1 to §5.7, §6.3, §9.6, §9.7, §12, §13. [C01](C01-platform.md) version 1 (`CommandEnvelope`, `RoutingRefusal`, `admitCommand`, move hooks, `Moving`, `Stopped`). Cross-checked against [C03](C03-link-schedule.md) v2.1 and [C04](C04-reservation-feeds.md) v2 |
-| Binding decisions applied | C4-1. C4-2 with review 39 R39-01 and review 52 V52-1. C4-3, as amended by review 42 D1 and review 54 D1 and D2. C4-4. C02's M-1, M-2 and M-3, and the C4-1 delivery reading. Every fix of review 42 (D1 to D6) and of review 54 (D1 to D5). Review 52's V52-2 |
+| Pinned to | `requirements-v1.10`. RFC-000 revision 4.4: the §8 rows (link hold port, link waiting port, outcome and expiry port, link availability query, link displacement read, reservation command port `cut_target`) and the "Revision 4.4 errata" C4-1 to C4-4 and C4-7. RFC-001 revision 5: §2, §4.1 to §4.5, §5.1, §5.4, §5.6, §7.1, §11. RFC-002 revision 5: §2.2, §2.5, §4.3, §5.1 to §5.7, §6.3, §9.6, §9.7, §12, §13. [C01](C01-platform.md) version 1 (`CommandEnvelope`, `RoutingRefusal`, `admitCommand`, move hooks, `Moving`, `Stopped`). Cross-checked against [C03](C03-link-schedule.md) v2.4 (frozen) and [C04](C04-reservation-feeds.md) v2.3 (frozen) |
+| Binding decisions applied | C4-1. C4-2 with review 39 R39-01 and review 52 V52-1. C4-3, as amended by review 42 D1 and review 54 D1 and D2. C4-4. C02's M-1, M-2 and M-3, and the C4-1 delivery reading. Every fix of review 42 (D1 to D6) and of review 54 (D1 to D5). Review 52's V52-2. The C02 items of fix verification 61 (V61-1, V61-2, V61-4, V61-5) |
 
 ## Purpose
 
@@ -141,11 +141,12 @@ type HoldReply = LinkStamp & (
 
 interface ConvertCmd extends C02Body {
   request: RequestId; attempt: Attempt; reservation: ReservationId; leg: LegId; part: PartId;
+  createdBy: ChangeId;          // the (account partition, sequence) of the E5 that created the part (V61-1)
   decisionTime: Hlc;            // T_dec, the E5 commit timestamp
 }
 type ConvertReply = (LinkStamp & {
   result: 'CONVERTED'; part: PartId;
-  clippedAt?: Minute;           // set when the leg already had an applied end_leg: the part ends there (CONVERT_AFTER_END)
+  clippedAt?: Minute;           // set only when an applied end_leg of the leg has a change id above createdBy (CONVERT_AFTER_END)
 }) | { code: 'NO_HOLD' } | { code: 'TOMBSTONED' } | Refusal;   // MISMATCH: another attempt
 
 interface ReleaseCmd extends C02Body {
@@ -379,13 +380,13 @@ SELECT attempt, reduction_seq, record_hlc
 | Operation | Preconditions | Outcomes | Errors |
 |---|---|---|---|
 | `hold` | The account owner sends it only after E1 commits, so a funds hold exists (P2-S92). It sends no attempt | The link does these checks in this order (RFC-001 §4.1). (1) A request record that a release made (a tombstone): `REFUSED(TOMBSTONED)`, with no digest check. (2) A request record that a hold made: the recorded state (held, waiting, refused, `RELEASED`, `CONVERTED`), or `MISMATCH` if the body digest is different. (3) `ts ≥ D_c`: `REFUSED(DEADLINE_PASSED)`. (4) Not valid for `m0` and the policy version: `REFUSED(INVALID(rule))`. (5) No fit on `occ_firm`: `REFUSED(NO_FIT, counterOffer)`. (6) Fit on `occ_all`: `HELD(1)`. (7) Otherwise, if `wait = false`: `REFUSED(IN_FLIGHT, retryAfterMs = the remaining deadline of the latest blocker, counterOffer)`, with no waiter and no yields. (8) Otherwise: `WAITING(1, aheadDeadline)`, and yield requests. **Each refusal records a tombstone until `D + release_grace`. Each refusal is also the release acknowledgement of this leg** | `Refusal`. For `UNKNOWN_LINK`, `LINK_CLOSING` and `LINK_RETIRED`, the link records **no tombstone**. The account owner then rejects the request with `LINK_UNAVAILABLE(link)` and no counter-offer, and releases every leg (settled M-2) |
-| `convert` | The account owner sends it after E5 commits. It is the **first command of its part in the per-leg sequence** (see "Leg-command sequencing"). `attempt` is the attempt recorded for the leg. A grant keeps the waiter's attempt | `CONVERTED(part)`: the hold becomes a committed part with age `T_dec`, and the link removes its marker. If the hold has a displacement mark, the link flags the part or adds it to the affected set, writes the notice immediately, and alerts `CONFIRMED_AFTER_REDUCTION` (P1-S63). **Backstop (review 54 D1):** if the leg already has an applied `end_leg`, the link clips the new part to that end, sets `clippedAt`, and alerts `CONVERT_AFTER_END` | `NO_HOLD`, `TOMBSTONED`: violations, alerted. `MISMATCH`: another attempt. `UNKNOWN_LINK` or `LINK_RETIRED`: a violation, because RFC-001 retires a link only when it has no holds, offer holds or parts. Alerted, and counted as answered (review 42 M5) |
+| `convert` | The account owner sends it after E5 commits. In the per-leg sequence, it has the position of the E5 that created the part (`createdBy`) (see "Leg-command sequencing"). `attempt` is the attempt recorded for the leg. A grant keeps the waiter's attempt | `CONVERTED(part)`: the hold becomes a committed part with age `T_dec`, and the link removes its marker. If the hold has a displacement mark, the link flags the part or adds it to the affected set, writes the notice immediately, and alerts `CONFIRMED_AFTER_REDUCTION` (P1-S63). **Backstop (review 54 D1, V61-1):** the link clips the new part only when an applied `end_leg` of the leg has a change id above `createdBy`. It clips the part to the end of that `end_leg`, sets `clippedAt`, and alerts `CONVERT_AFTER_END`. An applied `end_leg` with a change id below `createdBy` does not clip the part | `NO_HOLD`, `TOMBSTONED`: violations, alerted. `MISMATCH`: another attempt. `UNKNOWN_LINK` or `LINK_RETIRED`: a violation, because RFC-001 retires a link only when it has no holds, offer holds or parts. Alerted, and counted as answered (review 42 M5) |
 | `release` | A committed outcome that is not "confirmed". The account owner sends it to **every** Share leg of the intake, held or not | `RELEASED` when durable. In one entry, the link ends every hold, waiter registration, grant, displacement marker, yield claim and open yield or displacement request of the request, for all attempts. It records a tombstone until `D + release_grace` and scans the waiters. It does the same for a request that it has not seen | `Refusal`. **`UNKNOWN_LINK` or `LINK_RETIRED` in reply to `release` is the release acknowledgement of that leg** for E8 (review 42 M5) |
 | `query` | — | A read. It writes no entry. It returns the state of the request at the link, its attempt, the latest blocker deadline, the recorded refusal, any displacement, the open yield claims and the tombstone expiry | `Refusal` |
 | `end_leg` | A committed E11 (or an E13 *final* with its E11 move). `fromMinute` is never before `nb(ts)` of that entry. The exception is a POL-07 cut, which is effective at `T_eff`. The account owner sends a change that it knows in advance with a future date. **It is in the per-leg sequence** | `CHANGED` when durable: every part of the leg ends from `fromMinute` (the pulse `−b` over `[max(s, from), e)`). For cause `POL07`, the link records `applies`. For each of its own reductions in `applies`, the link compares the covered parts with the cap from `T_eff`. If they are above the cap, it alerts `CUT_TARGET_UNMET`. If the change arrives after `fromMinute`, the link applies it as decided, from `fromMinute` (late change, alerted) | See "Leg-command replies" |
 | `reduce_parts` | As `end_leg`. The account owner names the parts: a decrease removes the newest parts first (last in, first out), and POL-07 rates come from the §9.7 composition | `CHANGED`: the link **sets** the rate of each named part to the pieces from the first `from`, clipped to the current window of the part. It never decrements a rate. Otherwise as `end_leg` | See "Leg-command replies" |
 | `offer_hold` | E13 *prepared*. The account owner sends it only to path links that are not already legs of the reservation | (0) `ts ≥ lapse_at`: `REFUSED(TOMBSTONED)` (review 54 m4). (1) A recorded `offer_release` for the offer: `REFUSED(TOMBSTONED)`, before any fit check. (2) Otherwise the link decides as for `wait = false`, on the combined step function of the parts. `HELD`: each offer part becomes a pulse over `[from, end)` in `occ_firm`, `occ_all` and `occ_commit`, with its original age. Or `REFUSED(NO_FIT \| IN_FLIGHT, retryAfterMs?)` | `Refusal`. For `UNKNOWN_LINK`, `LINK_CLOSING` and `LINK_RETIRED`, the link records no tombstone and the offer is Refused (M-2) |
-| `offer_accept` | E13 *final*: every leg of the new path is booked (D4). On a new leg, it is the **first command in the per-leg sequence**. The move's `reduce_parts` and any `offer_move_at` come after its `ACCEPTED` | `ACCEPTED`: from `moveAt`, the offer parts and any cut cap on the offer become the reservation's parts on this link, with their original ages. If it arrives late, the link applies it as decided | See "Leg-command replies". `INVALID` unless `moveAt ≥ nb(decisionTime)` |
+| `offer_accept` | E13 *final*: every leg of the new path is booked (D4). On a new leg, it has the position of its E13 *final* in the per-leg sequence. The move's `reduce_parts` and any `offer_move_at` come after its `ACCEPTED` | `ACCEPTED`: from `moveAt`, the offer parts and any cut cap on the offer become the reservation's parts on this link, with their original ages. If it arrives late, the link applies it as decided | See "Leg-command replies". `INVALID` unless `moveAt ≥ nb(decisionTime)` |
 | `offer_move_at` | A further E11 for an earlier minute that the holder chose. **It is in the per-leg sequence of the new leg**, after `offer_accept` (review 54 B1) | `MOVED`: the parts start at `moveAt`. If it arrives late, the link applies it as decided | See "Leg-command replies". `INVALID` unless `nb(decisionTime) ≤ moveAt < current move_at` and `moveAt` is a minute boundary |
 | `offer_release` | E13 *declined*, *lapsed* or *failed*, or the link refused a sibling offer hold. The account owner sends it **to every Share leg to which it sent `offer_hold`, held or not** (review 42 M4) | `RELEASED`: the link removes the offer parts and any cut cap on them from all three occupancies immediately. It records a tombstone until `lapse_at + release_grace`, also for an offer that it has not seen, and scans the waiters | `Refusal`. `UNKNOWN_LINK` or `LINK_RETIRED` counts as acknowledged (review 42 M5) |
 
@@ -514,6 +515,7 @@ the next command of the leg can go. Thus a leg queue never stalls.
   link sends a revision ≥ 2 only when the target is strictly lower at one or more minutes,
   or when it omits ended parts. If a revision ≥ 2 adds a part, the account owner answers
   `MISMATCH` and alerts.
+- **Ended part (V61-5).** A part is ended from minute m when its applied end, after every applied end_leg, reduce_parts to 0 or window end, is at or before m. A later revision that drops an ended part never raises the rate of any part. A later revision may drop a part only if the part is ended from the minute of that revision's first piece. The recorded target keeps binding the dropped part up to its end.
 - **Routing (review 42 M2).** `receiverPartition` and `account` are the account partition
   of the reservation. The link records it from the `hold` and `convert` of the
   reservation. The account owner admits the command for that partition, and answers
@@ -532,7 +534,7 @@ the next command of the leg can go. Thus a leg queue never stalls.
   | The reservation ended at or before `T_eff` | An E11 "not applied: ended" | `NOT_APPLIED(ended)` |
   | The reservation left the link by `T_eff` (a Final move with `move_at ≤ T_eff`, and the link is not on the new path) | An E11 "not applied: left the link" | `NOT_APPLIED(left_link)` |
   | `offer` set, and the offer is not yet Final | E13: the target is kept against the offer, and the holder is told | `KEPT_FOR_OFFER(offer)` |
-  | `offer` set, offer Final, `move_at ≤ T_eff` | E11 cause *cut* | `APPLIED` |
+  | `offer` set, offer Final with this link on the new path, `move_at ≤ T_eff` | E11 cause *cut* | `APPLIED` |
   | `offer` set, offer Final with this link on the new path, `move_at > T_eff` (review 54 D5) | E11 cause *cut*, which binds the moved parts from `max(T_eff, move_at)` | `APPLIED` |
   | `offer` set, and the offer ended without a move to this link (Declined, Lapsed, Failed, or Final to another path) | E13 records it | `NOT_APPLIED(ended)`. On the link, the cap went with `offer_release` |
   | Unknown reservation | Nothing | `NOT_APPLIED(unknown)`, alerted, with `decisionTime: null` |
@@ -625,16 +627,14 @@ order of the database decides. The link:
 
 ### Leg-command sequencing (review 42 B1; review 54 B1, M2, D1, D2; amends C4-3)
 
-**The sequence for each (reservation, leg).** The account owner sends the commands of a
-leg in this order:
-1. The `convert` that creates each part of the leg: the part of the booking, and each
-   part that a change adds later.
-2. On a new leg of a move: `offer_accept`.
-3. `end_leg`, `reduce_parts` and `offer_move_at`, in change-id order.
+**The sequence for each (reservation, leg) (V61-1).** The account owner sends the
+commands of a leg in the order of the sequence of their deciding entries:
+- A `convert` has the position of the E5 that created the part (`createdBy`). This is
+  the part of the booking, or a part that a change adds later.
+- An `offer_accept` on a new leg has the position of its E13 *final*.
+- `end_leg`, `reduce_parts` and `offer_move_at` have the position of their change id.
 
 Additional rules:
-- A part's `convert` comes before every change whose change id is above the E5 that
-  created the part.
 - The account owner keeps **one outstanding command** for each leg. It sends the next
   command only when the previous one is **answered** (see "Leg-command replies").
 - The change ids always increase. Each is the deciding entry's (account partition,
@@ -642,13 +642,11 @@ Additional rules:
 - One gRPC call can carry commands for different legs (up to 500, each with its own
   envelope). It never carries two commands for one leg.
 
-**After a takeover.** The new holder rebuilds the queue of each leg from its log, then
-sends again in this order:
-1. The `convert` commands that are still pending (RFC-002 §5.7, "conversions pending").
-2. A pending `offer_accept`.
-3. The E11s that have no E12, in change-id order.
-
-The one-outstanding rule applies.
+**After a takeover.** The new holder rebuilds the queue of each leg from its log. It
+sends the pending commands again in the same order: the sequence of their deciding
+entries. Pending commands are the `convert`s that are still pending (RFC-002 §5.7,
+"conversions pending"), a pending `offer_accept`, and the E11s that have no E12. The
+one-outstanding rule applies.
 
 **The link rule (review 54 D2).** For each (reservation, leg), the link keeps the
 recorded reply of **every** change id that it applied. A leg has few changes, and the
@@ -683,12 +681,18 @@ rule and pass with it:
     then creates p1 for its full window, but the buyer is told that the capacity is free
     from 10:01.
   - With the rule: `end_leg` waits for `CONVERTED`. L ends p1 at 10:01. If a defect sends
-    `convert` late anyway, the link clips p1 at the applied end and alerts
-    `CONVERT_AFTER_END`.
+    `convert` late anyway, the applied `end_leg` has a change id above `createdBy`, so
+    the link clips p1 at the applied end and alerts `CONVERT_AFTER_END`.
 - **P2-S44 and P2-S94 row 2 (an extension, then a shorten).** The extension's `convert`
   for p3 `[18:00, 20:00)` is late, and the queued shorten's `end_leg(from 12:00)` waits
   for it. L ends p1, p2 and p3 at 12:00. Without the rule, p3 stays held after the
   reservation is reported ended (for ever, for "make open-ended", P2-S46).
+- **Shorten, then extend (V61-1).** E11 seq 100 shortens R to 12:00, and
+  `end_leg(L, from 12:00)` gets `CHANGED`. E5 seq 105 extends R to 20:00 and adds p3
+  `[12:00, 20:00)`. `convert(p3)` follows, because 105 is above 100. The applied
+  `end_leg` has a change id below `createdBy`, so the link does not clip p3. L holds p3
+  on `[12:00, 20:00)`. After a takeover with both commands pending, the new holder sends
+  `end_leg` (100) first and `convert(p3)` (105) second, so the result is the same.
 - **P2-S43 / P2-S44 (cancel or shorten, then a cut; review 42 B1).** E11a (seq 100)
   sends `end_leg(from 12:00)` and gets `MOVING`. E11b (seq 101) is a cut from another
   link. E11b waits for E11a's answer. L ends the leg at 12:00, then applies E11b, which
@@ -811,8 +815,8 @@ rule and pass with it:
 - **POL-07 cuts and moves.** P1-S31, P1-S32, P1-S35, P1-S36, P1-S43, P1-S44, P1-S45,
   P1-S47, P1-S52, P1-S53, P1-S55, P1-S56, P1-S57, P1-S59, P1-S60, P1-S61, P1-S64, P1-S65,
   P1-S68, P1-S71, P1-S79, P1-S82, **P1-S84** (new in v1.10: a move that becomes final
-  after the cut keeps the cut rate). **Freeze gate:** no RFC cites P1-S84 yet. C02 is not
-  tagged until RFC-001 and RFC-002 cite it (review 54 m8).
+  after the cut keeps the cut rate). C02 freezes with RFC errata owed:
+  RFC-001 and RFC-002 cite P1-S84 (orchestrator; V61-2).
 - **Not yet covered by a scenario.** These are proposed to requirements:
   - `LINK_UNAVAILABLE(link)` (RQ-42-1);
   - a second yield request to a holder that refused while it was not waiting
@@ -858,9 +862,12 @@ rule and pass with it:
    - a lower id that the link never applied gets `STALE_CHANGE`, and occupancy does not
      change;
    - absolute pieces are clipped to the window of the part.
-7. **`convert` backstop (review 54 D1).** A `convert` after an applied `end_leg` on the
-   leg clips the new part at that end. It returns `clippedAt` and alerts
-   `CONVERT_AFTER_END`.
+7. **`convert` backstop (review 54 D1, V61-1).**
+   - A `convert` whose `createdBy` is below the change id of an applied `end_leg` on the
+     leg clips the new part at that end. It returns `clippedAt` and alerts
+     `CONVERT_AFTER_END`.
+   - A `convert` whose `createdBy` is above the change id of every applied `end_leg` is
+     not clipped.
 8. **`applies` (C4-4).**
    - Cause `POL07` without `applies` gets `INVALID(applies)`.
    - `applies` with another cause gets `INVALID(applies)`.
@@ -914,9 +921,10 @@ rule and pass with it:
    - A `WAITING_NOTICE(a)` after `GRANTED(a)` causes no E2.
    - A yield request with a new claim gets an answer, and E3 records the claim.
 3. **Leg-command sequencing (review 42 B1, review 54 B1).**
-   - The account owner sends no leg change for (R, L) while a `convert` on L for R is
-     unanswered. This includes after a takeover, where the pending `convert`s go before
-     the E11s.
+   - The account owner sends the commands of (R, L) in the sequence of their deciding
+     entries: a `convert` at the position of its E5, and leg changes at their change id.
+     It sends no later command while an earlier one is unanswered.
+   - After a takeover, the pending commands go again in the same order.
    - Two leg commands for one leg are never in flight together.
    - `offer_move_at` waits for `ACCEPTED`.
    - Different legs are coalesced.
@@ -984,6 +992,8 @@ rule and pass with it:
 - **Confirm, then cancel, with `convert` answered `MOVING`. L ends p1 at 10:01** (review
   54 B1, P2-S43).
 - **P2-S94 row 2 with a late `convert`**: L ends p3 with the shorten.
+- **Shorten, then extend (V61-1): L holds p3 `[12:00, 20:00)`.** The test also runs
+  with an account-owner takeover while both commands are pending.
 - A decrease and a cut on one leg, in both orders (P2-S48).
 - An account-owner takeover between two changes of one leg. The change sent again gets
   its recorded `CHANGED`, and no page occurs.
@@ -997,9 +1007,9 @@ applies it. The errata make the RFCs agree with C02. C02 does not edit an RFC.
 | # | Point | Settled form | Errata |
 |---|---|---|---|
 | C4-1 | How a cut target is answered and delivered | The answer is the synchronous reply to `cut_target`: `APPLIED(change ids \| none)`, `NOT_APPLIED(ended \| left_link \| unknown)` or `KEPT_FOR_OFFER(offer)`, given after E11 or E13 commits. There is no `cut_target_answer`. **The link sends `cut_target` again, from link state, until it records the reply**, also after a takeover. A target is not a runtime notification. A re-send is idempotent by (link, reduction, reservation, revision) | RFC-000 §8 (remove `cut_target_answer` from the link hold port row). RFC-001 §5.4, §7.1 (`link_outbox` does not carry `cut_target`), §11 (`CutAnswer` recorded from the reply; remove the `cut_target_answer` row; the re-send replaces the Kafka relay). RFC-002 §2.5, §9.7 (the answer is the reply, not a notification) |
-| C4-2, R39-01 and V52-1 | Target revision | `cut_target` carries `revision`. It increases for each key and can only lower the target. The reply echoes it and carries `recordedRevision`. A repeat of a recorded (key, revision) is answered with its recorded reply. A lower revision that was never recorded is answered with the highest recorded revision's reply, echoing its own revision. Neither writes an entry or a `cut`, and neither ever supersedes. Each revision above the highest recorded writes one E11 and one `cut`, `APPLIED(none)` included | RFC-000 §8 (reservation command port row: idempotent by key **and revision**). RFC-002 §9.7, §13.1. RFC-001 §5.4 (when a revision ≥ 2 is sent). Same text as C03 v2.1 rule 3 and C04 v2 "Cut" |
-| Review 54 M4 (D4) | Covered parts across revisions | Revision 1 sets the covered parts. A revision ≥ 2 has the same parts, less ended parts, and never adds one. A revision ≥ 2 goes only when it is strictly lower at one or more minutes, or when it omits ended parts. A revision that adds a part gets `MISMATCH`, alerted | RFC-001 §5.4. RFC-002 §9.7. **C03 erratum**: R39-01 (c) "or its covered parts changed" becomes "or it omits covered parts that have ended", and PT-6 changes to match |
-| C4-3, amended by review 42 D1 and review 54 D1 and D2 | Order of leg commands | For each (reservation, leg), the account owner keeps **one outstanding command**. The sequence is: the `convert` of each part, then `offer_accept` on a new leg, then `end_leg`, `reduce_parts` and `offer_move_at` in change-id order. After a takeover, the pending `convert`s go first, then the E11s without E12 in change-id order. The link keeps the reply of every applied change id. An applied id gets its recorded reply. Only a lower id that the link never applied gets `STALE_CHANGE`. That reply counts as answered. It is logged without a page after a takeover, and alerted only when unexplained. A late `convert` after an applied `end_leg` is clipped and alerted `CONVERT_AFTER_END` | RFC-000 §8 (link hold port row, AI-42-1 as AI-54-1 extends it: "for each (reservation, leg), the account owner keeps one outstanding command among `convert`, `offer_accept`, `offer_move_at`, `end_leg` and `reduce_parts`, in the creation and change-id order of that leg"). RFC-001 §4.4 (the clip), §11.1 (the reply for each change id, `offer_move_at` with a change id). RFC-002 §5.7 (`convert` in the per-leg sequence), §9.2, §9.7, §12.1 step 4, §13.2 |
+| C4-2, R39-01 and V52-1 | Target revision | `cut_target` carries `revision`. It increases for each key and can only lower the target. The reply echoes it and carries `recordedRevision`. A repeat of a recorded (key, revision) is answered with its recorded reply. A lower revision that was never recorded is answered with the highest recorded revision's reply, echoing its own revision. Neither writes an entry or a `cut`, and neither ever supersedes. Each revision above the highest recorded writes one E11 and one `cut`, `APPLIED(none)` included | RFC-000 §8 (reservation command port row: idempotent by key **and revision**). RFC-002 §9.7, §13.1. RFC-001 §5.4 (when a revision ≥ 2 is sent). Same text as C03 v2.3 rule 3 and C04 v2.2 "Cut" |
+| Review 54 M4 (D4) | Covered parts across revisions | Revision 1 sets the covered parts. A revision ≥ 2 has the same parts, less ended parts, and never adds one. A revision ≥ 2 goes only when it is strictly lower at one or more minutes, or when it omits ended parts. A revision that adds a part gets `MISMATCH`, alerted | RFC-001 §5.4. RFC-002 §9.7. C03 erratum (R39-01 (c), PT-6): applied in C03 v2.3. The definition of an ended part (V61-5) is the same in C02, C03 and C04 |
+| C4-3, amended by review 42 D1 and review 54 D1 and D2 | Order of leg commands | For each (reservation, leg), the account owner keeps **one outstanding command**. The commands go in the sequence of their deciding entries: a `convert` at the position of its E5 (`createdBy`), an `offer_accept` at that of its E13 *final*, and `end_leg`, `reduce_parts` and `offer_move_at` at their change id. After a takeover, the pending commands go again in the same order (V61-1). The link keeps the reply of every applied change id. An applied id gets its recorded reply. Only a lower id that the link never applied gets `STALE_CHANGE`. That reply counts as answered. It is logged without a page after a takeover, and alerted only when unexplained. The link clips a `convert` only when an applied `end_leg` has a change id above `createdBy`, and alerts `CONVERT_AFTER_END` | RFC-000 §8 (link hold port row, AI-42-1 as AI-54-1 extends it: "for each (reservation, leg), the account owner keeps one outstanding command among `convert`, `offer_accept`, `offer_move_at`, `end_leg` and `reduce_parts`, in the creation and change-id order of that leg"). RFC-001 §4.4 (the clip), §11.1 (the reply for each change id, `offer_move_at` with a change id). RFC-002 §5.7 (`convert` in the per-leg sequence), §9.2, §9.7, §12.1 step 4, §13.2 |
 | Review 54 M1 | Leg-command replies | The table "Leg-command replies": retry only for routing refusals and `UNAVAILABLE`. Every other error is answered, alerted as a defect, and counted for E12 | RFC-002 §9.7, §13.2 |
 | C4-4 | `end_leg` POL-07 pairs | `applies` names every applied (link, reduction). It is present only if the cause is `POL07`. Otherwise the link answers `INVALID(applies)` | RFC-001 §11.1 `end_leg` row |
 | C4-7 | Runtime hooks and results | From C01. C02 imports C01's `CommandEnvelope` and `RoutingRefusal` | RFC-001 and RFC-002, as RFC-000 4.4 states |
@@ -1010,16 +1020,39 @@ applies it. The errata make the RFCs agree with C02. C02 does not edit an RFC.
 | Review 42 M2, review 54 m3 | Routing to an account partition | C02 imports C01's `CommandEnvelope`, which carries the routed generation and the sender sequence. The C02 body carries `receiverPartition`. `cut_target` carries the account partition of the reservation. In a batch, each item has its own envelope, and the reply is per item (`RoutingRefusal` for each item) | RFC-001 §11, RFC-002 §2.5, §13.1 |
 | Review 42 M3 (D3) | The move's `reduce_parts` on a new leg | It goes only after `ACCEPTED` of the leg's `offer_accept` (per-leg sequence) | RFC-002 §9.6, §12 (S18) |
 | Review 42 M4, review 54 m4 (D4 of review 42) | Offer holds that nobody releases | `offer_release` goes to every leg that got `offer_hold`. The link records it also for an offer that it has not seen. `offer_hold` gets `TOMBSTONED` after a release, or at `ts ≥ lapse_at` | RFC-002 §9.6. RFC-001 §5.6, §11.1 |
-| V52-2, review 54 M5 (D5) | Offer-scoped target, offer Final with this link on the new path | Two rows of the case table. "`offer` set, offer Final, `move_at ≤ T_eff`: E11 cause *cut*, `APPLIED`" (V52-2 text). "`move_at > T_eff`: E11 cause *cut*, which binds the moved parts from `max(T_eff, move_at)`, `APPLIED`". Together: a normal cut for any `move_at` | RFC-002 §9.6, §9.7. **C04 erratum**: lines 342, 487 and 537 and PL-3 remove the `move_at ≤ t_eff` condition. C03 V52-2 is stated again to match. RFC-000 C4 freeze note (AI-54-2) |
+| V52-2, review 54 M5 (D5) | Offer-scoped target, offer Final with this link on the new path | Two rows of the case table. "`offer` set, offer Final with this link on the new path, `move_at ≤ T_eff`: E11 cause *cut*, `APPLIED`" (V52-2 text, with V61-4). "`move_at > T_eff`: E11 cause *cut*, which binds the moved parts from `max(T_eff, move_at)`, `APPLIED`". Together: a normal cut for any `move_at` | RFC-002 §9.6, §9.7. C04 erratum (lines 342, 487, 537, PL-3) and C03 V52-2 restatement: applied in C04 v2.2 and C03 v2.3. RFC-000 C4 freeze note (AI-54-2) |
 | Review 54 m7 | `cut_target` `MISMATCH` and `REDUCTION_FINAL` | The `MISMATCH` counts as the recorded answer for `REDUCTION_FINAL`. Rating's `hold_2` for the reservation waits for an operator decision, and C03's R39-20 alarm reports it | C03 (state it under `REDUCTION_FINAL`) |
-| Review 42 M6, review 54 m5 | Errata list | This table, and these additional errata: (a) RFC-000 §8 C4 freeze note (revision 4.5): the rows of the link hold port, the link waiting port and the reservation command port refer to C02 v1 (AI-42-2, AI-54-1, AI-54-2). (b) RFC-002 §2.5: `yield_accept`, `displacement_accept`, the expiry answer and the cut answer are synchronous commands or replies, not outbox notifications. `expire_if_undecided` arrives as a gRPC command. (c) RFC-002 §13.2: remove "a later displacement of a re-granted attempt replaces it" and "a marker for an earlier attempt is ignored". A present marker of any attempt stops E5. (d) RFC-001 §11.1 `YIELD_REQUEST`: remove "one outstanding per (request, attempt)". (e) RFC-002 §2.2 E3 records the claim. (f) RFC-002 §5.7: `convert` is in the per-leg sequence. (g) **P1-S84**: RFC-001 (§5.6, §13) and RFC-002 (§9.6, §9.7, traceability) cite it, and RFC-002 §9.6 states the move's `reduce_parts`. This is the freeze gate | As listed |
+| Review 42 M6, review 54 m5 | Errata list | This table, and these additional errata: (a) RFC-000 §8 C4 freeze note (revision 4.5): the rows of the link hold port, the link waiting port and the reservation command port refer to C02 v1 (AI-42-2, AI-54-1, AI-54-2). (b) RFC-002 §2.5: `yield_accept`, `displacement_accept`, the expiry answer and the cut answer are synchronous commands or replies, not outbox notifications. `expire_if_undecided` arrives as a gRPC command. (c) RFC-002 §13.2: remove "a later displacement of a re-granted attempt replaces it" and "a marker for an earlier attempt is ignored". A present marker of any attempt stops E5. (d) RFC-001 §11.1 `YIELD_REQUEST`: remove "one outstanding per (request, attempt)". (e) RFC-002 §2.2 E3 records the claim. (f) RFC-002 §5.7: `convert` is in the per-leg sequence. (g) **P1-S84**: RFC-001 (§5.6, §13) and RFC-002 (§9.6, §9.7, traceability) cite it, and RFC-002 §9.6 states the move's `reduce_parts`. C02 freezes with this erratum owed (V61-2) | As listed |
 | Review 42 M7 | Key of the displacement table | The primary key is exactly (`link_id`, `request_part`, `request_seq`), with no slot column. A link move does not move or write the rows | RFC-001 §7.1. RFC-006 §5.5 (the slot-first convention applies only to log and outbox tables) |
+
+## Errata owed
+
+C02 is frozen. These errata are owed by other documents. They do not change C02.
+
+| Owed by | Erratum | Source |
+|---|---|---|
+| RFC-001, RFC-002 | Cite P1-S84 (RFC-001 §5.6, §13; RFC-002 §9.6, §9.7, traceability). RFC-002 §9.6 states the move's `reduce_parts` | V61-2, review 54 m8 |
+| RFC-000 §8 | C4 freeze note (revision 4.5): the rows of the link hold port, the link waiting port and the reservation command port refer to C02 v1 | AI-42-1, AI-42-2, AI-54-1, AI-54-2 |
+| RFC-001 | The items in the "Errata" column of the Settled table, and the `convert` clip rule with `createdBy` (§4.4, §11.1) | Settled table, V61-1 |
+| RFC-002 | The items in the "Errata" column of the Settled table, and the sequence of leg commands by deciding entry, takeover included (§5.7, §9.7, §12.1 step 4) | Settled table, V61-1 |
+| RFC-006, C01 | The slot-first convention applies only to log and outbox tables (§5.5) | Review 42 M7 |
+| Requirements | RQ-42-1, RQ-42-2, RQ-54-1 | Reviews 42, 54 |
+
+## Fix verification 61 resolution
+
+| Item | Severity | Resolution in 1.0.0 |
+|---|---|---|
+| V61-1 | Major | Applied. Every leg command goes in the sequence of its deciding entry, takeover re-sends included. `ConvertCmd` has `createdBy`. The link clips a `convert` only when an applied `end_leg` has a higher change id. Joint test "shorten, then extend: L holds p3 `[12:00, 20:00)`", also across a takeover. Provider test 7 and consumer test 3 changed |
+| V61-2 | Minor | Applied. The freeze gate is replaced by "freezes with RFC errata owed". C03 v2.3 and C04 v2.2 are pinned. The C03 and C04 errata in the Settled table are marked as applied |
+| V61-4 | Minor | Applied. The row "offer Final, `move_at ≤ T_eff`" has "with this link on the new path" |
+| V61-5 | Minor | Applied. The definition of an ended part is added word for word under "Covered parts" |
+| V61-3, V61-6 | Minor | C03 and C04 items. Not in C02 |
 
 ## Review 54 resolution
 
 | Finding | Severity | Resolution in draft.3 |
 |---|---|---|
-| B1 | Blocker | Applied as D1. **Changes:** `convert` and `offer_move_at` join the per-leg sequence, and `offer_move_at` gets a change id. The takeover order sends pending `convert`s first. The link clips a late `convert` and alerts `CONVERT_AFTER_END` (`clippedAt`). The P2-S43, P2-S44/S94 and P2-S48 traces are stated. **Tests:** consumer 3, provider 7, and joint tests for "confirm, then cancel" and P2-S94 row 2. **Errata:** RFC-002 §5.7, §9.7, §12.1, RFC-000 AI-54-1 |
+| B1 | Blocker | Applied as D1. **Changes:** `convert` and `offer_move_at` join the per-leg sequence, and `offer_move_at` gets a change id. The takeover order sent pending `convert`s first (superseded in 1.0.0 by V61-1: order by deciding entry). The link clips a late `convert` and alerts `CONVERT_AFTER_END` (`clippedAt`). The P2-S43, P2-S44/S94 and P2-S48 traces are stated. **Tests:** consumer 3, provider 7, and joint tests for "confirm, then cancel" and P2-S94 row 2. **Errata:** RFC-002 §5.7, §9.7, §12.1, RFC-000 AI-54-1 |
 | M1 | Major | Applied. The "Leg-command replies" table puts every reply in "retry" or "answered", so no queue stalls. The unreachable branch of the M3 timeout row is removed. **Test:** consumer 4 |
 | M2 | Major | Applied as D2. The link keeps the reply of every applied change id, and an applied id gets its recorded reply. `STALE_CHANGE` is only for a lower id that the link never applied. As the orchestrator decided, the account owner does not page on a `STALE_CHANGE` after a takeover; it alerts only when no takeover explains it. **Tests:** provider 6, consumer 4, and a joint takeover test |
 | M3 | Major | Applied as D3. A refusal recorded while the mark is set raises a new claim immediately. **Tests:** provider 5 and the joint P2-S19/P2-S87 test cover the order "mark, then refusal" |
@@ -1032,7 +1065,7 @@ applies it. The errata make the RFCs agree with C02. C02 does not edit an RFC.
 | m5 | Minor | Applied. Errata (c) to (f) are added to the Settled table |
 | m6 | Minor | Applied. The "Revisions" bullet and the case table use V52-1's exact text |
 | m7 | Minor | Applied. `MISMATCH` counts for `REDUCTION_FINAL`, and `hold_2` waits for an operator decision (C03 R39-20) |
-| m8 | Minor | Applied as a freeze gate in the Status and Scenarios sections |
+| m8 | Minor | Applied as a freeze gate in draft.3. Superseded by V61-2: C02 freezes with RFC errata owed |
 | RQ-54-1 | Requirements | Proposed, not decided here. Listed under Scenarios |
 | AI-54-1, AI-54-2 | Architecture | Carried as errata in the Settled table |
 | V52-1, V52-2 (review 52) | C03 fix verification | Applied with their exact text: the "Revisions" bullet, the case table, and the row "offer Final, `move_at ≤ T_eff`" |

@@ -3,13 +3,13 @@
 | | |
 |---|---|
 | Contract ID | **C11** (`metering-ingress`) |
-| Version | 1.0.0-draft.3 (revised per [review 41](../../reviews/41-contract-C11-review.md) and [review 57](../../reviews/57-contract-C11-review.md); see [Review 41 resolution](#review-41-resolution) and [Review 57 resolution](#review-57-resolution)) |
-| Status | **Draft**, for contract re-review after review 57. Mismatches M-1 and M-2 are settled by the orchestrator, S-1 as amended after review 41 (see [Settled](#settled)). The RFC errata listed there follow. One joint fix with C09 is open (`RecordId` gains the observation domain and the NetFlow v9 record index; F41-15) |
+| Version | **1.0.0** (from 1.0.0-draft.3, revised per [review 41](../../reviews/41-contract-C11-review.md) and [review 57](../../reviews/57-contract-C11-review.md); see [Review 41 resolution](#review-41-resolution) and [Review 57 resolution](#review-57-resolution); final pass per [fix verification 62](../../reviews/62-contract-C11-fix-verification.md), see [Fix verification 62 resolution](#fix-verification-62-resolution)) |
+| Status | **Frozen.** Frozen at C4 on fix verification 62; errata owed listed below (see [Settled](#settled)). Mismatches M-1 and M-2 are settled by the orchestrator, S-1 as amended after review 41. The joint `RecordId` change with C09 is done in C09 1.0-draft.3 (F41-15, V62-08) |
 | Provider (owner) | RFC-003 rating and metering, at revision 5 with erratum 5.1: **metering ingestion** (part I; part II producer), **attribution stage A** (part II and part III consumer; part IV producer), **attribution stage B** (part IV consumer) |
 | Producers into it | **Exporters** (external: suppliers' exporters and Share's own, the designated probe exporters included), part I. **Provisioning** (external, Problem 5, out of scope), part III |
 | Consumers | Exporters (acknowledgements, part I); attribution stage A (parts II and III); attribution stage B (part IV) |
 | Transport | Part I: **HTTP**, an HTTP/2 gRPC bidirectional stream over mutually authenticated TLS to the ingestion edge of either serving region. Part II: **Kafka event**, relayed from the self-outboxed `ingest_log`, the owner's direct publish being the fast path. Part III: **Kafka event**, published by provisioning. Part IV: **Kafka event**, from stage A's transactional outbox. Kafka framing per **C01** §2.5 |
-| Depends on | **C08** (exporter credential: the `device_cert` record, its revocation, and the principal context (C08 §A) the edge forwards). **C09** (`put_payload`, `withdraw_payload`, `digest_key` and the `RecordId` type; ingestion consumes them, outside this wire contract). **C01** (Kafka wire format, self-outboxed log, resolved markers, owner runtime). RFC section numbers are given for provenance only |
+| Depends on | **C08** (exporter credential: the `device_cert` record, its revocation, and the principal context (C08 §A) the edge forwards). **C09** at version 1 (frozen) (`put_payload`, `withdraw_payload`, `digest_key` and the `RecordId` type; ingestion consumes them, outside this wire contract). **C01** (Kafka wire format, self-outboxed log, resolved markers, owner runtime). RFC section numbers are given for provenance only |
 | Pinned to | `requirements-v1.10`; RFC-000 revision 4.4 (§2 metering components, §4.4 record identity, the §8 rows "Flow-record ingestion protocol", "Metering hand-off" and "Attribution keys from provisioning"); RFC-003 revision 5 + erratum 5.1 (§3.1 to §3.7, §4.1 to §4.5, §5.9, §7, §8); RFC-005 revision 5 (§2.1 exporter row, §8.4, §10); RFC-006 revision 6 (§3.5, §5.2, §5.4) |
 
 ## Purpose
@@ -127,7 +127,8 @@ type RejectKey =
       byteOffset: number }               // offset of the record or remainder in the message
   | { kind: "digest";                    // the message header did not parse
       exporterId: ExporterId;
-      keyedDigest: string };             // hex HMAC-SHA-256 of the message under the exporter's digest key
+      keyedDigest: string };             // hex HMAC-SHA-256 of the message under VERSION 1 of the exporter's
+                                         // digest key (C09 digest_key(exporter, 1)), never the current version (V62-02)
 
 /** Every identity this contract carries. */
 type DerivedIdentity =
@@ -148,8 +149,9 @@ type RecordFields = {
   packets?: U64;
 };
 
-/** C09's RecordId, carried verbatim (F41-15). Joint fix pending in C09: the identity ref
- *  gains observation_domain and, for NetFlow v9, index. Mapping from C11:
+/** C09's RecordId, carried verbatim (F41-15). The joint change is done in C09
+ *  1.0-draft.3 (V62-08): the identity ref has observation_domain and, for NetFlow v9,
+ *  index. exporter_epoch and sequence are decimal strings. Mapping from C11:
  *    exporter            = exporterId
  *    ref identity        = { exporter_epoch: epoch, sequence: extSeq | packetExtSeq,
  *                            observation_domain, index? }
@@ -289,7 +291,7 @@ type DerivedRefusal =
   | "version out of order"
   | "changes an attribution key"
   | "outside the original's minutes"
-  | "outside the original's receipt";    // correction: a flow end after the rejected item's receipt + future_skew_max (F57-05)
+  | "outside the original's receipt";    // correction: a flow end after the first receipt of the reject key + future_skew_max (F57-05, V62-03)
 
 type SessionNotice = {
   kind: "credential-revoked" | "draining" | "protocol-error" | "waiting";
@@ -488,8 +490,9 @@ type CorrectionFact = {
   replacement: BindingFact | ObservationPointFact | null;   // null: retracted
 };
 
-/** Completeness assertion, NOT a fact (F41-21, F57-13). Every fact RECORDED with a valid
- *  time <= coversThroughMs for this exporter's observation points has a bindingSeq <=
+/** Completeness assertion, NOT a fact (F41-21, F57-13, V62-01). Every fact that takes
+ *  effect (starts, ends or changes a binding or an observation point, as in
+ *  "Preconditions on the producer") at a time <= coversThroughMs has a bindingSeq <=
  *  this event's. CorrectionFacts are the exception: they change later decisions only
  *  (P3-N9). The heartbeat advances the position. It is never written to attr_a_log.
  *  Coverage ahead is allowed (F57-01, D57-1): coversThroughMs <= recordedAtMs +
@@ -594,9 +597,13 @@ type Part = {
 set; a `network_operations` certificate, or one with no exporter, is refused and nothing is
 created.
 
-**Export format per exporter** (F57-06, D57-5). The partition records the export format of
-the first session of the exporter ID. A `Hello` with a different `exportFormat` is refused
-with `notice{protocol-error, "export format"}`, and the stream closes. To change the
+**Export format per exporter** (F57-06, D57-5, V62-04). The owner records the export
+format of the exporter ID in the transaction of its first committed `batch` entry. The
+owner checks `BatchBody.format` against the recorded format on every batch. If they are
+different, the owner refuses the batch. It does not acknowledge the batch, and the edge
+sends `notice{protocol-error, "export format"}`. The edge also refuses a `Hello` with a
+different `exportFormat`, and the stream closes. The owner check is the authoritative
+check; the edge check is an early check only. To change the
 format, the supplier administrator (or network operations) gets a new exporter ID through
 C08. Thus one range set never holds both packet and record sequences.
 
@@ -608,7 +615,7 @@ revocation it sends `notice{credential-revoked}` and closes the stream within 31
 revocation. It applies the revocation at most 31 s after it (inside X1-S41's 60 s)**
 (F57-17). A
 resend under another valid certificate of the same exporter ID (a rotation) is accepted
-or deduplicated by identity** (F41-25). The certificate serial is recorded in every
+or deduplicated by identity (F41-25). The certificate serial is recorded in every
 `batch`, `correction` and `supersession` entry, for audit.
 
 **Identity and decoding come from the item alone** (F41-01). For each `ExportItem`,
@@ -676,7 +683,14 @@ the context:
 
 **Context check memo** (F57-09). A relay can lose its stored contexts and rebuild them
 from the router's current options. Then a resend has a different init time. To find this,
-the owner keeps a **24 h memo**, beside the digest cache:
+the owner keeps a **24 h memo** (V62-05):
+
+- The memo is a table in the slot's own store. It is not on the owner's local disk.
+- Each row expires 24 h after it is written (row TTL). The store deletes it.
+- The table is excluded from backups and snapshots. Its rows are never logged.
+- The memo survives a takeover: the new lease holder reads the same table.
+
+The memo rows are:
 
 - Key: (exporter, domain, `exportTimeS`, q, 64-bit content digest of `message`).
 - Value: the epoch the message took, or "no epoch".
@@ -686,13 +700,21 @@ the owner keeps a **24 h memo**, beside the digest cache:
 - The digest is the 64-bit content digest of RFC-003 §3.5, not a keyed digest, so a
   conforming batch never waits for the key service.
 - Size (est.): about 30,000 messages/s at peak × about 40 B is about 100 GB a day in all,
-  less than 1 GB per slot, on the owner's local disk.
+  less than 1 GB per slot, in the slot's store.
 
 **A rejection is fixed only by a `Correction`** (F57-19). A record rejected "no epoch" has
 a positioned reject key with `epoch: null`. If a correction of that key is accepted,
 ingestion treats a later copy of the record, in any context, as a duplicate. Ingestion
 checks this from the corrected-key index, which is permanent. The memo is not needed for
 this check.
+
+**Records inside a corrected remainder or message** (V62-06). A record of a later copy is a
+duplicate, whatever its context, when it is inside a corrected remainder or a corrected
+whole message. "Inside a corrected remainder" means: the same exporter, domain,
+`messageSeq`, `exportTimeS` and set, at or after the remainder's `byteOffset`. "Inside a
+corrected whole message" means: the same exporter, domain, `messageSeq` and
+`exportTimeS`, or the same digest-kind key. Ingestion checks this from the corrected-key
+index.
 
 **Batch** (preconditions: credit; size ≤ `maxBatchBytes`). Each record is validated
 (RFC-003 §3.3) with exactly one outcome, recorded in the same `batch` entry before the
@@ -764,11 +786,14 @@ steps in this order:
 3. `corrects` must name a rejection of the partition. If not, the answer is `refused` "no
    such rejected record". `records` has exactly one element for a single record, and one
    or more for a remainder or a whole message.
-4. **Deadline from the original** (F57-05, D57-3). The commit timestamp must be before the
-   rejected record's last minute end + `dispute_window`. If the rejected record had no
-   usable times, use the commit timestamp of its `batch` entry (its receipt) instead of
-   the last minute end. If not, the answer is `refused` "outside dispute_window".
-5. Each corrected record must have `flowEndMs` ≤ the rejected item's receipt +
+4. **Deadline from the original** (F57-05, D57-3 as narrowed, V62-03). The **first
+   receipt** is the commit timestamp of the first `batch` entry that rejected this
+   `RejectKey`. A later resend does not change it. The deadline is min(the rejected
+   record's last minute end, the first receipt) + `dispute_window`. If the rejected record
+   had no usable times, the deadline is the first receipt + `dispute_window`. The commit
+   timestamp must be before the deadline. If not, the answer is `refused` "outside
+   dispute_window".
+5. Each corrected record must have `flowEndMs` ≤ the first receipt +
    `future_skew_max`. If not, the answer is `refused` "outside the original's receipt".
 6. **Domain** (F41-26, F57-19). When the rejected item's header parsed, each record's
    `observationDomain` must equal the header's domain. If not, the answer is `refused`
@@ -1064,7 +1089,16 @@ X2-S10, X2-S12, X2-S14, X2-S18, X2-S20, X2-S22; X1-S41 and X1-S45 through C08. A
     corrected; then the original message, resent after the time is valid, gives a
     duplicate (IPFIX and v9), and no identity conflict.
     *Deadline from the original* (F57-05): a correction sent one year after the rejection,
-    with today's flow times: refused "outside dispute_window". A correction record with
+    with today's flow times: refused "outside dispute_window". The bad message resent a
+    day later does not move the deadline. A record rejected with an end 1 year ahead: a
+    correction after the first receipt + `dispute_window` is refused (V62-03).
+    *Corrected remainder* (V62-06): a remainder rejected "no template" and corrected, then
+    the message resent with a context that holds the template: every record inside the
+    remainder is a duplicate. *Digest key rotation* (V62-02): a headerless message
+    rejected, the digest key rotated, the message resent: the same digest-kind key.
+    *Format race* (V62-04): first sessions in R1 (`netflow-v9`) and R2 (`ipfix`) at the
+    same time: the owner commits one format and refuses the other's batches.
+    *Memo after takeover* (V62-05): a context swap just after a takeover is detected. A correction record with
     `flowEndMs` after the rejected item's receipt + 5 min: refused "outside the original's
     receipt".
     *Idempotency first* (F57-20): a correction and a supersession accepted 1 s before the
@@ -1159,8 +1193,9 @@ corrections of a remainder (D41-4), supersession of a correction (F41-06); §3.1
 window of unacknowledged batches (D41-5); §4.1 and §4.3, egress uniqueness scoped per
 (account, product, route, reservation, direction) and checked in stage B (AI-41-3), per-binding
 forwarding for the attachment set (F41-11). **RFC-006** §5.4: none for the hand-off name
-(C11 now uses RFC-006's `ingestion.handoff.v1`). **C09** (joint fix): `RecordId`'s identity
-ref gains `observation_domain` and, for NetFlow v9, `index` (F41-15).
+(C11 now uses RFC-006's `ingestion.handoff.v1`). **C09** (joint fix, **done** in C09
+1.0-draft.3): `RecordId`'s identity ref has `observation_domain` and, for NetFlow v9,
+`index` (F41-15, V62-08).
 
 Further errata from review 57: **RFC-003** §4.1 and §4.2: stage A binds every part only at
 a position whose heartbeat covers the part's bind time; heartbeats may assert coverage up
@@ -1272,3 +1307,20 @@ Simplified Technical English.
 | F57-20 | Idempotency is checked first for corrections and supersessions. Test 10 | Part I Correction step 2, Supersession; Idempotency |
 | RQ41-2 | Still with the requirements owner; needed to back D41-1 and D57-3 | — |
 | AI-57-1 … AI-57-4 | Carried into "Further errata from review 57" | Settled |
+
+## Fix verification 62 resolution
+
+All defects of [fix verification 62](../../reviews/62-contract-C11-fix-verification.md) are
+fixed as it proposes, with the orchestrator's decisions. New text uses ASD-STE100
+Simplified Technical English.
+
+| Defect | Resolution | Where |
+|---|---|---|
+| V62-01 | The heartbeat counts every fact that takes effect at a time ≤ `coversThroughMs` (starts, ends and changes) | Part III `Heartbeat` |
+| V62-02 | The digest-kind `RejectKey` always uses version 1 of the exporter's digest key, so a key rotation does not change it. Test 10 | `RejectKey` |
+| V62-03 | D57-3 narrowed (orchestrator confirmed): the deadline is min(the record's last minute end, the first receipt of the reject key) + `dispute_window`; a resend does not move the first receipt. Test 10 | Part I Correction steps 4 and 5; `DerivedRefusal` |
+| V62-04 | The owner records the format in the first committed `batch` entry and checks it on every batch; the edge check is early only. Test 10 | Part I "Export format per exporter" |
+| V62-05 | The memo is a table in the slot's own store with a 24 h row TTL, excluded from backups and never logged; it survives a takeover (orchestrator's binding decision, which replaces the review's local-disk reading). Test 10 | Part I "Context check memo" |
+| V62-06 | A record inside a corrected remainder or a corrected whole message is a duplicate, whatever its context. Test 10 | Part I "Records inside a corrected remainder or message" |
+| V62-07 | Stray `**` removed | Part I Session open |
+| V62-08 | The C09 joint change is marked done (C09 1.0-draft.3); C09 pinned at 1.0-draft.3; decimal strings noted | Header, `RecordId`, Settled |

@@ -559,7 +559,7 @@ Every event is written as an outbox row in the transaction of the entry it repor
   revision 1. It never adds a part. If a revision ≥ 2 adds a part, the owner answers
   `MISMATCH`, writes nothing and alerts. `covered_parts` on each `cut` is the set of the
   revision that the event applies.
-- **Ended part (V61-5).** A part is ended from minute m when its applied end, after every applied end_leg, reduce_parts to 0 or window end, is at or before m. A later revision that drops an ended part never raises the rate of any part.
+- **Ended part (V61-5).** A part is ended from minute m when its applied end, after every applied end_leg, reduce_parts to 0 or window end, is at or before m. A later revision that drops an ended part never raises the rate of any part. A later revision may drop a part only if the part is ended from the minute of that revision's first piece. The recorded target keeps binding the dropped part up to its end.
 - **`target`.** It is the per-minute `min` of everything recorded. A piece above the
   recorded one is ignored at that minute and alerted.
 - **Not applied.** `part_rates` is `[]` and `applied.status` says why.
