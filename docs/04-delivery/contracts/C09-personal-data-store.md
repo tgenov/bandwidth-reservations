@@ -3,8 +3,8 @@
 | | |
 |---|---|
 | Contract ID | C09 |
-| Version | 1 |
-| Status | **Frozen.** Frozen at C4 on fix verification 60; errata owed listed below ("Consumer obligations"). [Fix verification 60](../../reviews/60-contract-C09-fix-verification.md) gave ACCEPT WITH CHANGES. Version 1 applies its V60-1 … V60-6 as proposed ("Fix verification 60 resolution"). Draft.3 answered [review 48](../../reviews/48-contract-C09-review.md), and draft.2 answered [review 36](../../reviews/36-contract-C09-review.md). Draft.3 also made the joint change from C11 draft.2 (`RecordId` gets the observation domain and the NetFlow v9 record index, C11 F41-15). The earlier settled points stay ("Settled") |
+| Version | 1.1 |
+| Status | **Frozen.** Frozen at C4 on fix verification 60; errata owed listed below ("Consumer obligations"). v1.1: errata from review 64 (clarifications; no interface removed); see "Review 64 errata". [Fix verification 60](../../reviews/60-contract-C09-fix-verification.md) gave ACCEPT WITH CHANGES. Version 1 applies its V60-1 … V60-6 as proposed ("Fix verification 60 resolution"). Draft.3 answered [review 48](../../reviews/48-contract-C09-review.md), and draft.2 answered [review 36](../../reviews/36-contract-C09-review.md). Draft.3 also made the joint change from C11 draft.2 (`RecordId` gets the observation domain and the NetFlow v9 record index, C11 F41-15). The earlier settled points stay ("Settled") |
 | Provider | Identity and access (RFC-005 revision 5, §3.7, §10, C12; the key service for `digest_key`) |
 | Consumers | Metering ingestion (RFC-003 revision 5 + erratum 5.1, through C11: `put_payload`, `withdraw_payload`, `digest_key`); the evidence query (RFC-003: `digest_key`); identity and access itself (`put`, `tag_note`, `get`, `lookup_login`, `erase`, `store_outbox_head`; `get` purpose "payout destination" for payouts, RFC-004 revision 5 through C16; KYB documents for onboarding); notifier (`get`, contact details at send time); operator console (`put` of case notes and request and order documents, `get` with a read grant); reporting (`get`, display names at view time); RFC-006 revision 6 backup pruner and restore tooling (store events feed, `reapply`) |
 | Transport | Store operations, `digest_key` and `store_outbox_head`: synchronous query and command (gRPC over mTLS, caller allowlist by workload identity, RFC-005 §4.4). Store events feed: Kafka event, published from one partition of identity's transactional outbox (RFC-000 §8 personal-data store row, A1) |
@@ -291,7 +291,8 @@ service has a SQL role on it, so no DDL is part of this contract.
   identity puts the new version. The lease holder re-drives every change entry that has no
   `stored` record. Until the put commits, `get` gives the previous version. (C16 is
   different: it puts the details first, then commits the new version. A write-once item has
-  no previous version.)
+  no previous version. Identity puts the details only after it has checked authorisation and
+  the recovery hold; an item with no committed version is never read (E13).)
 - **Stale answer and re-base** (R48-04, D-48-5). `refused(stale)` gives `current_version`.
   After a restore, the store can have an older version than identity. Identity then sends
   the put again with `expected_version` = `current_version` and its new `version`. The
@@ -308,7 +309,8 @@ service has a SQL role on it, so no DDL is part of this contract.
   an item is written once. A second put with the same content answers `stored`; with
   other content it is `refused(item_exists)` and alerted (R36-01 c). A new payout
   destination version is a new item `"<destination_ref>/<version>"`, minted by identity's
-  C16 command only.
+  C16 command only, unique for each command and never reused, so that a put left by a
+  failed commit never makes a later change `refused(item_exists)` (E5, D-64-2).
 - **Note kinds** (R36-01 d, R36-25, R48-07, D-48-2). The store mints the note ID. The
   subject is the note ID, and the item is `"note"`. The store tags the note with `tags`.
   The put is idempotent by (console, `client_ref`). A `case_note` must have one or more
@@ -316,7 +318,9 @@ service has a SQL role on it, so no DDL is part of this contract.
   because identity mints the request's `subject_id` later. When identity records the
   request, it calls `tag_note` (next).
 - **Payout destination details** (R36-25): subject = the supplier's ID (whether a covering
-  erasure reaches them is RQ-36-2).
+  erasure reaches them is RQ-36-2). `destination_ref` and `version` are identity-minted and
+  contain no `/` (E17). v1 has no retention erase for these items; they stay until a
+  covering erasure (RQ-36-2) (E11).
 - **Erased subjects** (R36-04): a put whose subject, or any of whose `tags`, carries a
   subject tombstone is `refused(subject_erased)`. Put and erase serialise on the subject's
   key row (serialisable transactions), so no put commits after an erase of its subject.
@@ -467,8 +471,9 @@ service has a SQL role on it, so no DDL is part of this contract.
 - **Rate limits for every reader** (R36-03, R48-15; est., about 2.5 × the estimated peak, to
   be replaced by measured load): identity 5,000/s, notifier 1,000/s, reporting 500/s,
   console `operator_read_limit` per operator. Above them `refused(read_limit)`. A **breadth
-  alert** fires when a reader's distinct subjects in an hour exceed 3× its trailing
-  seven-day hourly maximum (est.; T-29 extended).
+  alert** fires when a (reader, purpose)'s distinct subjects in an hour exceed 3× its
+  trailing seven-day hourly maximum (est.; T-29 extended); for `payout_destination`, the
+  bound is the number of suppliers due in the run (E14, D-64-4).
 - **HSM unwrap budget** (R48-15): one unwrap for each subject read and one for each bucket
   hour for each instance. The budget is 5,000 unwraps/s for each Kenyan HSM cluster (est.;
   RFC-005 §3.7 gives about 10⁴/s for each cluster). Above it, `get` gives
@@ -480,8 +485,9 @@ service has a SQL role on it, so no DDL is part of this contract.
 - **Payout destination** (RFC-004 via C16): identity gets item
   `"<destination_ref>/<version>"` of the supplier with purpose `payout_destination`;
   payouts never call the store and never log the details. `not_found` (an item lost in a
-  restore, R36-24) is mapped by C16 to "not found": RFC-004 escalates to finance, and
-  identity alerts and asks the supplier to re-enter the destination.
+  restore, R36-24) is mapped by C16 to `NOT_FOUND{version_gone}` on both forms (C07 op 5):
+  payouts escalates to finance at once; identity alerts and asks every supplier
+  administrator to enter the destination again (E3, D-64-1).
 
 ### lookup_login(normalised_identifier)
 
@@ -648,7 +654,9 @@ service has a SQL role on it, so no DDL is part of this contract.
 
    No expiry is derived by date computation (S-M2).
 6. Run the row sweep. Give the restore's AS OF time to identity, for the re-base of
-   mutable items (R48-04). Remove the fence.
+   mutable items (R48-04). Identity gets each payout-destination version in force at, or
+   committed after, the AS OF time; for each `not_found` it asks every supplier
+   administrator to enter the destination again at once (E19). Remove the fence.
 7. Items put after the backup and not put again are lost: `get` answers `not_found`.
    Identity alerts and asks for re-entry (payout destinations: see "get").
 
@@ -729,7 +737,7 @@ service has a SQL role on it, so no DDL is part of this contract.
 | `put_payload` keep deadline | Commit only at ≤ `keep_by` − ε; ε = `max_offset` = 100 ms | Store |
 | `put_payload` caller wait | `keep_by` + ε = issue + `pd_put_timeout` (500 ms, est.); then the batch commits with the put "dropped: unanswered, withdrawal pending" | Ingestion |
 | `withdraw_payload` | Retried with backoff until answered; alert at 10 min pending (est.) | Ingestion |
-| `get` for C16 | No deadline; `temporarily_unavailable` makes the payout run wait for that supplier | Identity, payouts |
+| `get` for C16 | No overall deadline; per-call deadline 2 s (C07 S4), retried (E7); `temporarily_unavailable` makes the payout run wait for that supplier | Identity, payouts |
 | `get` for notifier, reporting, console | Caller's request deadline; on unavailability show identifiers or wait (RFC-005 §14) | Callers |
 | `erase` execution (R36-10, R48-11) | **Deadline r + 10 days; page at r + 7 days; forced generation rotation for any e > r + 9 days, one rotation for all erasures before its start; incident at r + 14 days.** For a late request the deadline is r + 23 days − 1 h (est.). **Breach path**: an execution after that cannot meet `erasure_max` even with a forced rotation; identity records it as an `erasure_max` breach, pages compliance and platform on-call, executes at once with a forced rotation, and the breach is reported to compliance with the request. A re-drive after `not_after` is not refused (R48-05) | Identity |
 | Row sweep | Each day and after each restore (R48-14) | Store |
@@ -898,8 +906,9 @@ destination details through identity, C16); all at `requirements-v1.10`.
     other purpose used and no content persisted after the request (marker scan).
 26. Payout run with the store answering `temporarily_unavailable`: the run waits for that
     supplier and retries; the instruction carries `destination_ref` and version only; with
-    the store answering `not_found`, C16 answers "not found" and finance is escalated
-    (R36-24).
+    the store answering `not_found`, C16 answers `NOT_FOUND{version_gone}` on both forms
+    (C07 op 5): payouts escalates to finance at once; identity alerts and asks every
+    supplier administrator to enter the destination again (R36-24, E3, D-64-1).
 
 **RFC-006 pruner and restore tooling**
 
@@ -947,6 +956,22 @@ Orchestrator decisions, binding; this draft specifies each.
 | S-G2 | **`get` purpose vocabulary** | The `GetPurpose` enum with its per-caller allowlist, bound to kinds and grants by R36-03 |
 | S-G3 | **`digest_key` by version** | Optional `version` argument accepted |
 | Bound | **Erasure bound** (review 48) | min(r + 23, e + 14) days, and e + 7 days after a forced rotation |
+
+## Review 64 errata
+
+[Review 64](../../reviews/64-contracts-C07-C09-C16-review.md) is the joint review of C07, C09 and C16. Version 1.1 applies its C09 errata as that review gives them. They are clarifications. No interface is removed.
+
+| Erratum | Finding | Change in C09 |
+|---|---|---|
+| E3 | R64-01, D-64-1 | `get` "Payout destination" and test 26: a lost version is mapped by C16 to `NOT_FOUND{version_gone}` on both forms, not to "not found". Payouts escalates to finance at once. Identity asks every supplier administrator to enter the destination again |
+| E5 | R64-02, D-64-2 | "Write-once kinds": the C16 version is unique for each command and never reused |
+| E7 | R64-04 | "Timeouts", `get` for C16: no overall deadline; per-call deadline 2 s (C07 S4), retried |
+| E11 | R64-06 | "Payout destination details": v1 has no retention erase for these items |
+| E13 | R64-07 | "Order of commit and put": identity checks authorisation and the recovery hold before the put; an item with no committed version is never read |
+| E14 | R64-08, D-64-4 | `get` breadth alert: counted for each (reader, purpose); for `payout_destination`, the bound is the number of suppliers due in the run |
+| E15 | R64-09 | "Open issues": the closing paragraph now says that C07 v1 closes R36-31 |
+| E17 | R64-10 | "Payout destination details": `destination_ref` and `version` contain no `/` |
+| E19 | R64-12 | Restore step 6: identity gets each payout-destination version in force at, or committed after, the AS OF time, and asks for re-entry at once for each `not_found` |
 
 ## Fix verification 60 resolution
 
@@ -1032,7 +1057,7 @@ changes.
 | R36-28 kept then withdrawn | The later of kept and withdrawn in ingestion's log is authoritative; test 21 |
 | R36-29 caller clock | Precondition: ingestion host clock within `max_offset` |
 | R36-30 login lookup | `lookup_login`, identity only, audited without the identifier, equal latency; test 11 |
-| R36-31 C16 conflicts | Carried to the C16 review |
+| R36-31 C16 conflicts | Carried to the C16 review; closed by C07 v1 S2 and F6 (review 64 E15) |
 
 ## Consumer obligations
 
@@ -1103,8 +1128,4 @@ the architecture owners.
   (D-48-1).
 - **AI-36-1, AI-36-2, AI-48-1, AI-48-2, AI-48-3**: under "Consumer obligations".
 
-Outside this contract (R36-31, carried to the C16 review): RFC-000 rev. 4.4 C4-5 adopts "a
-held administrator's destination change is held, then applied", but `requirements-v1.10`
-X1-S46 at 11:00 says it is refused, the destination unchanged and the attempt recorded; and
-RFC-004 §B7.1's "a re-instruction reuses" the destination version conflicts with P4-S118's
-third example, which sends the next run's re-instruction to the new destination.
+R36-31 is closed by C07 v1: S2 (refused during the hold, as X1-S46) and F6 (a lot paid again in a later run goes to that run's destination, as P4-S118 row 3); the errata owed by RFC-000 and RFC-004 are listed in C07.
