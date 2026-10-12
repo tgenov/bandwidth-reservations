@@ -4,12 +4,12 @@
 |---|---|
 | Contract ID | C10 |
 | Name | `booking-api` |
-| Version | 1.0.0-draft.3 |
-| Status | **Draft**, revised per [review 40](../../reviews/40-contract-C10-review.md) (ACCEPT WITH CHANGES), with decisions D1 … D8 applied; see [Review 40 resolution](#review-40-resolution). Open points M1 … M9 are settled ([Settled](#settled)). **Freezing is conditional on** the errata listed under [Errata required of other documents](#errata-required-of-other-documents), first among them RFC-005's permission-matrix rows for `quote` and offer answers (AI-40-2), without which C2 refuses those operations at the edge |
+| Version | 1.0.0 |
+| Status | **Frozen**. Frozen at C4 on [fix verification 51](../../reviews/51-contract-C10-fix-verification.md) (V51-01 … V51-04 applied), after [review 40](../../reviews/40-contract-C10-review.md) (decisions D1 … D8; see [Review 40 resolution](#review-40-resolution) and [Fix verification 51 resolution](#fix-verification-51-resolution)). Open points M1 … M9 are settled ([Settled](#settled)). Errata owed are listed under [Errata required of other documents](#errata-required-of-other-documents); until RFC-005's permission-matrix rows for `quote` and offer answers land (AI-40-2), C2 refuses those operations at the edge |
 | Provider | RFC-002 (account owner, booking module): book, change (incl. cancel), withdraw, status, quote, offer read and answers. RFC-005: the edge (authentication, coarse authorisation, routing, poll limiter) and the documented-request intake (operator console) |
 | Consumers | Buyers through RFC-005's edge: account users, account administrators, agent keys (AI agents and other automated clients), probe keys (probe links and probe reservations only) |
 | Transport | **HTTP/JSON** at the public edge (TLS 1.3); the edge forwards each submission once by gRPC to the owner-lease holder of the account's slot (RFC-002 §3.1, RFC-005 §2.2), and documented requests to the operator console (RFC-005 §4.4, §7.5). The gRPC hop is internal and not part of this contract |
-| Pinned to | `requirements-v1.10`; RFC-000 revision 4.4 (§4.4; §8 rows "Booking API" and "Documented-request intake"; C4-7); RFC-002 revision 5 (§3, §4.1, §5.5 … §5.8, §6.2 … §6.5, §7.1, §7.2, §8, §9.1 … §9.6, §13.1, §13.2); RFC-005 revision 5 (§2.1 … §2.3, §3.5, §4.1 … §4.4, §5.1 … §5.3, §7.5, C1, C2, §13); RFC-004 revision 5 with erratum 5.1, cited for the refusal reasons and the resume quote the booking module passes through (§A3, §A5.1, §A10 `Verdict`, `ResumeQuote`); review 40 |
+| Pinned to | `requirements-v1.10`; reviews 40 and 51; RFC-000 revision 4.4 (§4.4; §8 rows "Booking API" and "Documented-request intake"; C4-7); RFC-002 revision 5 (§3, §4.1, §5.5 … §5.8, §6.2 … §6.5, §7.1, §7.2, §8, §9.1 … §9.6, §13.1, §13.2); RFC-005 revision 5 (§2.1 … §2.3, §3.5, §4.1 … §4.4, §5.1 … §5.3, §7.5, C1, C2, §13); RFC-004 revision 5 with erratum 5.1, cited for the refusal reasons and the resume quote the booking module passes through (§A3, §A5.1, §A10 `Verdict`, `ResumeQuote`); review 40 |
 
 ## Purpose
 
@@ -279,9 +279,9 @@ outcome is the answer, not an error.
 | HTTP | Body | When | Retry |
 |---|---|---|---|
 | 400 | `NotAccepted{malformed}` | As the "Malformed or invalid" table (M7). Nothing recorded | Fix and resend |
-| 401 | `{error:"unauthenticated"}` | No, malformed, unknown, wrong, expired or revoked credential; ended session; key revoked as applied at the owner (`NotAccepted{revoked}`, X1-S06, X1-S41). Identical status, body and headers for every cause, sent no earlier than `unauth_floor` (5 ms) after arrival (RFC-005 §2.3) | No |
+| 401 | `{error:"unauthenticated"}` | No, malformed, unknown, wrong, expired or revoked credential; ended session; key revoked as applied at the owner (X1-S06, X1-S41), the same `{error:"unauthenticated"}` body. Identical status, body and headers for every cause, sent no earlier than `unauth_floor` (5 ms) after arrival (RFC-005 §2.3) | No |
 | 403 | `{error:"refused", right}` | Within the own tenant, the principal's kind or rights do not allow the operation (RFC-005 §4.2). The link-level and reservation-level checks (a probe key naming a non-probe link or answering an offer of a non-probe reservation) are made **at the owner** with C2 and recorded there; the edge refuses only by principal kind × operation and does not record (R40-25) | No |
-| 404 | `{error:"not_found"}` | Reservation or offer outside the principal's account or not existing; a `quote_id` that fails verification or names another account; identical to a genuine miss (X1-S02, X1-S03, X1-S05, X1-S09). For `status`: "no such request", given only after a consistent read at the present timestamp shows no idempotency row (RFC-002 §8.2). Never for `withdraw` (D4) or the documented-request intake (D5) | No |
+| 404 | `{error:"not_found"}` | Reservation or offer outside the principal's account or not existing; a `quote_id` naming another account, or not parseable (a token naming the caller's account that does not verify is `terms_changed`, V51-01); identical to a genuine miss (X1-S02, X1-S03, X1-S05, X1-S09). For `status`: "no such request", given only after a consistent read at the present timestamp shows no idempotency row (RFC-002 §8.2). Never for `withdraw` (D4) or the documented-request intake (D5) | No |
 | 409 | `NotAccepted{key_reuse_different_request}` | Same principal, same family, same key, different fingerprint (P2-S26, P2-S113). Reveals nothing of the first request | Use a new key |
 | 409 | `NotAccepted{key_reuse_other_principal}` | Another principal of the account used the key first in the family (P2-S64), including `status` and `withdraw` of its key (M4). Reveals nothing of the first request or its outcome | Use a new key |
 | 422 | `{error:"invalid", rule}` | Offer answer breaking an offer rule (R40-18), or a quote candidate failing route, product or validity checks (§quote). Nothing recorded, key not consumed | Fix and resend |
@@ -315,10 +315,21 @@ outcome is the answer, not an error.
      `rule_at_most_one_leg_without_holds`, P2-S34, P2-S36, P2-S102).
   4. **Terms shown** (D1, M2): the owner reads the terms it will lock. If they include
      **any partner-leg fee** and no `quote_id` is cited: `rejected`, `quote_required`. If a
-     `quote_id` is cited and it is past `valid_until`, or any term it carries differs from
-     the terms to be locked (price, price version, announced price change, any partner
-     leg's `decrease_allowed`, `shorten_allowed`, `holds`, or any fee, its kind, amount,
-     term end or `due_at_window_end`): `rejected`, `terms_changed`. Either way nothing is
+     `quote_id` is cited and **any** of the following holds, `rejected`, `terms_changed`
+     (V51-01, V51-02):
+     - the quoted candidate is not this request: for a booking, the same legs (route and
+       its partner-leg set), product, window and rate; for a change, the same
+       reservation, kind and new end or new rate;
+     - it is past `valid_until`;
+     - its shown terms are not **equal** to the terms to be locked: the same set of
+       partner legs, and on each the same `decrease_allowed`, `shorten_allowed`, `holds`
+       and fees (kind, amount, term end, `due_at_window_end`), and the same price, price
+       version and announced price change;
+     - it names the caller's account but does not verify under the slot's current or
+       retained key versions (issued before a re-slotting, under a retired version, or
+       altered): it is treated as past `valid_until`.
+
+     A token naming another account, or not parseable, is `404`. Either way nothing is
      held, and `requote` carries the current terms with a fresh `quote_id`, so the agent
      resubmits **under a new key** citing it. Routes without partner-leg fees need no
      quote; a cited quote is still checked.
@@ -408,8 +419,13 @@ outcome is the answer, not an error.
   **per-account-slot quote key** held by every owner-lease holder of the slot (never the
   edge), over (account, candidate digest, the shown terms themselves, `valid_until`, key
   version), carrying the shown terms so that `book` and `change` verify and compare it
-  statelessly. It survives every owner change (takeover, slot move, re-home). A token
-  that fails verification or names another account is `404`. A key version is retired no
+  statelessly. It survives takeovers and re-homes within the slot. A token naming the
+  caller's account that does not verify under the slot's current or retained key
+  versions (issued before a re-slotting moved the account, under a retired version, or
+  altered) is treated as past `valid_until`: `rejected`, `terms_changed`, with `requote`,
+  recorded. That is safe because the requote shows only the caller's own current terms,
+  and it ends the `404` loop on re-slotting (V51-01). A token naming another account, or
+  not parseable, is `404`. A key version is retired no
   earlier than the latest `valid_until` issued under it; RFC-002 owns the key's custody
   and rotation (AI-40-3).
 - **Valid until** (R40-11): binding. A request citing a quote after its `valid_until` is
@@ -619,8 +635,9 @@ principal's request is revealed by any answer.
 - A change to the fingerprint fields, the families, units, or the status guarantees is a
   new major version; both versions are served at least `idempotency_retention` past the
   announcement, so every key issued under the old version resolves under it.
-- The quote token format is opaque and may change within a major version; a token from a
-  retired key version is `404`, never before its `valid_until`.
+- The quote token format is opaque and may change within a major version; a token of the
+  caller's account from a retired key version gets `terms_changed` with `requote`
+  (V51-01), and a version is never retired before its latest `valid_until`.
 - The policy version used for each decision is recorded by the owner (X1-N8); it is not
   part of the wire contract.
 
@@ -662,7 +679,9 @@ principal's request is revealed by any answer.
 | CT-P18 | Unauthenticated causes are byte-identical and ≥ 5 ms; another account's reservation `404` identical to a missing one; an agent key naming another account's reservation gets that `404` and nothing is forwarded | X1-S01 … X1-S03, X1-S05 |
 | CT-P19 | Offer: accept all-Share → `final` with `move_at`; accept with partner leg → `accepted` then `final` or `failed`; decline releases; lapse after 7 days; acceptance after the cut → `cut_kept` already in the `accepted` answer; another user of the account may answer | P1-S35, P1-S45, P1-S53, P1-S57, P1-S60, P1-S61, P1-S84 |
 | CT-P20 | Quote then book citing it, terms unchanged: confirmed, `shown` equal to the quote's; price version or a partner fee changed between quote and intake: `rejected terms_changed`, nothing held, `requote` with current terms; quote past `valid_until`, terms unchanged: `terms_changed`; fee-bearing partner route with no `quote_id`: `rejected quote_required` with `requote`, and the resubmission under a new key citing it is confirmed; quote holds no capacity, no funds, writes no log entry | P2-S50, P3-S74 |
-| CT-P21 | Quote replay under the same key returns the same `Quote`; different candidate `409`; quote, then owner takeover (and separately a slot move), then book citing it: verified and confirmed; tampered or other-account token `404` | — |
+| CT-P20b | A quote cited for another candidate gives `terms_changed` with `requote`, nothing held: a single-link fee-free quote cited on a booking over a fee-bearing partner route; a quote for another window, rate or product; a change quote for reservation X cited on reservation Y; a quote whose shown terms carry fewer partner legs than the terms to be locked | P2-S50, P3-S74 |
+| CT-P21 | Quote replay under the same key returns the same `Quote`; different candidate `409`; quote, then owner takeover (and separately a slot move), then book citing it: verified and confirmed; tampered token naming the caller's account: `terms_changed` with `requote`; other-account or unparseable token `404` | — |
+| CT-P21b | Quote, then a re-slotting moves the account to another slot, then book citing it: `rejected terms_changed` with `requote` (never `404`), recorded under the key; the resubmission under a new key citing the requote is confirmed. Same for a token under a retired key version | — |
 | CT-P22 | Price version effective between composition and a pushed-later commit of the intake: the in-transaction re-evaluation turns it into `terms_changed` | — |
 | CT-P23 | The same key used for a quote then a book: one quote and one request, no `409` (D2); the same key used for an offer answer and a documented request: independent | — |
 | CT-P24 | Withdraw with no `Idempotency-Key` header is accepted | — |
@@ -700,6 +719,7 @@ C10 is frozen only once these are taken (R40-09). Review 40's IDs are kept.
 | AI-40-1 | RFC-000 §4.4 | One idempotency row per family (D2): booking and change; quote ("stateless token, no log entry", D3); offer answer; documented request; the namespaces are separate. A pre-emptive withdrawal is recorded under the booking-and-change key (D4) |
 | AI-40-2 | RFC-005 §4.2 (permission matrix) | Rows "Quote (own account)" and "Answer an equivalent-path offer (own account)" with the book row's columns (probe: probe links and probe reservations only); the documented-request row without `withdraw` (D7). **Freeze condition**: without these rows C2 refuses `quote` and every offer answer at the edge |
 | AI-40-2 | RFC-005 §5.2 | Idempotency scopes for quote, offer answer and documented request, each its own namespace (D2) |
+| AI-40-2 | RFC-005 §5.2 and edge logging (A11) | The booking and change rows are scoped (account, booking-and-change family, key); the edge logs a keyed digest of every idempotency key, never the key; keys need an alphanumeric character (R40-20, V51-04) |
 | AI-40-2 | RFC-005 §5.3 | Quotes and offer answers count toward `key_rate_limit` and `account_rate_limit`; offer reads toward `key_poll_limit`; documented requests at `mgmt_rate_limit` |
 | AI-40-2 | RFC-005 §7.5 | Idempotency (account, documented-request family, key), 24 h; no existence check at intake (D5); note ≤ 4096 bytes, rendered inert; no documented `withdraw` (D7) |
 | AI-40-2 | RFC-005 §2.3, §4.1 | The link-level and reservation-level refusal (probe key on a non-probe link or reservation) is made and recorded at the owner, not the edge (R40-25) |
@@ -763,3 +783,12 @@ All fixes accepted as review 40 proposes, with its decisions D1 … D8 (binding)
 | R40-24 | Minor | `RequestStatus.key_expires_at`; CT-C10 |
 | R40-25 | Minor | Link-level and reservation-level probe refusals made and recorded at the owner (403 row; AI-40-2) |
 | R40-26 | Minor | Tests added (CT-P21 … CT-P31, CT-C08 … CT-C11) and renumbered in order; quote p99 (est.) and the shared-limit consequence stated in §quote |
+
+## Fix verification 51 resolution
+
+| ID | Severity | Resolution in 1.0.0 |
+|---|---|---|
+| V51-01 | Major | First fix taken (binding): a token naming the caller's account that does not verify (re-slotting, retired key version, altered) is treated as past `valid_until`, `terms_changed` with `requote`, recorded; `404` only for another account's or an unparseable token (§book check 4, §quote, 404 row, Versioning); CT-P21b |
+| V51-02 | Major | Check 4 binds the cited quote to the request: `terms_changed` unless the request is the quoted candidate (route and partner-leg set, product, window, rate; for a change, reservation, kind, new end or rate) and the shown terms are equal; CT-P20b |
+| V51-03 | Minor | 401 row: "(X1-S06, X1-S41), the same `{error:"unauthenticated"}` body" |
+| V51-04 | Minor | Errata row AI-40-2: RFC-005 §5.2 booking-and-change scope and edge logging of keyed key digests |
