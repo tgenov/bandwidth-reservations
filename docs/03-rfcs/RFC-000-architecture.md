@@ -2,11 +2,11 @@
 
 | | |
 |---|---|
-| Status | Draft, revision 3: revised per the [second adversarial review](../reviews/08-rfc-000-review-2.md) (A0R-01 … A0R-14, R2-D1 … R2-D7), after revision 2 applied the [first](../reviews/06-rfc-000-review.md) (A0-01 … A0-21); see "Review resolution" at the end |
+| Status | Draft, revision 3.1: revision 3 revised per the [second adversarial review](../reviews/08-rfc-000-review-2.md) (A0R-01 … A0R-14, R2-D1 … R2-D7), then corrected per its [verification](../reviews/10-rfc-000-verification.md) (V-01 … V-08), after revision 2 applied the [first](../reviews/06-rfc-000-review.md) (A0-01 … A0-21); see "Review resolution" at the end |
 | Satisfies | All — structural. Allocates every need (P1-N1 … X2-N6, 66 in all) to an owning component and to the detailed RFC that specifies it; the scenarios themselves are satisfied by RFC-001 … RFC-006 |
 | Policies | POL-01 … POL-33 (every entry of the register; §7 names the component that applies each need, and §2 the policies each component serves) |
 | Prior decisions | History log D3, D12, D13, D21 (carried forward in Competition) |
-| Builds on | The requirements at tag `requirements-v1.3` ([problem statements](../01-discovery/), [specs](../02-specs/), [policy register](../02-specs/policy-register.md), [glossary](../02-specs/glossary.md)), which include RQ-1 … RQ-6 ([review 07](../reviews/07-requirements-amendments-from-rfc-000-review.md)), plus the decisions on RQ-7 … RQ-11 raised by the second review, which `requirements-v1.4` records ([review 09](../reviews/09-requirements-amendments-from-rfc-000-review-2.md)): the confirm fence (RQ-7), reporting once releases are durable (RQ-8), P1-S54 (RQ-9), the status-read exception (RQ-10), payments in flight in reconciliation (RQ-11), and diverse fibre paths as a go-live condition (A0R-05) |
+| Builds on | The requirements at tag `requirements-v1.5` ([problem statements](../01-discovery/), [specs](../02-specs/), [policy register](../02-specs/policy-register.md), [glossary](../02-specs/glossary.md)), which include RQ-1 … RQ-6 ([review 07](../reviews/07-requirements-amendments-from-rfc-000-review.md)), and the decisions on RQ-7 … RQ-12 raised by the second review and this revision, which `requirements-v1.4` and `requirements-v1.5` record ([review 09](../reviews/09-requirements-amendments-from-rfc-000-review-2.md)): the confirm fence (RQ-7), reporting once releases are durable (RQ-8), P1-S54 (RQ-9), the status-read exception (RQ-10, RQ-12), payments in flight in reconciliation (RQ-11), and diverse fibre paths as a go-live condition (A0R-05) |
 | Supersedes | The structural parts of the pre-baseline drafts RFC-001 … RFC-004, which were written from a prototype |
 
 Terms are used in the sense of the [glossary](../02-specs/glossary.md). In particular,
@@ -82,7 +82,7 @@ sites and a link or an account never has two writers, even across failures.
 | A7 | **One decision point per request, and it is a log entry.** A request's outcome is fixed by the first deciding entry in its account owner's log: a conditional *confirm*, a conditional *expire*, or an ending entry (rejected, withdrawn, key revoked, account suspended). Log order, not clocks, decides which comes first. | POL-04 (one decision per request), POL-26 (never confirmed after the deadline), P2-S69, P2-S103. |
 | A8 | **Deadlines are data; clocks drive liveness only.** The deadline is in the request record and in every hold. Clocks decide *when* a participant asks for expiry and *whether* a confirm may still be proposed; they never decide which of two outcomes wins. | POL-26: failed as of the deadline, whatever Share's state; review A0-01. |
 | A9 | **Only a request's account owner ends its holds, and a release ends them for good.** A link owner or partner adapter releases a request's hold only on that owner's say-so (an outcome, an accepted yield). A release for an outcome is **request-scoped**: it ends every hold, waiter registration and grant the request has at that participant, whatever the attempt, and leaves a tombstone that refuses any later hold or grant for the request (A0R-03). | All or nothing (P2-N1): no participant can release a hold the decision still depends on, and no late or retried command can recreate one after the outcome. |
-| A10 | **An outcome is reported only once it is final everywhere a buyer could see it.** A confirmation is reported once its deciding entry is committed; a non-confirmed outcome once a **"releases durable"** entry in the same log records that every Share-link release it needs is durable (A0R-02). Status replicas, the outcome feed and webhooks all read that log. | POL-04 as amended by RQ-6 and RQ-8: capacity is free from the moment the outcome is reported. |
+| A10 | **An outcome is reported only once it is final everywhere a buyer could see it.** A confirmation is reported once its deciding entry, and a non-confirmed outcome once a **"releases durable"** entry in the same log recording that every Share-link release it needs is durable (A0R-02), is at the log's **report position** (§4.6): known committed by a majority of voters and applied by every status replica holding a read lease. The edge's synchronous final answer, status replicas, the outcome feed and webhooks are all reports and all obey this gate (V-01, V-02). | POL-04 as amended by RQ-6 and RQ-8: capacity is free from the moment the outcome is reported. |
 
 ### 2. Component decomposition
 
@@ -138,8 +138,8 @@ breaching minutes. RFC-006 states the per-minute budget arithmetic.
 |---|---|---|---|---|
 | **Ledger** | Be the only writer of money movements: validate (sums to zero per currency, every amount tagged), deduplicate by source reference, append, never alter; publish **closed positions** | The journal of movements; source-reference deduplication (7 years) as watermarks per structured reference plus exception sets, with principal and content digest; per-partition closed positions ("closed through T"); per-account balances as derived projections | Journal partitioned by the movement's **home**, a function of its source reference alone, so a redelivery always lands where the original did: (1) the buyer, if the movement touches a buyer (charges, amendments, fees, top-ups, invoice payments, reversals, write-offs, corrections Share bears for a buyer); (2) otherwise the **buyer whose request, reservation or traffic caused it**, where there is one (carried excess paid by Share, the dearer-path difference, a partner cancellation fee Share bears, the FX difference on a buyer's top-up, a supplier debt raised by an amendment); the buyer's own balance is not touched, so it stays wholly in its partition; (3) otherwise the supplier, if it touches exactly one (payouts, supplier debts and their payments, duplicate-payout debts); (4) otherwise one of N **Share sub-partitions** by a hash of the source reference (FX differences on payouts, Share's own deposits and withdrawals). A movement never touches two buyers. Supplier and Share balances are aggregates over partitions at closed positions, so no partition is a hot row (A0R-09) | P4-N7, P4-N15, P4-N16 (movements), POL-11, POL-20, POL-29 |
 | **Settlement** | Turn each charge or amendment into one movement split among its route's parties; pay the costs Share bears; raise supplier debts | Per charge line: shares already posted per party; deviation from exact proportions per party per payout period | By buyer account (charges); by supplier (debts) | P4-N8, P4-N9, P4-N11, POL-12, POL-23 |
-| **Payments, receivables and reconciliation** | Everything that moves money between Share and the outside on the buyer side, and the daily proof that the books match the money | Payment events as received (authenticated, 2-region durable before the provider is acknowledged); the **binding of each provider transaction reference to its account**, fixed by the first authenticated event, which every later event for that reference is checked against; top-up conversions; pending orphan reversals (72 h); invoices and invoice payments; write-offs; daily reconciliation runs, each at one closed position per ledger partition, and their differences, including incoming payments received by the partner and not yet posted (RQ-11) | By **(provider, transaction reference)**, so every event for one provider transaction, its reversal included, is in one partition (A0R-04) | P4-N1, P4-N2, P4-N13, P4-N14, P4-N17 (invoices), POL-15, POL-20, POL-21, POL-24 |
-| **Payouts** | Pay suppliers weekly, once, and recover what a provider executes twice | Payout runs (each at closed positions), instructions (with their references), confirmations and failures, escalations, residues carried | By supplier | P4-N12, POL-22 |
+| **Payments, receivables and reconciliation** | Everything that moves money between Share and the outside on the buyer side, and the daily proof that the books match the money | Payment events as received (authenticated, 2-region durable before the provider is acknowledged); the **binding of each provider transaction reference to its account**, fixed by the first authenticated **and well-formed** event, which every later event for that reference is checked against (a malformed event is recorded and rejected without creating a binding, P4-S05; V-05); top-up conversions; pending orphan reversals (72 h); invoices, invoice payments as applied to invoices, and write-offs; daily reconciliation runs, each at one closed position per ledger partition, and their differences, including incoming payments received by the partner and not yet posted (RQ-11) | Per kind of state (V-04): payment events, their reference bindings and pending orphan reversals by **(provider, transaction reference)**, so every event for one provider transaction, its reversal included, is in one partition (A0R-04); invoices, invoice payments as applied and write-offs **by account**, fed idempotently by the payment's reference (the overdue and paid feeds go to that account's owner); reconciliation runs **by day** | P4-N1, P4-N2, P4-N13, P4-N14, P4-N17 (invoices), POL-15, POL-20, POL-21, POL-24 |
+| **Payouts** | Pay suppliers weekly, once, and recover what a provider executes twice | Payout runs (each at closed positions), instructions (with their references), **transfer confirmations and failures** (routed by the instruction reference, with the provider's reference recorded, and deduplicated here; payouts is their only writer, V-04), escalations, residues carried | By supplier | P4-N12, POL-22 |
 | **Reporting and statements** | Serve every account its statement and every supplier its view, from the owners' feeds | Read models only (no facts of its own): statements, supplier schedules with opaque reservation references, deviation reports | By account | P4-N10, the supplier view of X1-N2 and POL-33 |
 
 #### Cross-cutting
@@ -354,9 +354,15 @@ still makes entry 2 end the request not confirmed, as POL-04 requires; the partn
 booking is then cancelled at once at Share's cost (POL-28 as amended by RQ-2). The window
 is one partner round trip. A new leader that resumes the request learns whether a confirm
 is outstanding from the partner adapter's call journal, which is two-region durable and
-records when the confirm was sent; that send time is the request's "begin committing"
-time, which must be no later than `D − commit_margin` (POL-26). The partner confirm thus
-has `commit_margin − τ` (about 9.8 s) before the confirm fence (RQ-7, R2-D1).
+records when the confirm was sent. Its **resume query is itself an entry in the adapter's
+log, recording the new leader's term**, so the journal is complete once queried: the
+adapter refuses, journals as refused and never sends a confirm or final booking that
+carries a lower account-owner term than the highest it has recorded for the request, one
+for a tombstoned request, or one arriving when its own clock is past `D − commit_margin`
+less the partner-skew budget (R17). A partner booking it nonetheless finds for a
+tombstoned request is cancelled at once at Share's cost (POL-28; V-03). The journaled send time is the request's "begin committing" time, which is therefore
+never later than `D − commit_margin` (POL-26, P2-S109). The partner confirm thus has
+`commit_margin − τ` (about 9.8 s) before the confirm fence (RQ-7, R2-D1).
 
 #### The deadline path
 
@@ -419,8 +425,8 @@ What changes on the other paths (each specified in RFC-002):
   (normally at once) ends the request "withdrawn"; a partner booking already confirmed or
   final is cancelled at Share's cost (POL-08, RQ-2).
 - **Single-link booking** (80% of the load): the same protocol with one participant and no
-  partner: intake + funds hold, link hold, decision. If the decision is not committed in
-  time for `ack_budget`, the edge answers `pending`, which is safe because the intake is
+  partner: intake + funds hold, link hold, decision. If the decision is not at the report
+  position in time for `ack_budget`, the edge answers `pending`, which is safe because the intake is
   already durable.
 
 #### Latency budget
@@ -483,22 +489,30 @@ admission's 1 min RTO. The R1 spike tests it.
 | Entry 1 at the account owner: exact rate limits, dedupe, headroom, key headroom, in-flight, standing; intake + funds hold | two regions | 27 ms |
 | Capacity check (in-memory peak query) and hold at the link owner | two regions | 27 ms |
 | Entry 2 at the account owner: confirm if undecided, binding the funds | two regions | 25 ms |
-| **Total, edge in R1** | | **about 95 ms**, against 200 ms |
+| Report position reaches entry 2: one majority round trip, and every leased status replica applied it (V-01, V-02); the edge answers final only then | — | 10 ms |
+| **Total, edge in R1** | | **about 105 ms**, against 200 ms |
 
 | Variant | Estimate (p99) |
 |---|---|
-| Edge in R2 (a Mombasa buyer, or the R2 probe), leaders in R1: one extra R2 ↔ R1 round trip | about 105 ms |
-| Probe overhead (D2: within 10 ms of the region, persistent TLS) | + up to 10 ms, so about 105 to 115 ms measured |
-| Leader drift in steady state (an account and a link leader in different regions, before placement corrects it): + 10 ms per crossing call | at worst about 125 ms |
-| One facility lost in R1 or R2 | about 95 to 110 ms |
-| Single-link **rejection** on committed capacity: the link's refusal entry carries the request's tombstone, so the ending entry also records the release as durable and no further entry is needed | about 95 ms, as a confirmation |
-| Single-link request ended not confirmed after its hold (suspension, revocation, withdrawal): ending entry, request-scoped release at the link (hop + commit), "releases durable" entry | about 95 + 5 + 27 + 25, so about 150 ms |
+| Edge in R2 (a Mombasa buyer, or the R2 probe), leaders in R1: one extra R2 ↔ R1 round trip | about 115 ms |
+| Probe overhead (D2: within 10 ms of the region, persistent TLS) | + up to 10 ms, so about 115 to 125 ms measured |
+| Leader drift in steady state (an account and a link leader in different regions, before placement corrects it): + 10 ms per crossing call | at worst about 135 ms |
+| One facility lost in R1 or R2 | about 105 to 120 ms |
+| Single-link **rejection** on committed capacity: the link's refusal entry carries the request's tombstone, so the ending entry also records the release as durable and no further entry is needed | about 105 ms, as a confirmation |
+| Single-link request ended not confirmed after its hold (suspension, revocation, withdrawal): ending entry, request-scoped release at the link (hop + commit), "releases durable" entry, report position | about 95 + 5 + 27 + 25 + 10, so about 160 ms |
 | Route booking, time to `pending` (edge, hop, entry 1, response) | about 45 ms steady; about 90 ms after a region loss |
-| Route ended not confirmed, from its ending entry to the report: release at each held link (hop + commit, in parallel), "releases durable" entry, report position | about 60 ms steady; about 150 ms after a region loss; within `status_staleness` (1 s) |
-| **R2 lost**, R1 serving: three commits at about 65 ms + 20 ms | **about 215 ms** (p50 about 170 ms) |
-| **R1 lost**, R2 serving: three commits at about 70 ms + 20 ms | **about 230 ms** (p50 about 185 ms) |
+| Route ended not confirmed, from its ending entry to the report: release at each held link (hop + commit, in parallel), "releases durable" entry, report position | about 70 ms steady; about 215 ms after a region loss; within `status_staleness` (1 s) |
+| **R2 lost**, R1 serving: three commits at about 65 ms + 20 ms, plus the report position through R3 (about 65 ms) | **about 280 ms** (p50 about 220 ms) |
+| **R1 lost**, R2 serving: three commits at about 70 ms + 20 ms, plus the report position (about 70 ms) | **about 300 ms** (p50 about 240 ms) |
 
-In steady state the budget leaves about 85 ms of margin, more than the previous draft's
+The **report-position delay** is one majority round trip after the commit (the leader
+learns that a majority knows the commit position, and leased replicas acknowledge applying
+it, on the next heartbeat): about 10 ms steady, about 65 to 70 ms once a majority must
+include R3 (est.). It is the price of "a reported outcome stays reported" (POL-04,
+P2-S10, P2-S108) when the edge's own answer is a report. `pending` is not a report and
+is not delayed.
+
+In steady state the budget leaves about 95 ms of margin, more than the previous draft's
 claim, because the Kenyan pair is closer (10 ms) and no write is made in one region only.
 After a region loss a single-link booking's **final** answer misses 200 ms at p99; the
 **acknowledgement** still fits, because the edge answers `pending` once entry 1 is durable
@@ -506,9 +520,10 @@ After a region loss a single-link booking's **final** answer misses 200 ms at p9
 latency targets for the declared disaster; RPO 0 is kept. Reconfiguring to 2 + 2 (§5.1)
 restores fault tolerance during the disaster but not latency. Two mitigations are open for
 RFC-006: a parallel-commit fast path for single-link bookings in the degraded state (two
-writes instead of three, about 10 + 5 + 2 × 65 = 145 ms at p99; Competition, R13), which is
-also the only lever that brings R1 back under 200 ms while a double Nairobi–Mombasa cut
-makes it commit through R3 (§5.1), and RFC-006 evaluates it against that case too; and a
+writes instead of three, about 10 + 5 + 2 × 65 + 65 (report position) = 210 ms at p99;
+Competition, R13), the largest lever while a double Nairobi–Mombasa cut makes R1 commit
+through R3 (§5.1), though with the report gate it no longer brings R1 under 200 ms on its
+own, and RFC-006 evaluates it against that case too; and a
 replacement site for the lost region, which ends the disaster as POL-06 defines it.
 
 ### 4. Consistency model
@@ -539,7 +554,7 @@ decision relies on (A9).
 | What lags | Bound | Why it is acceptable |
 |---|---|---|
 | Conversion of holds into reservation legs on link owners after the decision | Milliseconds; the hold keeps counting against capacity until converted | Capacity is counted either way; nothing can be sold in between. The conversion carries the decision's timestamp, so "known at T" is defined (§4.3). |
-| Status reads behind the decision | `status_staleness` (1 s); up to `release_grace` while a link the request held fails over, or while its decision record is unavailable at its deadline | POL-04 as amended by RQ-8 and RQ-10; §4.3, §4.6. |
+| Status reads behind the decision | `status_staleness` (1 s); up to `release_grace` while a link the request held fails over (P2-S107), or while its decision record is unavailable at its deadline; while the account partition fails over before the deadline, until it has a leader again, bounded by admission's 1 min RTO (RQ-12, P2-S111); never `pending` after a reported outcome (P2-S108) | POL-04 as amended by RQ-8, RQ-10 and RQ-12; §4.3, §4.6. |
 | Rating and posting behind the reservation and traffic feeds | 2 min per minute (`max_lateness` + 2 min for traffic), 99.99% of minutes (X2-N3) | Funds holds already cover accrued-but-unposted charges (POL-18). |
 | Accepted record reaching headroom | `attribution_lag_max` (10 s), 99.99% of minutes, with hot standbys (§2) | POL-14 now includes this lag in the lateness bound; later records are reported as breaches. |
 | Supplier balances and Share's own balance | Aggregated at closed positions; closed per payout run and per reconciliation day | Payouts are weekly; reconciliation is daily (POL-22, POL-24). Share-only movements are homed by their causing buyer or spread over N Share sub-partitions (§2), so no partition is the hot row that Share's own account would otherwise be (A0R-09). |
@@ -563,7 +578,7 @@ decision relies on (A9).
   `D − τ` ≤ `D − ack_budget`; with a partner leg, committing begins when the partner confirm
   is sent, which the partner adapter journals with its time, no later than
   `D − commit_margin`, and the confirm entry then still has `commit_margin − τ` (about
-  9.8 s) for the partner's answer. The fence is stricter than the requirement by `τ` so
+  9.8 s) for the partner's answer (P2-S109, P2-S110). The fence is stricter than the requirement by `τ` so
   that, under one leader, a confirm accepted by the guard always precedes the expiry entry
   in the log, and the expiry still has time to release every Share-link hold by `D`. The
   **decision point** of a request (POL-04) is its deciding entry, and its time is that
@@ -572,11 +587,13 @@ decision relies on (A9).
   account owner's leader appends a conditional **"expire if undecided"** entry. `ε` is the
   clock-uncertainty bound (about 40 ms at most, est.; R4). `δ_x` covers everything that
   must be durable by `D` for P2-S93: the expiry's commit, the notice to the link owner and
-  the release's commit there, at p99 about 25 + 5 + 27 ≈ 60 ms steady and
-  65 + 10 + 70 ≈ 145 ms in the degraded state (est., A0R-02). So `ε + δ_x` is about 185 ms
-  at worst, inside `τ`. RFC-006 keeps **`ack_budget ≥ τ > ε + δ_x`** as a monitored
-  invariant; if `ε` or `δ_x` grows, `τ` grows with it (the confirm fence moves earlier),
-  never the release later. Any participant may also ask for the same entry (idempotent),
+  the release's commit there, at p99 about 25 + 5 + 27 ≈ 60 ms steady and, in the worst
+  degraded state (R1 lost, leaders in R2, both commits through R3),
+  70 + 10 + 70 ≈ 150 ms (est., A0R-02, V-06). So `ε + δ_x` is about **190 ms** at worst,
+  leaving 10 ms of margin to `τ` = 200 ms at p99. RFC-006 keeps
+  **`ack_budget ≥ τ > ε + δ_x`** as a monitored invariant and **alarms** on it before that
+  margin is used up; the fence already moves earlier by itself (if `ε` or `δ_x` grows, `τ`
+  grows with it), never the release later. Any participant may also ask for the same entry (idempotent),
   and a link owner or partner adapter that has seen no outcome by `D` does so.
 - **First in log wins.** The state machine keeps whichever deciding entry comes first in
   log order: confirm, expire, or an ending entry. Each is conditional ("if undecided"), so
@@ -593,7 +610,9 @@ decision relies on (A9).
   has not yet heard of, can therefore never outlive the outcome. A refusal on committed
   capacity records a tombstone too, so it doubles as that link's release. The link owner
   acknowledges a release once it is durable. Partner adapters keep the same rule for
-  Share's own position at a partner link.
+  Share's own position at a partner link, and their tombstone also refuses a **confirm or
+  final booking**, as do the adapter's own `D − commit_margin` clock check and its
+  account-owner term check (§3, V-03).
 - **"Releases durable", and when an outcome is reported** (A0R-02, RQ-6, RQ-8). The
   account owner collects release acknowledgements from **every Share leg in the intake**,
   not only from the legs it believes it holds, and records them in a **"releases durable"**
@@ -602,10 +621,10 @@ decision relies on (A9).
   before any hold was sent), the ending entry records it itself. A non-confirmed outcome is
   **reported** (status reads, the outcome feed, webhooks) only once that entry is at the
   report position (§4.6), so no buyer or competitor sees an outcome while capacity is still
-  held for it (POL-04, P2-S14). Normally that is about 60 ms after the decision (est.),
+  held for it (POL-04, P2-S14). Normally that is about 70 ms after the decision (est.),
   well within `status_staleness`. While a link's schedule owner fails over, its release
   becomes durable once the link has a leader again, within seconds and at most
-  `release_grace` after the decision, and the outcome is reported then; nobody can book
+  `release_grace` after the decision, and the outcome is reported then (P2-S107); nobody can book
   that link meanwhile, so nothing is lost commercially (RQ-8). In the same way a release
   due at `D` is made within `release_grace` after `D` if the link's schedule is unavailable
   at `D`. A new account leader re-sends releases for every ending entry that has no
@@ -647,8 +666,11 @@ decision relies on (A9).
 | Partner call | Partner key derived from the request, leg and operation | The partner (P2 C7), and the adapter's call journal | 7 years with the partner booking record |
 | Flow record | (exporter, exporter epoch, sequence number); the epoch distinguishes counter restarts (P3 open question 1, decided in RFC-003) | Ingestion partition of the exporter, as run-length range sets per (exporter, epoch): mostly contiguous sequences make the index the size of its gaps, not of the 7-year record count (about 6×10¹³) | 7 years |
 | Charge, amendment and fee lines | (reservation or usage key, minute, amendment sequence) | Ledger partition, as a watermark per reservation and product ("posted through minute m") plus an exception set for amendments and late lines, not a hash index over about 2×10¹⁴ line references (A0-08). Deduplication is **per line, not per movement** (A0R-10): in a movement carrying many lines, a line already posted with the same contents is dropped; a line whose contents differ from what was posted is excluded and reported; the remaining lines are posted. Each line is balanced on its own, so the movement stays balanced. A settlement batch re-composed after a crash is therefore neither refused nor double-posted | 7 years |
-| Payment events (top-up, invoice payment, reversal, transfer confirmation or failure) | (provider, transaction reference, event kind); a reversal shares its payment's transaction reference | The payments partition of (provider, transaction reference) (A0R-04, R2-D6). The first authenticated event **binds the reference to its account**; the posting carries that binding, so the ledger's home for the movement follows from the reference. A later event for the reference whose contents differ (another account reference, amount or currency) moves nothing and is reported (P4-N1); a different principal is refused. Orphan reversals (72 h) are matched in the same partition | 7 years |
-| Other money-moving inputs (payout instruction, operator correction or attribution, escalation resolution, write-off, Share-borne cost, supplier debt, movement of Share's own funds) | Its source reference, generated inside Share and unique by construction | Ledger partition of the movement's home, atomically with the movement; a redelivery with different contents moves nothing and is reported; a different principal is refused | 7 years |
+| Payment events (top-up, invoice payment, reversal) | (provider, transaction reference, event kind); a reversal shares its payment's transaction reference | The payments partition of (provider, transaction reference) (A0R-04, R2-D6). The first authenticated **and well-formed** event **binds the reference to its account** (a malformed one is recorded and rejected, creating no binding, P4-S05; V-05); the posting carries that binding, so the ledger's home for the movement follows from the reference. A later event for the reference whose contents differ (another account reference, amount or currency) moves nothing and is reported (P4-N1); a different principal is refused. Orphan reversals (72 h) are matched in the same partition | 7 years |
+| Invoice payment as applied to an invoice; write-off | The payment's (provider, transaction reference) for an invoice payment; the write-off's own reference | The account's receivables partition (V-04), fed idempotently from the payments partition | 7 years |
+| Transfer confirmation or failure (payouts) | The payout instruction reference, with the provider's transaction reference recorded | Payouts, the only writer, in the supplier's partition (V-04; P4-S87, P4-S95) | 7 years |
+| Reconciliation run | The day reconciled | The run's partition, by day (V-04) | 7 years |
+| Other money-moving inputs (payout instruction, operator correction or attribution, escalation resolution, write-off posting, Share-borne cost, supplier debt, movement of Share's own funds) | Its source reference, generated inside Share and unique by construction | Ledger partition of the movement's home, atomically with the movement; a redelivery with different contents moves nothing and is reported; a different principal is refused | 7 years |
 | Feed events between components | (producer partition, epoch, sequence) | Each consumer's own state | Until consumed and checkpointed |
 
 #### 4.5 Ordering
@@ -671,33 +693,42 @@ decision relies on (A9).
 - **Status reads** (polls, retries with a key) are served by replicas of the account
   owner's log, never through the leader's write path. The leader publishes two positions,
   piggybacked on its heartbeats: a **closed position** every 200 ms or so (everything up to
-  it has been applied as of a stated time), and a **report position**, the highest commit
-  position it has seen acknowledged as committed by a majority of voters (one heartbeat,
-  about one 10 ms round trip, after the commit). An outcome is **reported**, by a replica,
-  the outcome feed or the notifier, only once its deciding entry, and for a non-confirmed
-  outcome its "releases durable" entry, is at or below the report position. Because a
-  majority of voters knows that such a position is committed, every later majority holds a
-  voter that knows it, so a reported outcome can always be found again.
+  it has been applied as of a stated time), and a **report position**. Status replicas hold
+  **read leases** from the leader, renewed on heartbeats and lasting at most
+  `status_staleness` − ε (V-01). The leader advances the report position to P only once a
+  majority of voters knows P is committed **and** every replica with a live read lease has
+  acknowledged applying the log through P (or its lease has expired). That costs one
+  majority round trip after the commit: about 10 ms steady, about 65 to 70 ms with a region
+  lost (est., V-02); a slow replica delays a report by at most its lease. An outcome is
+  **reported**, by the edge's synchronous final answer, a replica, the outcome feed or the
+  notifier, only once its deciding entry, and for a non-confirmed outcome its "releases
+  durable" entry, is at or below the report position. So every replica that may answer
+  `pending` from freshness already has it, and because a majority of voters knows such a
+  position is committed, every later majority holds a voter that knows it: a reported
+  outcome can always be found again (P2-S10, P2-S108).
 - **Replica rule** (A0R-06, R2-D4). For a given request, a replica answers:
   1. if it has applied a reported outcome: that outcome, however stale the replica is (a
      reported outcome is final, P2-S10);
-  2. otherwise, if it has applied a closed position no more than `status_staleness` − (a
-     margin for `ε`) old: `pending`;
+  2. otherwise, if it holds a **live read lease**: `pending` (the lease guarantees it has
+     applied every reported position, and that it is within `status_staleness` of the
+     leader);
   3. otherwise, if it has checked with a majority of voters that **no leader holds the
      lease**: it reads their highest known committed positions, applies the log through
      the highest, and answers as in rule 1 if it now finds a reported outcome, otherwise
-     `pending`. This is the POL-04 exception (the decision record unavailable at the
-     deadline, at most `release_grace` after it). It **never applies to an outcome already
-     reported** (RQ-10): such an outcome is always found in this step;
-  4. otherwise (it cannot reach a majority, or a leader holds the lease but the replica is
-     behind): it refuses with a retry, and the client's retry reaches another replica.
+     `pending`. This is the POL-04 exception (the decision record unavailable, at the
+     deadline at most `release_grace` after it, before it until the partition has a
+     leader again, RQ-12). It **never applies to an outcome already reported** (RQ-10):
+     such an outcome is always found in this step;
+  4. otherwise (it cannot reach a majority, or a leader holds the leadership lease but the
+     replica holds no read lease): it refuses with a retry, and the client's retry reaches
+     another replica.
 
   Rule 3's lease check keeps a replica that is merely cut off from a healthy leader from
   answering `pending` for longer than `status_staleness`. A replica reports *failed as of
   D* only once a committed expiry or ending entry, and its "releases durable" entry, are
-  reported, never from the clock alone (P2-S99, P2-S10, P2-S103, P2-S106). Before `D`, rule 3
-  also answers `pending` while the record is unavailable; requirements issue RQ-12 asks for
-  the requirements to say so.
+  reported, never from the clock alone (P2-S99, P2-S10, P2-S103, P2-S106, P2-S108). Before
+  `D`, rule 3 also answers `pending` while the record is unavailable, as POL-04 now allows
+  (RQ-12, P2-S111).
 - **Headroom answers** are computed at one recorded account-log position. Because the
   ledger balance (through a ledger position), unposted usage (through a rating position),
   holds and limits all enter the account owner's log, the state at that position is the
@@ -751,13 +782,23 @@ recorded in RFC-006 (A0R-05, R2-D2); the cut analysis below depends on it.
 - **Reconfiguration during a declared region disaster** (A0R-12, R2-D3). When the loss
   of R1 or R2 is declared, only 3 of 5 voters survive, so every commit needs all of them
   and one more node, facility or R3-zone fault would stop every write. Placement then
-  reconfigures each group, through the log's own membership change, to **2 + 2**: the
-  surviving Kenyan region's two voters and two R3 voters in different GCP zones. A
+  reconfigures each group to **2 + 2**: the surviving Kenyan region's two voters and two
+  R3 voters in different GCP zones. A
   majority, 3 of 4, still spans two regions (it always includes an R3 voter and a Kenyan
   one), one further fault is tolerated, and commit latency is unchanged (leader, Kenyan
   peer, nearer R3 voter). The change reverts to 2 + 2 + 1 when the lost region is
   restored. No third site is needed; the cost is one extra R3 voter per group while the
-  disaster lasts. The placement log is reconfigured first.
+  disaster lasts. **The change is made one voter at a time** (V-07), never as a one-step
+  switch, whose old and new majorities could be disjoint ({B1, B2, C1} and {A1, A2, C2})
+  and unsafe if the declared-lost region is only isolated. With A the surviving region,
+  B the lost one and C the R3 voters: (1) add C2 as a non-voting learner until it has
+  caught up; (2) promote C2 to voter (6 voters, majority 4); (3) remove B1 (5 voters,
+  majority 3); (4) remove B2 (4 voters, majority 3). Each step is one committed
+  configuration entry whose majority overlaps the previous one's. Restoration reverses it
+  the same way (add B1 and B2 as learners, promote them one at a time, then remove C2).
+  Joint consensus is an equivalent alternative; RFC-006 picks one. Until step 3 commits,
+  all three survivors are needed for every commit, so the change starts immediately on
+  declaration, the placement log first, then every group in a staggered order.
 - **Leaders** of the admission tier are all in one Kenyan region while it is healthy
   (R1 until measured otherwise, R2-D7), failed over region by region (§3). Stateless services (edge, workflow workers co-located with account
   leaders, rating and settlement workers and their hot standbys) run in both facilities
@@ -770,15 +811,15 @@ recorded in RFC-006 (A0R-05, R2-D2); the cut analysis below depends on it.
 | Failure | What happens | Effect on acknowledged facts | Effect on latency (single-link, p99, est.) |
 |---|---|---|---|
 | A node | Leader moves within its group in seconds | None (RPO 0) | None after the move |
-| A facility (zone) | At most one voter per group lost; groups keep quorum; leaders on that facility move within R1 (or region-wide to R2 if R1 can no longer lead) | None | About 95 to 110 ms |
-| Region R2 (declared disaster) | Groups keep quorum with R1 + R1 + R3; R1 serves alone; on declaration each group is reconfigured to 2 + 2 (R1 + R1 + R3 + R3), so one further fault is tolerated | None | About 215 ms; `pending` within about 90 ms; targets suspended (RQ-3) |
-| Region R1 (declared disaster) | Groups keep quorum with R2 + R2 + R3; all leaders move to R2 automatically, region-wide; R2 serves alone; then 2 + 2 as above | None; admission back within minutes, inside the 1 h target | About 230 ms; `pending` within about 90 ms; targets suspended (RQ-3) |
+| A facility (zone) | At most one voter per group lost; groups keep quorum; leaders on that facility move within R1 (or region-wide to R2 if R1 can no longer lead) | None | About 105 to 120 ms |
+| Region R2 (declared disaster) | Groups keep quorum with R1 + R1 + R3; R1 serves alone; on declaration each group is reconfigured to 2 + 2 (R1 + R1 + R3 + R3), so one further fault is tolerated | None | About 280 ms; `pending` within about 90 ms; targets suspended (RQ-3) |
+| Region R1 (declared disaster) | Groups keep quorum with R2 + R2 + R3; all leaders move to R2 automatically, region-wide; R2 serves alone; then 2 + 2 as above | None; admission back within minutes, inside the 1 h target | About 300 ms; `pending` within about 90 ms; targets suspended (RQ-3) |
 | Region R3 | Groups keep quorum with R1 and R2 | None | None |
-| One Nairobi–Mombasa path | Traffic moves to the diverse path | None | About 95 to 105 ms (the other path may be longer) |
+| One Nairobi–Mombasa path | Traffic moves to the diverse path | None | About 105 to 115 ms (the other path may be longer) |
 | The R1 ↔ R3 or R2 ↔ R3 path | R3 is not on the commit path while both Kenyan regions are up; groups lose their spare voter for the cut's duration | None | None |
-| **Both** Nairobi–Mombasa paths, both regions up (two independent cuts) | Leaders in R1 keep quorum through R1 peer + R3 (commits about 65 ms); R2's edge reaches the leaders only through R3 | None | R1 about 215 ms (p50 about 170 ms), marginal against its probes; R2 unavailable. Not a declared disaster: it counts against availability (POL-06, R2-D2). The degraded two-write single-link path (R13, about 145 ms) is the lever that brings R1 back under 200 ms |
-| **R1 isolated** (every path from R1 cut, or Nairobi's metro fibre lost; at least three independent cuts under the go-live condition) | R1 keeps 2 of 5 voters and loses quorum; leaders move region-wide to R2 (R2 + R2 + R3); R1's edge is down | None | R1 unavailable; R2 about 230 ms (p50 about 185 ms), marginal. It counts against availability unless an operator declares the loss of R1 (POL-06), after which it is handled as that row |
-| **R2 isolated** | Leaders in R1 keep quorum with R1 + R1 + R3; R2's edge is down | None | R1 about 215 ms; R2 unavailable; counts against availability unless declared |
+| **Both** Nairobi–Mombasa paths, both regions up (two independent cuts) | Leaders in R1 keep quorum through R1 peer + R3 (commits about 65 ms); R2's edge reaches the leaders only through R3 | None | R1 final answers about 280 ms (p50 about 220 ms), so the edge answers `pending` within the budget but final answers miss 200 ms; R2 unavailable. Not a declared disaster: it counts against availability (POL-06, R2-D2). The degraded two-write single-link path (R13, about 210 ms with the report gate) is the largest lever. With the go-live condition this needs two independent cuts |
+| **R1 isolated** (every path from R1 cut, or Nairobi's metro fibre lost; at least three independent cuts under the go-live condition) | R1 keeps 2 of 5 voters and loses quorum; leaders move region-wide to R2 (R2 + R2 + R3); R1's edge is down | None | R1 unavailable; R2 final answers about 300 ms (p50 about 240 ms). It counts against availability unless an operator declares the loss of R1 (POL-06), after which it is handled as that row |
+| **R2 isolated** | Leaders in R1 keep quorum with R1 + R1 + R3; R2's edge is down | None | R1 final answers about 280 ms; R2 unavailable; counts against availability unless declared |
 
 #### 5.2 Single writer per partition, across failures (fencing)
 
@@ -964,7 +1005,7 @@ schemas and wire formats.
 | Request outcome feed | Asynchronous feed | RFC-002 | RFC-006 (notifier, alerting), operator console |
 | Reservation lifecycle feed: parts, locked prices, legs, effective minutes, end cause, fees shown at booking | Asynchronous feed | RFC-002 | RFC-003, RFC-006 (history), reporting |
 | Reservation command port: revoke or reduce (from RFC-001), release after grace (internal to the account owner, rule from RFC-004), terminate (from the operator console), offer and move to an equivalent path with its move hold (RQ-4) | Synchronous command | RFC-002 | RFC-001, RFC-005 |
-| Partner port: classify (POL-26 test), hold with `expires_at = D`, confirm (journaled with its send time), book final, release, cancel, query. RFC-002 budgets partner clock skew inside `commit_margin` and states the reconcile-then-cancel path for a confirm the partner answers "unknown" after its own `D` (A0R-08) | Adapter interface, per partner | RFC-002 | Partner adapters |
+| Partner port: classify (POL-26 test), hold with `expires_at = D`, confirm (journaled with its send time), book final, release, cancel, resume query (an adapter log entry recording the account owner's term). Port invariants (V-03), beside the link hold port's: a confirm or final booking is refused, journaled as refused and never sent for a tombstoned request, when the adapter's clock is past `D − commit_margin` less the partner-skew budget, or when it carries an account-owner term lower than the highest recorded for the request; a partner booking found for a tombstoned request is cancelled at once at Share's cost. RFC-002 budgets partner clock skew inside `commit_margin` and states the reconcile-then-cancel path for a confirm the partner answers "unknown" after its own `D` (A0R-08) | Adapter interface, per partner | RFC-002 | Partner adapters |
 | Partner reconciliation feed: mismatches and actions; a Share reservation the partner lacks is recorded as affected on its partner leg by the account owner | Asynchronous feed | RFC-002 | Operator console, notifier |
 | Equivalent-path source | External input | Routing (out of scope) | RFC-001, RFC-002 |
 | Funds-and-standing module: hold sizing, headroom, key headroom, in-flight, rate limits, standing transitions, resume amount | In-process deterministic module | RFC-004 (Part A) | RFC-002 (the account owner) |
@@ -998,10 +1039,10 @@ Figures marked "est." are estimates (§3, §6), to be replaced by measurement (R
 | Never oversell (P1-N1, POL-05) | One writer per link, by construction: the link owner is the leader of the link's log, fenced by term and epoch. Every booking on the link goes through it. Only the request's account owner ends a hold, after a committed outcome, so no hold is released under a confirmed reservation, whatever the replication delay. |
 | One decision per request (POL-04) | The first deciding entry in one account log; suspension, revocation, withdrawal and the deadline are all ordered against it. |
 | Concurrent decisions equal some one-at-a-time order (P1-N2, P2-N8, P2-N9, POL-25) | Serial order per link and per account (one log each); holds until the decision give serialisability across them. |
-| `ack_budget` 200 ms at p99 (POL-04, X2-N3) | Only admission components on the path; three two-region writes for a single-link booking, each about 25 ms (est.) on the Nairobi–Mombasa pair: about 95 ms at p99 from R1, about 105 to 125 ms from R2 or with drift (est.). After a region loss, `pending` within about 90 ms (est.); final answers then about 215 to 230 ms (est.), while the latency targets are suspended (RQ-3). |
+| `ack_budget` 200 ms at p99 (POL-04, X2-N3) | Only admission components on the path; three two-region writes for a single-link booking, each about 25 ms (est.) on the Nairobi–Mombasa pair: about 105 ms at p99 from R1 including the report position, about 115 to 135 ms from R2 or with drift (est.). After a region loss, `pending` within about 90 ms (est.); final answers then about 280 to 300 ms (est.), while the latency targets are suspended (RQ-3). |
 | Deadline (POL-26, P2-N3) | Expiry is a conditional log entry appended before `D`; Share-link holds are released by `D` normally and within `release_grace` if the decision record or the link's schedule is unavailable; a confirmation is never decided after `D − τ` (200 ms before `D`, est.), stricter than RQ-7's "before `D`"; partner routes begin committing by `D − commit_margin` and keep about 9.8 s for the partner confirm; partner holds carry expiry `D`. |
-| Capacity free once the outcome is reported (POL-04, RQ-6, RQ-8) | Request-scoped releases with tombstones, so no late command recreates a hold; a non-confirmed outcome is reported only after a "releases durable" entry, about 60 ms after the decision (est.), within `release_grace` while a link fails over. |
-| Status reads never wrong, never `pending` after a reported outcome (POL-04, RQ-10) | Outcomes reported only at the report position; the four-step replica rule (§4.6). |
+| Capacity free once the outcome is reported (POL-04, RQ-6, RQ-8) | Request-scoped releases with tombstones, so no late command recreates a hold; a non-confirmed outcome is reported only after a "releases durable" entry, about 70 ms after the decision (est.), within `release_grace` while a link fails over. |
+| Status reads never wrong, never `pending` after a reported outcome (POL-04, RQ-10) | Every report, the edge's synchronous answer included, gated on the report position, which waits for every leased status replica; the four-step replica rule (§4.6). |
 | All or nothing with partners (P2-N1, P2-N7, POL-28) | Account log as decision log; everything Share decides is checked just before the partner confirm; any partner booking left without a confirmation is cancelled at once at Share's cost; at most one final-only partner, booked last. |
 | Fair contention, partners included (P2-N4, POL-02) | Waiter queues by `priority_rule` at every link owner and at every partner adapter; yields accepted by the account owner only while the request is waiting. |
 | RPO 0, two-region acknowledgement (X2-N4) | Five-voter groups, 2 + 2 + 1 across Nairobi, Mombasa and Johannesburg, no region with a majority: every commit is two-region durable, for every fact and every figure shown. During a declared region disaster, 2 + 2 keeps that and tolerates one further fault. |
@@ -1026,7 +1067,7 @@ Figures marked "est." are estimates (§3, §6), to be replaced by measurement (R
 | **Expiry by a strong read of the decision log** (this RFC's previous draft) | A linearisable read does not see a decision proposed but not yet committed, so a link could release a hold under a confirmation that commits a moment later: an oversell or a partly booked route. Replaced by the expiry entry (A0-01). |
 | **Event-sourced monolith**: one log, one process applying every command | A single total order makes every invariant easy, but nothing requires a global order (§4.5), and one sequencer must then carry 25,000 bookings/s, 600,000 records/s and every posting. One failure domain cannot give admission 99.99% while rating is judged by timeliness. Its good part, facts as an append-only log that can be replayed (A4), is kept per partition. |
 | **Deterministic ordering in the style of Calvin** (a sequencing layer orders all transactions, then every partition executes them deterministically, with no commit protocol) | Removes two-phase commit among Share's own partitions, but a sequencer batch adds a round per transaction (an epoch of about 10 ms plus a two-region commit of the batch), the sequencer is a global ordering layer the requirements do not need, and partner legs are non-deterministic external calls that cannot be executed deterministically, so the commit protocol is still needed for every partner route. |
-| **Parallel commits** (the transaction record kept with a participant; the decision implied once every participant's hold and a staged record are durable, as in CockroachDB) | Saves one write (three become two: about 70 ms steady, about 150 to 160 ms after a region loss, est.). But the decision is then a derived fact spread over the account and link logs, so "one decision point" (POL-04) and status reads need a resolution step that reads every participant, and suspension, revocation and withdrawal must be ordered against a distributed condition. Kept as a fallback for the single-link path in the degraded state (R13), not adopted. |
+| **Parallel commits** (the transaction record kept with a participant; the decision implied once every participant's hold and a staged record are durable, as in CockroachDB) | Saves one write (three become two: about 70 ms steady, about 150 to 160 ms after a region loss, est., before the report position). But the decision is then a derived fact spread over the account and link logs, so "one decision point" (POL-04) and status reads need a resolution step that reads every participant, and suspension, revocation and withdrawal must be ordered against a distributed condition. Kept as a fallback for the single-link path in the degraded state (R13), not adopted. |
 | **Three voters, one per region** | Same steady-state latency (leader in R1 plus R2) and 40% fewer copies. But a single node or facility loss leaves a region with no voter, so the next commit must reach R3 (about 65 to 70 ms) during an event that counts against availability, and two node losses lose quorum. Kept as an option for ingestion, whose budget is 1 s (§5.1). |
 | **Actor per link** (virtual actors, cluster sharding) | The right shape, and the link owner is an actor per link. As usually deployed, actor runtimes guarantee single activation only in the absence of partitions: a split-brain or a slow failure detector can activate the same link twice, and persistence plugins append without a term fence. Two activations are two schedule owners, which POL-05 forbids. The architecture keeps the actor model but puts each actor on a consensus log whose term fences it. |
 | **Saga with compensation and wound-wait** (pre-baseline RFC-002) | Wound-wait lets an older request pre-empt any younger unpinned hold; POL-02 forbids pre-empting a holder that is not waiting and asks instead that a *waiting* younger holder yield. The prototype's single coordinator process was a single point of failure, and compensating after a commit decision left routes partly booked (history D21). The account log as decision log keeps the commit point and removes the single coordinator. |
@@ -1040,6 +1081,7 @@ Figures marked "est." are estimates (§3, §6), to be replaced by measurement (R
 | **Payments partitioned by provider and account** (revision 2) | A redelivery naming another account lands in another partition, where its reference is new, and is credited again (P4-N1). Replaced by (provider, transaction reference) (A0R-04). |
 | **One ledger partition for Share's own account** (revision 2) | Carried excess, dearer-path differences, FX differences and partner fees all land in it: the serial point the home-account rule was meant to remove. Replaced by homing by the causing buyer, else hashing (A0R-09). |
 | **A third site, or one voter less, during a declared region disaster** | A third site costs a new facility and its fibre; running on 3 of 5 tolerates no further fault (A0R-12). Reconfiguring to 2 + 2 with a second R3 voter costs neither (R2-D3). |
+| **Reporting at commit, with rule 3 refusing when it finds an outcome entry it cannot prove committed** (an alternative to V-01 and V-02) | Saves the report-position delay (about 10 ms steady, 65 to 70 ms degraded), but answers a status read with a refusal, not `pending`, for an unreported outcome during a failover, against P2-S106 and P2-S111, and it does not fix a fresh but lagging replica (V-01). |
 | **Treating a fibre cut as a declared disaster** | It would hide hours of unavailability in a serving region from the 99.99% measurement. Fibre diversity is a go-live condition instead, and an isolated region counts against availability unless its loss is declared (R2-D2). |
 | **Single-entry balances updated in place** (pre-baseline RFC-004 alternatives) | No conservation check and no history (P4-N7); hot rows on supplier and Share accounts. The journal per home account makes double entry atomic within one partition and removes the hot rows. |
 
@@ -1059,7 +1101,7 @@ Figures marked "est." are estimates (§3, §6), to be replaced by measurement (R
 | R10 | **Webhook load is unknown** (X2 open question 2). | The notifier is partitioned by account and scaled independently; RFC-006 sets a provisional figure. |
 | R11 | **RFC-004 is large, and its Part A is now inside RFC-002's component.** | The division in §7; RFC-002 and RFC-004 Part A are reviewed together. |
 | R12 | *(Resolved by RQ-4.)* Firm equivalent-path offers hold capacity on the new path for `offer_window`. | A move hold on each new-path link, owned by the reservation's move command; no funds hold, since the price is no higher (D4). RFC-001 and RFC-002 specify it. |
-| R13 | **Degraded latency after a region loss, or while R1 commits through R3** (about 215 to 230 ms for a final single-link answer, est.). | Allowed by RQ-3 for a declared disaster; not allowed for a fibre cut. RFC-006 evaluates a parallel-commit single-link path while degraded (about 145 ms, est.) against both cases, and a replacement site for a lost region. |
+| R13 | **Degraded latency after a region loss, or while R1 commits through R3** (about 280 to 300 ms for a final single-link answer, est., report position included). | Allowed by RQ-3 for a declared disaster; not allowed for a fibre cut. RFC-006 evaluates a parallel-commit single-link path while degraded (about 210 ms, est.) against both cases, and a replacement site for a lost region. |
 | R14 | **Fibre paths.** The subsea routes to southern Africa land at Mombasa, so without diverse paths one Nairobi–Mombasa cut could isolate R1 from R2 and R3 at once, and even a cut that does not would make R2 unavailable and R1 marginal for the hours a repair takes, outside any declared disaster (A0R-05). | **Go-live condition** (R2-D2, recorded in the requirements' topology assumption and in RFC-006): two Nairobi–Mombasa paths, and Nairobi–Johannesburg and Mombasa–Johannesburg paths not via each other, with no shared risk, verified by Share's network team. The cut analysis (§5.1) depends on it. |
 | R15 | **Charge-line volume depends on reservation length**, which is assumed (mean 1 h); so does journal storage (about 2.2 PB per copy over 7 years in columnar segments, est.; §6). | RFC-003 and RFC-004 size from a stated distribution; posting one movement per account and minute keeps the ledger's write rate independent of it; RFC-004 confirms the segment encoding (A0R-11). |
 | R16 | **Region-wide failover is a mechanism of its own** (A0R-13): what decides that a region can no longer lead, and how thousands of groups re-elect after the lease waits within admission's 1 min RTO. | RFC-006 specifies the placement log (2 + 2 + 1), the trigger, staggered elections and the expected time to move every leader; the R1 spike tests it. |
@@ -1067,7 +1109,7 @@ Figures marked "est." are estimates (§3, §6), to be replaced by measurement (R
 
 ## Requirements issues
 
-**Resolved.** Every issue this RFC and its two reviews raised up to RQ-11 is settled in the
+**Resolved.** Every issue this RFC and its reviews raised, RQ-1 … RQ-12, is settled in the
 requirements:
 
 | # | Issue | Resolution |
@@ -1088,19 +1130,16 @@ requirements:
 | RQ-9 | P1-S54 lacked the "no confirmation decided in time" Given | Resolved in v1.4 as proposed (P1-S54). Review 09. |
 | RQ-10 | The status-read exception covered outcomes already reported | Resolved in v1.4: the `pending`-while-unavailable exception never applies to an outcome already reported (POL-04; glossary *Status read*). Replica rule 3 and the report position (§4.6). Review 09. |
 | RQ-11 | Reconciliation lacked incoming payments in flight | Resolved in v1.4: reconciliation includes payments received and reported by the partner but not yet posted (P4-N14 (1) and (2)). §2, §7. Review 09. |
+| RQ-12 | The status-read exception covered only unavailability at the deadline | Resolved in v1.5 as this RFC proposed: while a request's decision record is unavailable, before or at its deadline, a status read of an outcome not yet reported reports `pending`, never a wrong outcome (POL-04; glossary *Status read*; P2-S111). Replica rule 3 (§4.6), §4.2. Review 09. |
 
-**New.** Found while applying the second review. It does not block the architecture; the
-design follows the reading given until the requirements decide.
-
-| # | Requirement | Issue | Reading the design follows, and what would resolve it |
-|---|---|---|---|
-| RQ-12 | POL-04 status reads and their exception ("while a request's decision record is unavailable **at its deadline**"); glossary *Status read*; P2-S99 | The exception covers only unavailability at the deadline, but the same thing happens **before** it. While an account partition fails over (seconds, inside admission's 1 min RTO): (a) a deciding entry that was in flight when the leader failed, and that the new leader carries, is decided at its own earlier timestamp but becomes known only after the election; (b) a non-confirmed decision committed just before the failure has no "releases durable" entry until the new leader re-sends its releases (RQ-8 covers a link's failover, not the account's). Either way no status read can report the decision within `status_staleness` of it: a `pending` answer lags it by more, and a refusal reports nothing. No consensus log avoids this (the reason RQ-5 gave). | The design applies replica rule 3 (§4.6) before the deadline too: while no leader holds the lease, a status read of a request whose outcome has not been reported answers `pending`, never a wrong outcome and never after a reported one (RQ-10), until the record is available again, which admission's RTO bounds at 1 min. POL-04 and the glossary *Status read* would settle it by saying "while a request's decision record is unavailable, **before or at its deadline**, a status read of a request whose outcome has not been reported reports `pending` until the record is available again, at most admission's recovery time (1 min) after it became unavailable, and at the deadline, as now, at most `release_grace` after it", with the matching Given in P2-S99. |
+**New.** None found in revision 3.1.
 
 ## Review resolution
 
 How each finding and decision of the [first review](../reviews/06-rfc-000-review.md) was
 applied in revision 2, and of the [second review](../reviews/08-rfc-000-review-2.md) in
-revision 3 (below the first tables).
+revision 3 (below the first tables), and of its [verification](../reviews/10-rfc-000-verification.md)
+in revision 3.1 (last table).
 
 **First review (revision 2; A0-06 and A0-10 reopened by v1.3 and resolved again in revision 3).**
 
@@ -1147,7 +1186,7 @@ revision 3 (below the first tables).
 | A0R-03 | Major | Releases are **request-scoped** (every hold, waiter registration and grant, whatever the attempt), leave a tombstone until `D` + `release_grace`, and any hold or grant for a tombstoned request or one past `D` is refused; a refusal records a tombstone too; "releases durable" counts every leg in the intake; the answer to an expiry request carries the committed outcome, confirmed or not. Stated as link hold port invariants for RFC-001 and RFC-002. A9, §2, §3, §4.3, §4.4, §6 (tombstone sizing), §8. |
 | A0R-04 | Major | Payment events partitioned by **(provider, transaction reference)**; the first authenticated event binds the reference to its account and the posting carries the binding; a later event with different contents moves nothing and is reported; orphan reversals matched in one partition; internally generated references keep the home rule. §2, §4.1, §4.4, §6, §7, §8. |
 | A0R-05 | Major | Diverse fibre paths are a **go-live condition** (two Nairobi–Mombasa paths; Nairobi and Mombasa each to Johannesburg, not via each other; no shared risk). Cut analysis redone: one Nairobi–Mombasa cut changes nothing material; a Kenya–R3 cut changes nothing; a double Nairobi–Mombasa cut makes R2 unavailable and R1 marginal (counts against availability); R1 isolated and R2 isolated rows added. Leader region chosen by measured RTT to R3 (R2-D7). The degraded two-write path is evaluated against the double cut too. §3 (RTT note, quorum table, leader placement, mitigations), §5.1, R13, R14. |
-| A0R-06 | Major | Replica rule in four steps (reported outcome always reported; `pending` within freshness; `pending` past it only once a majority of voters confirms no leader holds the lease, after catching up to their committed positions; otherwise refuse with retry), with a **report position** so that a reported outcome is always found again (RQ-10). §4.6, §4.2. Before the deadline, raised as RQ-12. |
+| A0R-06 | Major | Replica rule in four steps (reported outcome always reported; `pending` within freshness; `pending` past it only once a majority of voters confirms no leader holds the lease, after catching up to their committed positions; otherwise refuse with retry), with a **report position** so that a reported outcome is always found again (RQ-10). §4.6, §4.2. Before the deadline, raised as RQ-12 (resolved in v1.5). Corrected in revision 3.1 by read leases and an edge gated on the report position (V-01, V-02). |
 | A0R-07 | Minor | Rebased on `requirements-v1.3` plus the RQ-7 … RQ-11 decisions (v1.4); RQ-5 and RQ-6 moved to Resolved (review 07), RQ-7 … RQ-11 too (review 09); the P2-S104 sentence dropped; §4.3 restated on v1.3's late-known confirmation. Header, §4.3, Requirements issues. |
 | A0R-08 | Minor | The partner adapter skips waiters past their commit fence or already ended; re-asks serialised per pair of conflicting windows; RFC-002 budgets partner clock skew inside `commit_margin` and states reconcile-then-cancel. §2, §3, §4.5, §8, R17. |
 | A0R-09 | Minor | A movement that touches no buyer is homed with the buyer whose request, reservation or traffic caused it; otherwise with its one supplier; otherwise in one of N Share sub-partitions by a hash of its source reference; the home is a function of the source reference. §2, §4.2, Competition. |
@@ -1166,3 +1205,16 @@ revision 3 (below the first tables).
 | R2-D5 | Accepted: request-scoped releases with tombstones until `D` + `release_grace`; sized at a few MB on the hottest link. §4.3, §6. |
 | R2-D6 | Accepted: payments by (provider, transaction reference); Share-only movements homed by the causing buyer, otherwise by hash; supplier-only movements without a causing buyer stay with their supplier. §2, §4.4. |
 | R2-D7 | Accepted: R1 leads by default until the spike measures each Kenyan region's RTT to R3. §3, R1. |
+
+**Verification of revision 3 (revision 3.1).**
+
+| Defect | Change in this revision |
+|---|---|
+| V-01 | Status replicas hold **read leases** (at most `status_staleness` − ε, renewed on heartbeats); the report position advances to P only once a majority of voters knows P committed and every leased replica has applied P (or its lease expired); replica rule 2 is now "holds a live read lease → `pending`"; a replica without one goes to rule 3 or 4. §4.6, A10. |
+| V-02 | The edge's synchronous final answer is a report and is gated on the report position, as are replicas, the outcome feed and webhooks; A10 restated. The report delay is restated as one majority round trip (about 10 ms steady, 65 to 70 ms with a region lost, est.) and added to the latency tables and Benefits: single-link about 105 ms from R1, 115 ms from R2, 135 ms with drift, 280 ms (R2 lost) and 300 ms (R1 lost); rejection likewise; route report about 70 ms. Fibre-cut rows and R13 updated (the two-write lever is about 210 ms). The alternative of refusing instead is in Competition. §3, §4.6, §5.1, Benefits, R13. |
+| V-03 | Partner adapters refuse (journal as refused, never send) a confirm or final booking for a tombstoned request, past `D − commit_margin` less the partner-skew budget by the adapter's clock, or with an account-owner term lower than the highest recorded for the request; a new leader's resume query is an adapter log entry recording its term; any partner booking found for a tombstoned request is cancelled at once at Share's cost. Added to the partner port invariants. §3, §4.3, §8. |
+| V-04 | Payments state partitioned per kind: payment events, reference bindings and orphan reversals by (provider, transaction reference); invoices, invoice payments as applied and write-offs by account; reconciliation runs by day. Transfer confirmations and failures moved to payouts (their only writer), keyed by the instruction reference with the provider reference recorded. §2, §4.4. |
+| V-05 | The binding is made only by the first authenticated **and well-formed** event; malformed events are recorded and rejected without a binding (P4-S05). §2, §4.4. |
+| V-06 | Worst case restated: `δ_x` ≈ 70 + 10 + 70 = 150 ms (R1 lost), `ε + δ_x` ≈ 190 ms, a 10 ms margin to `τ`; RFC-006 alarms on the monitored invariant before the margin is used up. §4.3. |
+| V-07 | The 2 + 2 change is specified as single-voter steps (add C2 as learner, promote, remove B1, remove B2; reversed on restoration), with joint consensus as an equivalent alternative for RFC-006; all survivors are needed until step 3, so the change starts at once on declaration, the placement log first. §5.1. |
+| V-08 | §4.2 adds the account partition failing over before the deadline (RQ-12, bounded by the 1 min RTO); RQ-12 moved to Resolved (v1.5, review 09); P2-S107 cited in §4.3 and §4.2, P2-S108 in §4.6, P2-S109 and P2-S110 in the fence bullet and §3, P2-S111 in §4.2 and §4.6. Header rebased on `requirements-v1.5`. |
