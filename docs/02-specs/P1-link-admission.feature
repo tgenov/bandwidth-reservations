@@ -169,11 +169,19 @@ Feature: Selling capacity on one link without overselling
       Then no booking was confirmed that, at the moment it was confirmed, left the committed rate plus the capacity held above the link's capacity then in force, at any minute of its window, other than one that had begun committing before a reduction was recorded, which is then affected (POL-07)
 
     @P1-S14 @need-P1-N2 @POL-05
-    Scenario: Concurrent decisions are those of checking the bookings one at a time in the order received
+    Scenario: Concurrent decisions are those of checking the bookings one at a time in the order they reach the link's schedule owner
       Given any number of buyers booking the same link at the same time
       When every booking has its outcome
-      Then every outcome is the one given by checking the bookings against the link's schedule one at a time, in the order they were received, each check counting the capacity then held for bookings in flight (POL-05)
+      Then every outcome is the one given by checking the bookings against the link's schedule one at a time, in the order they reached the link's schedule owner, each check counting the capacity then held for bookings in flight (POL-05)
       And a booking with `wait = false` rejected because of capacity then held stays rejected, even if that capacity is released later
+
+    @P1-S77 @need-P1-N2 @POL-05
+    Scenario: Requests from different accounts are checked in the order they reach the link's schedule owner, not the order their accounts received them
+      Given a link with a capacity of 10 Mbps, with 8 Mbps confirmed for [10:00, 11:00)
+      And account "b1" received booking request X of 2 Mbps on the link for [10:00, 11:00), with `wait = false`, before account "b2" received booking request Y of 2 Mbps for the same window, with `wait = false`
+      When Y reaches the link's schedule owner before X
+      Then Y is checked first, and holds the 2 Mbps
+      And X is rejected with a `retry_after` of Y's remaining deadline (POL-05), although its account received it first
 
   Rule: A rejection tells the buyer what they can get instead, and nothing about anyone else
 
@@ -356,7 +364,7 @@ Feature: Selling capacity on one link without overselling
       Then a booking of 2 Mbps on the link for [10:00, 11:00) is confirmed
 
     @P1-S40 @need-P1-N8 @POL-07
-    Scenario: When capacity is restored, the affected flag ends from the next minute boundary and the holders are told
+    Scenario: When capacity is restored, the affected flag ends from the first minute boundary at or after the restoration's record, and the holders are told
       Given an unplanned outage has reduced the link's capacity to 6 Mbps, and A and B are flagged as affected
       When the link's capacity is restored to 10 Mbps, the restoration being recorded at 10:30:20
       Then A and B are still affected for [10:30, 10:31), and no longer affected from 10:31, the first minute boundary at or after the restoration's record (POL-07)
@@ -404,6 +412,18 @@ Feature: Selling capacity on one link without overselling
       And C's holder is told within `affected_notice_time` (POL-07) of the confirmation
       And network operations is alerted that C was confirmed after the reduction was recorded
       And a booking of 1 Mbps on the link for [10:00, 11:00) received after the record is rejected
+
+    @P1-S78 @need-P1-N1 @need-P1-N8 @POL-07 @POL-26
+    Scenario Outline: Whether a confirmation had begun committing when a reduction was recorded is judged by whether it sees the reduction's displacement record
+      Given a pending booking request holds 2 Mbps on the link for [10:00, 11:00)
+      And an unplanned outage reducing the link's capacity to 6 Mbps has been recorded at the link, with its displacement record (POL-07)
+      When the transaction confirming the request <sees>
+      Then <result>
+
+      Examples:
+        | sees                                 | result                                                                                                                                       |
+        | does not see the displacement record | the request had begun committing (POL-26), and may be confirmed before its deadline; it is then flagged as affected, and network operations alerted, as in P1-S63 |
+        | sees the displacement record         | the request is decided against the reduced capacity, and is rejected for no fit                                                               |
 
     @P1-S72 @need-P1-N8 @POL-07 @POL-08
     Scenario: When a reservation ends during an outage, the others are no longer affected where they now fit, and their holders are told
@@ -456,7 +476,7 @@ Feature: Selling capacity on one link without overselling
       And it takes none of the capacity held for the request
 
     @P1-S67 @need-P1-N8 @POL-07
-    Scenario: The supplier may cancel its own maintenance booking, and the capacity is free from the next minute boundary
+    Scenario: The supplier may cancel its own maintenance booking, and the capacity is free from the first minute boundary at or after the cancellation's record
       Given the link's supplier booked planned maintenance taking 2 Mbps for [10:00, 12:00) on day D
       And it is 09:00:30 on day D - 3
       When the supplier cancels the maintenance booking
@@ -651,7 +671,7 @@ Feature: Selling capacity on one link without overselling
       When M's supplier announces a permanent reduction after which G and B no longer both fit on M
       Then G's Mbps are affected first, because each part of B keeps on M the age it had on the link (POL-07)
 
-  Rule: A permanent increase of a link's capacity is sellable from the next minute boundary
+  Rule: Every rise in a link's sellable capacity takes effect from the first minute boundary at or after its record
 
     @P1-S69 @need-P1-N8 @need-X1-N10 @POL-07
     Scenario: A permanent increase recorded by the link's supplier is sellable from the first minute boundary at or after its record
@@ -659,6 +679,18 @@ Feature: Selling capacity on one link without overselling
       When the link's supplier records a permanent increase of its capacity to 15 Mbps at 09:30:20
       Then from 09:31 a buyer's booking of 5 Mbps on the link for [10:00, 11:00) is confirmed
       And no reservation on the link is changed or flagged as affected
+
+    @P1-S76 @need-P1-N8 @POL-07
+    Scenario Outline: A rise in sellable capacity recorded exactly on a minute boundary takes effect from that boundary
+      Given <situation>, with 10 Mbps confirmed on the link for [10:00, 11:00)
+      When <change> is recorded at 09:31:00
+      Then from 09:31 a buyer's booking of 2 Mbps on the link for [10:00, 11:00) is confirmed (POL-07)
+
+      Examples:
+        | situation                                                                              | change                                                         |
+        | a link of 12 Mbps whose capacity an unplanned outage has reduced to 10 Mbps             | the restoration of its capacity to 12 Mbps                     |
+        | a link of 10 Mbps                                                                       | a permanent increase of its capacity to 12 Mbps, by its supplier |
+        | a link of 12 Mbps on which its supplier booked planned maintenance taking 2 Mbps for [10:00, 11:00) | the supplier's cancellation of that maintenance booking |
 
   Rule: What was known to be reserved at any past time can be retrieved
 

@@ -487,6 +487,15 @@ Feature: Rating reservations and metered traffic
       Then its bytes are charged once
       And a corrected version submitted by any other principal, an operator included, is refused and recorded (POL-23)
 
+    @P3-S71 @need-P3-N7 @need-X1-N11 @POL-19 @POL-17
+    Scenario: A payload that does not conform to the record template is rejected, and outside the erasable store only its identity, digest and reason are kept
+      Given an exporter sends a payload that does not conform to the record template, declaring fields the template does not accept
+      When usage ingestion receives it
+      Then it is rejected, and nothing is charged for it
+      And the logs and the record kept of it hold only its identity, its digest and the reason "does not conform to the record template"
+      And the payload itself is kept only in the erasable personal-data store (POL-19)
+      And it can no longer be recovered once an erasure it falls under is executed, or `dispute_window` (POL-17) + 7 days after its receipt, whichever comes first
+
     @P3-S31 @need-P3-N7
     Scenario: An accepted record is never altered or removed
       Given an accepted flow record
@@ -507,6 +516,26 @@ Feature: Rating reservations and metered traffic
         | the route's only supplier | within `dispute_window` (POL-17) | "a1"'s charge is amended by -10,000 micro-USD (POL-11), the supplier owing its own reduction as a supplier debt (POL-23) |
         | Share                     | within `dispute_window` (POL-17) | "a1"'s charge is amended by -10,000 micro-USD (POL-11), borne by Share in full (POL-23)                    |
         | the route's only supplier | after `dispute_window` (POL-17)  | the charge is not amended                                                                                  |
+
+    @P3-S72 @need-P3-N7 @POL-23 @POL-17
+    Scenario Outline: A superseding record may change only measured fields, never the record's identity or attribution keys
+      Given an accepted record of 2 GB of usage-priced traffic of account "a1", active only in the minute starting 12:05
+      When its own exporter submits, within `dispute_window` (POL-17), a corrected version of it that <change>
+      Then <result>
+
+      Examples:
+        | change                                                                    | result                                                 |
+        | changes its bytes to 1 GB, and its packets                                | it supersedes the original for charging (POL-23)       |
+        | moves its end time within the minute starting 12:05                       | it supersedes the original for charging (POL-23)       |
+        | moves its start and end times into the minute starting 12:07              | it is refused and recorded, and the original stands    |
+        | changes a field by which its traffic is attributed to "a1" or to a reservation | it is refused and recorded, and the original stands |
+
+    @P3-S73 @need-P3-N7 @need-P3-N6 @POL-23 @POL-17
+    Scenario: A superseding record of a quarantined record is itself quarantined
+      Given a record of 1 GB whose traffic could not be attributed to any account was quarantined (POL-17)
+      When its own exporter submits a corrected version of it, of 0.5 GB, within `dispute_window` (POL-17)
+      Then the corrected version is quarantined in the original's place (POL-23), and nothing is billed for either
+      And the original is kept, unaltered
 
   Rule: Past charges are amended, never rewritten, and every amendment is explained
 
@@ -590,15 +619,15 @@ Feature: Rating reservations and metered traffic
 
   Rule: Usage exposure is visible, and breaches of its assumptions are reported
 
-    @P3-S37 @need-P3-N10 @POL-14 @POL-18 @POL-06
+    @P3-S37 @need-P3-N10 @POL-14 @POL-18 @POL-06 @POL-13
     Scenario: The business can see each account's usage exposure, in its two parts
       Given account "a1" uses one best-effort product whose highest `usage_price` on any route is 10,000 micro-USD per GB
       And "a1"'s `usage_rate_cap` (POL-14) on it is 100 Mbps
       And records of 0.2 GB of "a1"'s usage-priced traffic have been accepted by usage ingestion but not yet posted
       When finance asks for "a1"'s usage exposure
       Then the unposted usage is 2,000 micro-USD, at 10,000 micro-USD per GB in those minutes
-      And the lateness bound is 31,250 micro-USD: 100 Mbps for `max_lateness` (180 s) plus `attribution_lag_max` (10 s) plus the 60 s enforcement target, 250 s, 3.125 GB, at 10,000 micro-USD per GB
-      And the usage exposure is 33,250 micro-USD
+      And the lateness bound is 46,250 micro-USD: 100 Mbps for `max_lateness` (180 s) plus `flow_active_timeout` (60 s) plus 60 s of minute granularity plus `attribution_lag_max` (10 s) plus the 60 s enforcement target, 370 s, 4.625 GB, at 10,000 micro-USD per GB
+      And the usage exposure is 48,250 micro-USD
 
     @P3-S38 @need-P3-N10 @POL-14
     Scenario: A record later than max_lateness is still charged and reported as a breach

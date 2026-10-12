@@ -82,10 +82,10 @@ Feature: Non-functional targets
       And the probe account is never invoiced
 
     @X2-S27 @need-X2-N1 @POL-06
-    Scenario: Enough probe accounts are designated that every part of admission and the wallet serving accounts is probed
+    Scenario: Enough probe accounts are designated that every account slot of admission and the wallet is probed
       Given the designated Share probe accounts (POL-06)
       When admission and the wallet are probed in a serving region over a minute
-      Then every part of them that serves accounts is asked by at least one probe
+      Then every account slot of admission and of the wallet is asked by at least one probe
       And no probe account is a buyer's account
 
     @X2-S21 @need-X2-N1 @need-X2-N5 @POL-06 @POL-15 @POL-18
@@ -228,6 +228,18 @@ Feature: Non-functional targets
       Given a region was lost from 10:00 to 10:20, and no disaster was declared
       When the month's availability, latency and timeliness are measured
       Then every minute from 10:00 to 10:20 counts against every target, in each serving region (POL-06)
+
+    @X2-S29 @need-X2-N1 @need-X2-N3 @POL-06 @POL-32
+    Scenario Outline: A region with no recorded loss may be declared a disaster on probe evidence, counted from the first failing probe minute
+      Given the system recorded no loss of region "R1"
+      And admission's probes in "R1" failed in every minute from the one starting 10:00 to the one starting <last>, none of them an available minute for admission there
+      When an operator in network operations declares a disaster for "R1" at 10:20, citing that probe evidence, and a second network operations operator approves it (POL-32)
+      Then <result>
+
+      Examples:
+        | last  | result                                                                                                                                                  |
+        | 10:04 | the disaster is declared, and its minutes start at 10:00, the first failing probe minute, until its declared end (POL-06)                                |
+        | 10:03 | the declaration is refused, the probes having failed for fewer than `disaster_probe_minutes` (POL-06: 5) consecutive minutes, and every minute counts against every target |
 
   Rule: No acknowledged fact is ever lost
 

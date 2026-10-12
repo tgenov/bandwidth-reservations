@@ -309,6 +309,7 @@ Feature: Security, tenancy and audit
         | compliance         | disclosing the account's identity to a supplier under a legal order that requires it (POL-33), approved by a second compliance operator |
         | finance            | setting the account's `usage_rate_cap` for a product (POL-14)                                            |
         | finance            | reversing a mistaken attribution of quarantined traffic to the account (POL-17)                          |
+        | compliance         | erasing the personal data of a user of the account, at that user's request through an administrator of the account (POL-19) |
 
     @X1-S13 @need-X1-N7 @POL-32 @POL-30
     Scenario Outline: An operator is refused any action that belongs to another role
@@ -328,6 +329,7 @@ Feature: Security, tenancy and audit
         | support            | read the audit trail                               |
         | commercial         | correct a price                                    |
         | network operations | register a link                                    |
+        | support            | erase a person's personal data                     |
 
     @X1-S31 @need-X1-N7 @need-X1-N8 @POL-32 @POL-01 @POL-12 @POL-07 @POL-06 @POL-19
     Scenario Outline: An operator in the role that owns an action not on one account can take it, and it is recorded
@@ -371,17 +373,16 @@ Feature: Security, tenancy and audit
         | whose stated end date has passed                | "s1" views its links' schedules                   | none of "b1"'s reservations                                     |
         | that states no scope or end                     | one compliance operator has ended the disclosure  | none of "b1"'s reservations                                     |
 
-    @X1-S36 @need-X1-N7 @POL-30 @POL-32
-    Scenario Outline: A termination notice is withheld only by compliance, with a second approval, under a legal order that forbids it
-      Given a reservation of "b1" is terminated <termination>
-      When <who> asks that its holder not be told
+    @X1-S36 @need-X1-N7 @POL-30 @POL-32 @POL-07
+    Scenario Outline: A termination notice is withheld only by compliance, under a legal order that forbids it, as part of the termination and approved with it
+      When <who> terminates a reservation of "b1" <termination>
       Then <result>
 
       Examples:
-        | termination                              | who                                                                                    | result                                                                     |
-        | for network abuse by network operations  | the network operations operator                                                        | it is refused, and the holder is told                                      |
-        | for a legal order by compliance          | an operator in compliance, citing an order that forbids it, approved by a second compliance operator | the holder is not told, and the order is recorded with the termination |
-        | for a legal order by compliance          | an operator in compliance, without a second compliance operator's approval            | the holder is told                                                         |
+        | who                                                                   | termination                                                                                            | result                                                                                         |
+        | the network operations operator                                       | for network abuse, asking that its holder not be told                                                  | the termination takes effect, the request not to tell is refused, and the holder is told       |
+        | an operator in compliance, approved by a second compliance operator   | for a legal order, recording in the same action, and citing the order, that the order forbids telling the holder | the holder is not told, and the order is recorded with the termination                |
+        | an operator in compliance, approved by a second compliance operator   | for a legal order, without withholding the notice, and a compliance operator then asks, citing the order, that the holder not be told | the later request is refused, and the holder is told within `affected_notice_time` (POL-07) |
 
     @X1-S16 @need-X1-N7 @POL-30 @POL-32
     Scenario: An operator cannot end a reservation for a reason outside POL-30
@@ -442,6 +443,18 @@ Feature: Security, tenancy and audit
       Then "u1"'s personal data can no longer be recovered from anything Share holds (POL-19)
       And every audit record and money movement of "u1" is unchanged, still attributed to "u1"'s pseudonymous identifier for the retention period
       And recomputing any balance or charge from the records gives the same result as before the erasure
+
+    @X1-S39 @need-X1-N11 @need-X1-N7 @POL-19 @POL-32
+    Scenario Outline: An erasure the data subject requests is executed by one compliance operator, and is complete in every copy within erasure_max
+      Given user "u1" of "b1" asks that its personal data be erased, <channel>
+      When an operator in compliance erases it, giving the request as the reason (POL-32)
+      Then the erasure takes effect with that one operator, recorded with the operator, the request and the time, by pseudonymous identifiers (POL-19)
+      And within `erasure_max` (POL-19) of the request, "u1"'s personal data can no longer be recovered from the live store, from any backup or from any escrowed copy
+
+      Examples:
+        | channel                                                                    |
+        | through an account administrator of "b1"                                   |
+        | by a documented request to support, made through the marketplace by "u1"  |
 
     @X1-S37 @need-X1-N11 @POL-19
     Scenario: Logs and records hold no personal data

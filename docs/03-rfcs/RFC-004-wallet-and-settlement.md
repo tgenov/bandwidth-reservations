@@ -24,8 +24,9 @@ What changed from revision 1, in one list (each item points to where it now live
    partition at one database timestamp `T`, once the closed timestamp has passed it, and
    invoice issue uses the feed's resolved timestamp (§B1.3, §B5, RFC-000 §4.5).
 3. **Contracts aligned with RFC-000 §8 revision 4**: identity status push with KYB (F4
-   now carries KYB; F5 only the credit limit), key status as applied with a `key_status`
-   call, standing feed and enforcement acknowledgement on Kafka, posting and
+   now carries KYB; F5 only the credit limit), key revocation as applied read through
+   `rate_check`'s `NotAccepted{revoked}` and F4's `revoked_keys` outcome (JR-1, RFC-000
+   rev. 4.1), standing feed and enforcement acknowledgement on Kafka, posting and
    usage-applied acknowledgements, supplier-debt register in payouts, authenticity of
    notifications, confirmations and partner reports by RFC-005's verifier, investigation
    stream (§A4, §A10, §B3.1, §B4.1, §B7.1, §B12).
@@ -118,7 +119,7 @@ Part A (§A1 … §A11) is the funds-and-standing module of the account owner. P
 §B13) is the ledger, settlement, payments and receivables, reconciliation, payouts and
 statements. Every component of Part B is a NestJS owner service over its own insert-only
 log tables in the database (RFC-000 §5.5); the ledger, payments, receivables, payouts and
-reconciliation are owner kinds with epoch-fenced owner leases per partition, settlement is
+reconciliation are owner kinds with epoch-fenced owner leases per slot (RFC-000 §5.2), settlement is
 a consumer with a hot standby, and reporting holds read models only. Notation used
 throughout:
 
@@ -284,7 +285,7 @@ refusal states:
 
 | # | Check | Refused with (POL-10 wording) |
 |---|---|---|
-| 0 | `key_status(S, k)` is revoked as applied (F4) | Not a check of `admit`: the booking module calls `key_status` first and treats the submission as unauthenticated, not accepted (X1-S06, JR-1) |
+| 0 | The key is revoked as applied (F4) | Not a check of `admit`: `rate_check` answers `NotAccepted{revoked}` before anything else, and the booking module treats the submission as unauthenticated, not accepted (X1-S06, JR-1); the key's undecided requests were already ended in the F4 entry that listed it in `revoked_keys` |
 | 1 | The request adds something (a booking, an extension or an increase) and the account is suspended | "account suspended", the resume amount `RA` and, if any, the overdue invoices (P2-S42, P2-S78) |
 | 2 | `IF_k + mbps_q > kif_k` (if the key has a limit) | key's limit on capacity in flight reached (P2-S40) |
 | 3 | `IF_a + mbps_q > account_inflight_limit` | account's limit on capacity in flight reached (P2-S40, P2-S54, P2-S66, P2-S98) |
@@ -573,8 +574,8 @@ Input    = Intake{request, verdict} | Decided{request, Confirmed{reservation, sc
 Outcomes = { hold_changes, standing?: {from, to, std_seq, causes, ra}, warning?: {wq},
              notices[], release_due?: [reservation], revoked_keys?: [key], alerts[], outbox[] }
 
-rate_check(soft: RateWindows, now, principal) -> Accept | NotAccepted{retry_after}   // owner memory only
-key_status(S, key)           -> Active | Revoked | Unknown                            // as applied by F4 (JR-1)
+rate_check(soft: RateWindows, now, principal) -> Accept | NotAccepted{retry_after} | NotAccepted{revoked}
+                             // owner memory, and the key's status as applied by F4 (JR-1); logs nothing
 admit(S, ctx, ask)           -> Verdict
 apply(S, ctx, input)         -> (S', Outcomes)        // the only state transition
 due(S)                       -> [(instant, F7 payload)] // fee term ends, grace end, enforcement checks
@@ -589,11 +590,12 @@ and writes them, so every recorded figure is computed at the timestamp the entry
 at. A transaction pushed to a later timestamp fails and is retried, and the retry
 re-evaluates (RFC-000 §5.5). The entries of one batch share one timestamp and are ordered
 by sequence. `rate_check` alone uses the owner's clock (`now`), because it decides only
-whether to propose anything, and logs nothing.
+whether to propose anything, and logs nothing. Its `NotAccepted{revoked}` reads the key
+status F4 last applied; there is no separate `key_status` call (JR-1, RFC-000 rev. 4.1).
 
 | Call site (RFC-002) | Call |
 |---|---|
-| A booking submission arrives at the owner | `key_status`: `Revoked` → not accepted as unauthenticated (X1-S06); then `rate_check`; if accepted, `admit` inside the batch transaction, whose verdict goes into E1's funds payload, or ends the request at intake (E1′) on `Refuse` |
+| A booking submission arrives at the owner | `rate_check`: `NotAccepted{revoked}` → not accepted as unauthenticated (X1-S06); `NotAccepted{retry_after}` → not accepted, over a rate limit; if accepted, `admit` inside the batch transaction, whose verdict goes into E1's funds payload, or ends the request at intake (E1′) on `Refuse` |
 | Building the deciding entry | `standing(S)` must be active for a request that adds something (also checked before a partner confirm is sent); then `apply(Decided)` |
 | Applying any booking entry with a funds payload | `apply` with the corresponding `Input` |
 | A feed event or timer | The owner builds F1 … F11 and calls `apply`; the outcomes go into the entry |
@@ -614,7 +616,7 @@ each is closed, and this revision closes them so:
 
 | # | Item | Resolution here | RFC-002 must |
 |---|---|---|---|
-| JR-1 | Key revocation as applied | `key_status(S, key)` added, the plain read of `S` RFC-002 revision 2 accepts in place of a `revoked` result from `rate_check` (which reads only owner memory); F4's outcome lists `revoked_keys` (RFC-000 §2, §8: the identity status push is applied by this module and read by booking; AI4-3) | Call `key_status` at intake before `rate_check`; write the "key revoked" endings in the F4 entry |
+| JR-1 | Key revocation as applied | **No `key_status` call** (coordinator's decision, RFC-000 rev. 4.1): `rate_check` returns `NotAccepted{revoked}` for a key revoked as applied by F4, and F4's outcome lists `revoked_keys` (RFC-000 §2, §8: the identity status push is applied by this module and read by booking; AI4-3) | Treat `NotAccepted{revoked}` at intake as unauthenticated (as RFC-002 §3.1 does); write the "key revoked" endings in the F4 entry |
 | JR-2 | Release after grace | The release records are written in the F7 *grace ended* entry itself (§A7), not appended later | Write the E11 releases in the F7 entry, cause "released" |
 | JR-3 | Rate counts after an owner change | Adopted with RFC-000's bound: up to twice the limit for one second after an owner change (§A5.4, B-AI-4) | State the same bound |
 | JR-4 | Price changes of open-ended reservations | A booking reservation-change entry: E11 with cause "price change", carrying `PriceTookEffect{reservation, price_version, effective_minute}`, re-pricing every part (RQ3-5); the announcement itself is F11 (§A4) | Append E11 at the effective minute; register F11 and append it when the catalogue announces a change |
@@ -704,7 +706,8 @@ A post is **one database transaction** in the home partition, conditional on the
 epoch: it reads the head, the dedup rows of the movement's lines and the balances it
 touches, evaluates the templates of §B2, and inserts the movement, the projections and the
 outbox row. Movements arriving while a transaction is in flight form the next batch (one
-batch transaction in flight per partition, RFC-000 §3). The movement's **posting time is
+batch transaction in flight per slot, carrying each partition of the slot with movements
+pending under its own head row, RFC-000 §3 rev. 4.1, AI3-11). The movement's **posting time is
 its commit timestamp**, monotone within the partition across owner changes (RFC-000
 §4.3, §4.5), so revision 1's `max(leader clock, previous, last cut + 1 µs)` rule and the
 cut fence it needed are gone.
@@ -1243,7 +1246,7 @@ Retention of every money identity is 7 years (P4-S100).
 
 | Item | Estimate (est.) |
 |---|---|
-| Ledger partitions | 128, each about 8,000 lines/s and 15 movements/s of charges, plus payments; one batch transaction in flight per partition (RFC-000 §3), each carrying the movements that arrived meanwhile (about 1 to 3 at 15 to 30 ms a commit) |
+| Ledger partitions | 128, each about 8,000 lines/s and 15 movements/s of charges, plus payments; one batch transaction in flight per slot, so at most one per partition (RFC-000 §3 rev. 4.1, AI3-11), each carrying the movements that arrived meanwhile (about 1 to 3 at 15 to 30 ms a commit) |
 | Transaction size | One reservation-charge movement of about 600 lines is about 21 KB of encrypted payload plus a few hundred dedup watermark and balance rows touched, well within one transaction; a very large account's movement is split per 5,000 lines, each part its own movement with its own lines (lines are the unit of idempotency, so a split changes nothing) |
 | Live log | A line in the live log is about 36 B (line key 16, amount 8, shares as needed); 1 M lines/s is about 36 MB/s into the database across all partitions, at five replicas each (2 + 2 + 1, RFC-000 §5.1); the live tail is kept about 1 h, then sealed by history and truncated (RFC-000 §5.5) |
 | Sealed segments | Hourly per partition, re-sorted by (reservation, minute): line key dictionary, minute delta (mostly +1), amount and split reference run-length encoded (a reservation's amount is constant between changes), shares not stored where derivable (normal mode), stored for own-mode lines. Target ≤ 10 B a line as RFC-000 §6 assumes: **at most 2.2 PB per copy over 7 years, 4.4 PB in two regions**; with run-length encoding expected 1 to 3 B a line (0.2 to 0.7 PB per copy), to be confirmed by the spike on real reservation-length distributions (R4-B1). This is the layout RFC-004 asks of history's ledger segments |
@@ -1279,7 +1282,7 @@ cut records and the external-kind movement lists.
 
 | Contract (RFC-000 §8) | Kind | Semantics here |
 |---|---|---|
-| Funds-and-standing module | In-process | §A10: pure, deterministic; the verdicts and outcomes of §A4 … §A7; concurrent requests checked one at a time in arrival order (§A5.1); `key_status`; F1 … F11 registered by RFC-002 |
+| Funds-and-standing module | In-process | §A10: pure, deterministic; the verdicts and outcomes of §A4 … §A7; concurrent requests checked one at a time in arrival order (§A5.1); revocation through `rate_check`'s `NotAccepted{revoked}` and F4's `revoked_keys` (JR-1); F1 … F11 registered by RFC-002 |
 | Headroom and balance query | Synchronous query, status replicas | §A9: at a stated position; read-only; any number of retries |
 | Standing feed and query | Kafka (outbox) and query | §A8: at least once, ordered by `std_seq` per account, latest wins |
 | Standing enforcement acknowledgement | Kafka, applied as F8 | §A8 (AI4-5): `(account, std_seq, enforced_at)`; the late-enforcement check is an F7 entry |
@@ -1554,7 +1557,7 @@ resolution"); each pointer is to where this revision follows it.
 |---|---|---|---|
 | AI4-1 | A correction's source reference cannot be checked in one ledger partition | Checked by the receiving owner; derived references checked by the ledger (§2, §4.4, §8) | §B9, §B2 (M8, M9) |
 | AI4-2 | No contract carries KYB status | KYB travels on the identity status push (§2, §3, §8) | §A4 (F4) |
-| AI4-3 | Key status ownership | Key status as applied is a funds kind (F4); identity and access its writer; booking reads revocation (§2, §8) | §A2, §A4, §A10 (`key_status`, JR-1) |
+| AI4-3 | Key status ownership | Key status as applied is a funds kind (F4); identity and access its writer; booking reads revocation (§2, §8) | §A2, §A4, §A10 (`rate_check` `NotAccepted{revoked}`, F4 `revoked_keys`; JR-1) |
 | AI4-4 | Settlement's supplier partition "(debts)" | Debt register is payout state; settlement's supplier partition aggregates the deviation only (§2, §7) | §B7.6, §B3.5 |
 | AI4-5 | Standing feed one-way | Standing enforcement acknowledgement, applied as F8 (§2, §3, §7, §8) | §A8 |
 | AI4-6 | No exact enforcer of `key_poll_limit` | The edge, with key-sharded counters, with a stated bound (§2, §6, §7) | §A5.4 (not this RFC's) |

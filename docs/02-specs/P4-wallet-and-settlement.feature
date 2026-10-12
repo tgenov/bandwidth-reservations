@@ -278,18 +278,18 @@ Feature: Wallet, funds holds, ledger and supplier settlement
 
     @P4-S15 @need-P4-N4 @POL-18
     Scenario: The headline figure is available headroom, net of funds held and usage exposure
-      Given account "b1" has a ledger balance of 1.000000 USD, 0.288000 USD held, a usage exposure of 0.033250 USD and no credit limit
+      Given account "b1" has a ledger balance of 1.000000 USD, 0.288000 USD held, a usage exposure of 0.048250 USD and no credit limit
       When "b1" asks for its balance
-      Then the headline figure is 0.678750 USD of available headroom
+      Then the headline figure is 0.663750 USD of available headroom
 
     @P4-S16 @need-P4-N4 @POL-18 @POL-14
     Scenario: The itemised answer adds up to the headline
-      Given account "b1" has a ledger balance of 1.000000 USD, 0.288000 USD of funds held, unposted usage of 0.002000 USD, a lateness bound of 0.031250 USD and no credit limit
+      Given account "b1" has a ledger balance of 1.000000 USD, 0.288000 USD of funds held, unposted usage of 0.002000 USD, a lateness bound of 0.046250 USD and no credit limit
       And 0.000400 USD of its charges have accrued but are not yet posted
       When "b1" asks for its balance
-      Then the answer shows the ledger balance 1.000000 USD, funds held 0.288000 USD, and usage exposure 0.033250 USD as unposted usage 0.002000 USD and lateness bound 0.031250 USD
+      Then the answer shows the ledger balance 1.000000 USD, funds held 0.288000 USD, and usage exposure 0.048250 USD as unposted usage 0.002000 USD and lateness bound 0.046250 USD
       And it shows the 0.000400 USD accrued but not yet posted, for information, as within the funds held
-      And the headline is 0.678750 USD: the ledger balance less the funds held less the usage exposure
+      And the headline is 0.663750 USD: the ledger balance less the funds held less the usage exposure
 
     @P4-S17 @need-P4-N4
     Scenario: The ledger balance shown equals the ledger
@@ -855,6 +855,17 @@ Feature: Wallet, funds holds, ledger and supplier settlement
       Then the 0.288000 USD is written off automatically, at Share's cost (POL-23), and stays recorded as owed by "b1" (POL-21)
       And no supplier's balance changes
 
+    @P4-S112 @need-P4-N13 @POL-21 @POL-15 @POL-23
+    Scenario Outline: On a credit-limit account, the 90-day clock runs only on the negative balance no invoice covers
+      Given credit-limit account "e1" has, since day D, a ledger balance of <balance>, with 1.000000 USD invoiced and unpaid (its write-off following POL-15) and 1.500000 USD of charges posted since its last invoice was issued
+      When 90 days have passed since day D, its uncovered negative balance having stayed the same
+      Then <result>
+
+      Examples:
+        | balance       | result                                                                                                                                                                         |
+        | -2.500000 USD | nothing is written off under POL-21, the uncovered negative balance being max(0, 2.500000 - 1.000000 - 1.500000) = 0                                                           |
+        | -3.000000 USD | the uncovered negative balance, max(0, 3.000000 - 1.000000 - 1.500000) = 0.500000 USD, is written off automatically, at Share's cost (POL-23), and stays recorded as owed by "e1" |
+
   Rule: Credit is given only to vetted accounts, and collected by rule
 
     @P4-S82 @need-P4-N17 @POL-15 @POL-24 @POL-32
@@ -892,6 +903,15 @@ Feature: Wallet, funds holds, ledger and supplier settlement
       When "e1" tops up 1.500000 USD within `suspension_grace`
       Then 1.000000 USD of it pays the overdue invoice, recorded as an invoice payment (POL-24), and 0.500000 USD raises its ledger balance to 0.500000 USD
       And "e1" is active again, with no request from the buyer, its headroom being 5.212000 USD (POL-16)
+
+    @P4-S111 @need-P4-N5 @need-P4-N13 @need-P4-N17 @POL-15 @POL-21 @POL-24 @POL-16
+    Scenario: A top-up repays a written-off amount first, then overdue invoices oldest first, then raises the balance
+      Given account "e1" is suspended, owing a written-off amount of 1.000000 USD from an invoice written off 90 days after its due date (POL-15)
+      And invoice I2 of 0.500000 USD, issued to "e1" before that write-off, is overdue
+      When "e1" tops up 2.000000 USD
+      Then 1.000000 USD of it repays the written-off amount, to Share's own account (POL-21)
+      And 0.500000 USD of it then pays I2, recorded as an invoice payment (POL-24)
+      And only the remaining 0.500000 USD raises "e1"'s ledger balance
 
   Rule: The books are reconciled with the money daily
 
@@ -964,6 +984,15 @@ Feature: Wallet, funds holds, ledger and supplier settlement
         | age    | alert                                                                                                        |
         | 2 days | no alert is raised                                                                                           |
         | 8 days | an operational alert is raised that the payment was not received within `settlement_lag_max` (POL-24: 7 days) |
+
+    @P4-S113 @need-P4-N14 @POL-24 @POL-21
+    Scenario: A payment posted before the partner received it, and reversed before it did, nets to zero and raises no alert
+      Given buyer "b1" was credited a top-up of 20.000000 USD that its payment provider notified before settling it to the payment partner
+      And the provider then reversed it, and the reversal was posted, before the partner received the payment
+      When the reconciliation of that day, and of every later day, runs
+      Then the top-up and its reversal net to zero in the payments posted and not yet received (POL-24)
+      And they are matched to each other, with no partner transaction for either
+      And no alert is raised for them, even once `settlement_lag_max` (POL-24) has passed
 
     @P4-S109 @need-P4-N14 @need-P4-N2 @POL-24 @POL-20
     Scenario: A payment received before the cut and posted after it, with its FX difference, is counted at the partner's USD amount and raises no alert

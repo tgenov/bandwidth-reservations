@@ -209,7 +209,7 @@ records, which the booking module writes **in the same entry** (§2.4 rule 5).
 | F2 Usage applied | Unposted usage through a rating position | As F1 |
 | F3 Exposure parameters | Inputs of the lateness bound | As F1 |
 | F4 Key status | Key revocation, key limits and KYB status from the identity status push (Kafka), applied within 60 s (D6, AI4-2, AI4-3) | A revocation: ending records (failed, "key revoked") for the key's undecided requests; its reservations are untouched (P2-S72) |
-| F5 Credit and vetting | Credit limit set or removed, KYB status | As F1 |
+| F5 Credit limit | Credit limit set or removed (KYB status travels in F4; RFC-000 rev. 4.1) | As F1 |
 | F6 Invoice status | Invoice overdue or paid | As F1 |
 | F7 Funds tick | Fee term ended; grace ended | Grace ended with `release_due`: E11 records, **in the F7 entry itself**, ending every listed reservation, cause "released" (POL-16), buyer pays a shown fee (P4-S23; JR-2) |
 | F8 Enforcement acknowledgement | Network operations' acknowledgement of a standing change | None |
@@ -314,14 +314,27 @@ non-voting replica per Kenyan facility for the status readers; RFC-000 §5.1):
 Projection rows are derived from the log and rebuilt from it (A4); no role may update or
 delete a log, decision or outbox row.
 
-**Batch transactions.** The owner appends a partition's entries in one batch transaction
-at a time; entries composed while one is in flight form the next (RFC-000 §3). Each
-transaction (1) reads the account slot's owner-lease epoch and the partition's head row,
-and aborts unless the epoch is the owner's own; (2) reads its own commit timestamp, which
+**Batch transactions.** The owner commits **per account slot** (RFC-000 §3 rev. 4.1,
+AI3-11): one batch transaction in flight per slot, carrying the pending entries of every
+account partition of the slot; entries composed while one is in flight form the next. So
+there is at most one transaction in flight per partition, and each partition keeps its own
+contiguous sequence and head row. For E-ordering this means: an account's serial order is
+still its own sequence, and nothing orders entries of two accounts against each other;
+the entries of one batch, of every account in it, share one commit timestamp `ts`, so the
+fence, the expiry checks and the displacement read below are evaluated per entry at that
+`ts`; a busy account delays its slot-mates by at most one commit of batching wait; and
+when one entry's check fails, only that entry is dropped or deferred, but the batch is
+recomposed for the whole slot. Each transaction (1) reads the account slot's owner-lease
+epoch and the head row of each partition it appends to, and aborts unless the epoch is the
+owner's own; (2) reads its own commit timestamp, which
 fixes `ts` for every entry in it; (3) checks each confirm in the batch against
-`ts < D − τ`, and each completing E8 of an expired request against `ts ≥ D`; if any check
-fails, the owner aborts, drops or defers that entry in its projected state and recomposes
-the batch (a confirm dropped this way is followed by the expiry, §6); (4) inserts the
+`ts < D − τ`, and each completing E8 of an expired request against `ts ≥ D`; and, for each
+confirm, makes one point read per Share leg of the link's displacement marker
+(`link_displacement(link, request)`, RFC-001 §11.1; a read of the link owner's rows, never
+a write, RFC-000 A1 rev. 4.1, AI-R1-11); if any check fails, or a marker is present for a
+request that had not begun committing before it (§5.6), the owner aborts, drops or defers that entry in its projected state and recomposes
+the batch (a confirm dropped for the fence is followed by the expiry, §6; one dropped for
+a marker is handled as displaced, §5.1); (4) inserts the
 entries, their projection rows and their outbox rows, and updates the head row; (5)
 commits. A transaction the database pushes to a later timestamp restarts and re-checks from
 (2) (RFC-000 §4.3). Nothing is sent to a participant, and no edge answer given, before
@@ -623,9 +636,15 @@ confirmed is cancelled (P2-S37).
 
 E5 is the single POL-04 decision point of a confirmed request. It is composed only if these
 hold, in this order, in the projected state at its place in the serial order, and the
-database enforces the first two again (§2.1, §2.5): the request is undecided (its decision
+database enforces the first three again (§2.1, §2.5): the request is undecided (its decision
 row is new); `ts < D − τ` with the recorded `τ`, `ts` being the batch's commit timestamp;
-no withdrawal applied; the account is active (`standing(S)`, recorded in the entry; a
+**no displacement marker** at any Share leg, read in the same serialisable transaction
+(one point read per leg, about 1 to 2 ms, est.; RFC-000 §8 link displacement read,
+AI-R1-11, B-RQ-9), unless the request had begun committing before the marker's timestamp
+(a partner confirm or final booking journaled earlier), in which case E5 proceeds and the
+link flags the reservation affected (P1-S63). A marker present otherwise means the
+reduction committed before the request began committing: no E5 is written and the
+request is handled as `DISPLACED`, not begun (§5.1); no withdrawal applied; the account is active (`standing(S)`, recorded in the entry; a
 key revoked earlier in the log has already ended the request, §7.2); every Share leg is held at a
 recorded attempt that has not been yielded; every partner leg has a recorded partner booking.
 If any check fails, no E5 is written and the owner composes the ending entry with the
@@ -1296,6 +1315,7 @@ substrate's own.
 | C16 | A withdrawal, change or cancellation received, its entry in flight or not composed | Its entry if committed | No answer was sent; the client retries with the key and gets the committed result or a new entry | One change |
 | C17 | A change at the head of the queue in progress | Its E1; holds | As a booking request (C2 … C14); the queue is rebuilt from the projection rows | As if no crash |
 | C18 | `DISPLACED` arrives for a request that had begun committing, then the owner fails | E1; the notice in the link's log | The link re-sends the notice; the new owner applies §5.1's rule to the request's state as resumed | Confirmed and affected (P1-S63), or not confirmed with its releases |
+| C19 | A reduction commits at a link while E5 for a request holding there is in flight | The reduction and its displacement marker; E5 if its batch committed | Serialisable isolation orders the two: E5 either read the marker (the reduction is earlier) and was dropped for the §5.1 rule, or committed first (it began committing before the record); a reduction meeting a confirm that already read its key is pushed later and re-decided at the link (RFC-001 §5.1); an ambiguous E5 is resolved as in C10 and re-composed with a fresh read | Displaced and decided against the reduced capacity, or confirmed and affected (P1-S63), never confirmed unseen after the record |
 | L1 | A link owner's lease moves while a hold command is outstanding | Hold, if it was committed there | The account owner re-sends with the same identity until an answer or `T_x` | Held, or the request expires |
 | L2 | A link owner's lease moves while a release is outstanding | Ending entry | E8 waits; the outcome is reported within `release_grace` of the decision (P2-S107, P1-S62) | Not confirmed, reported late, never wrongly |
 | L3 | A link owner's lease is moving at `D` | E6 | Release durable once the link has an owner again, within `release_grace` after `D` (POL-26) | Failed as of `D` |
@@ -1346,6 +1366,7 @@ topics fed by the transactional outbox (§2.5).
 |---|---|
 | Link hold port (RFC-001) | `hold` with (account, request, rate, window, `D`, commit fence `D_c`, age); `convert` (reservation, part, decision time); request-scoped `release` with `D` (bounding its tombstone), acknowledged once durable; `end_leg` (reservation, leg, effective minute) and `reduce_parts` (reservation, leg, parts, effective minute, newest part first), each with change id and decision time, acknowledged once durable; `offer_hold`, `offer_accept`, `offer_move_at`, `offer_release`, each with the decision time; `query_hold`. Invariants: a release ends every hold, waiter registration and grant of the request; a tombstone until `D` + `release_grace` refuses later holds and grants; no hold or grant past `D`; a waiter past `D_c` is skipped when granting; a refusal records a tombstone and counts as the release acknowledgement; **`convert` is accepted for a held leg after `DISPLACED`**, the leg then flagged affected and network operations alerted (P1-S63) |
 | Link waiting port (RFC-001) | Waiter registration at the request's age; `mark_waiting`; waiting notice with the deadline of the request ahead, **the latest among several blockers** (POL-05, P1-S70), and "ahead resolved"; capacity released to a waiter (a grant, attempt n + 1); yield request, re-sent until answered; `DISPLACED` with the reduction's record time, the hold kept until the account owner answers; grants in priority order |
+| Link displacement read (RFC-001 §11.1; RFC-000 §8 rev. 4.1, AI-R1-11) | A point read of `link_displacement(link, request)` per Share leg inside E5's serialisable batch transaction (§2.5, §5.6): present means a reduction committed earlier displaced the hold (with its record timestamp); absent means none before the confirm's `ts`. Read-only: the link owner writes the markers in the reduction's own transaction and is their only writer (RFC-000 A1); this RFC's role is granted select on that table only |
 | Link availability query (RFC-001) | Peak and free-capacity profile over a window and forward to the horizon, beside committed and held capacity (POL-10 as amended) |
 | Link schedule feed (RFC-001, Kafka) | Revocations due and affected flags (a projection of the link log, reservation-level views) |
 | Funds-and-standing module (RFC-004 Part A) | §2.4, including the interface points listed there |

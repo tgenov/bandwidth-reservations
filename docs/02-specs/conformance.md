@@ -14,7 +14,9 @@ record [04](../reviews/04-requirements-final-resolution.md), the amendments from
 architecture review [05](../reviews/05-requirements-amendments-from-architecture.md), and
 the amendments from the RFC-000 review
 [07](../reviews/07-requirements-amendments-from-rfc-000-review.md) and from its second round
-[09](../reviews/09-requirements-amendments-from-rfc-000-review-2.md)). Rows are in file order, which is Rule order; new IDs are numbered after each
+[09](../reviews/09-requirements-amendments-from-rfc-000-review-2.md), and the amendments from
+the detailed RFCs [11](../reviews/11-requirements-amendments-from-detailed-rfcs.md) and from
+their revision 2 [12](../reviews/12-requirements-amendments-from-rfc-revision-2.md)). Rows are in file order, which is Rule order; new IDs are numbered after each
 file's previous highest ID.
 
 The `.feature` files never carry verification status, test names or defect notes; they
@@ -48,7 +50,8 @@ plan, not in the scenario.
 | P1-S34 | A single-link booking still waiting after ack_budget is answered pending | TBD | — | not assessed |
 | P1-S70 | A booking that asks not to wait, blocked by several requests in flight, gets the latest of their remaining deadlines as retry_after | TBD | — | not assessed |
 | P1-S13 | Concurrent bookings never oversell the link | TBD | `test/concurrency.test.ts` › "safe admission never oversells a hot link under 50 concurrent clients" *(prior evidence, to be re-validated)*<br>`test/routes.test.ts` › "randomised contention (seed 11/12/13): never oversold, competitors never all lose, all sagas finish" *(prior evidence, to be re-validated)* | not assessed |
-| P1-S14 | Concurrent decisions are those of checking the bookings one at a time in the order received | TBD | — | not assessed |
+| P1-S14 | Concurrent decisions are those of checking the bookings one at a time in the order they reach the link's schedule owner | TBD | — | not assessed |
+| P1-S77 | Requests from different accounts are checked in the order they reach the link's schedule owner, not the order their accounts received them | TBD | — | not assessed |
 | P1-S15 | A rejection states the largest rate that fits the requested window | TBD | — | not assessed |
 | P1-S16 | A rejection states the earliest window of the requested length that fits the requested rate | TBD | — | not assessed |
 | P1-S17 | A rejection discloses nothing about other buyers | TBD | — | not assessed |
@@ -68,13 +71,14 @@ plan, not in the scenario.
 | P1-S25 | Every reservation is affected at the minutes where the committed rate exceeds the reduced capacity, and stays confirmed | TBD | — | not assessed |
 | P1-S26 | The holders of affected reservations and network operations are told within affected_notice_time | TBD | — | not assessed |
 | P1-S27 | Restored capacity is sellable again | TBD | — | not assessed |
-| P1-S40 | When capacity is restored, the affected flag ends from the next minute boundary and the holders are told | TBD | — | not assessed |
+| P1-S40 | When capacity is restored, the affected flag ends from the first minute boundary at or after the restoration's record, and the holders are told | TBD | — | not assessed |
 | P1-S48 | An outage that leaves capacity at or above what is committed affects no reservation | TBD | — | not assessed |
 | P1-S49 | While an outage lasts, bookings far ahead are decided against the reduced capacity too | TBD | — | not assessed |
 | P1-S50 | A reservation that starts during an outage is flagged at the minutes it is affected, and its holder is told when it starts | TBD | — | not assessed |
 | P1-S41 | A pending request that has not begun committing and no longer fits the reduced capacity is rejected, not confirmed | TBD | — | not assessed |
 | P1-S42 | A waiting request is decided against the reduced capacity | TBD | — | not assessed |
 | P1-S63 | A confirmation already being decided when an outage is recorded may complete, and its reservation is then affected | TBD | — | not assessed |
+| P1-S78 | Whether a confirmation had begun committing when a reduction was recorded is judged by whether it sees the reduction's displacement record | TBD | — | not assessed |
 | P1-S72 | When a reservation ends during an outage, the others are no longer affected where they now fit, and their holders are told | TBD | — | not assessed |
 | P1-S75 | A holder whose webhook endpoint is down is still told within affected_notice_time | TBD | — | not assessed |
 | P1-S28 | Maintenance that fits on free capacity is booked | TBD | — | not assessed |
@@ -82,7 +86,7 @@ plan, not in the scenario.
 | P1-S30 | Maintenance booked with less than the required notice is rejected | TBD | — | not assessed |
 | P1-S51 | Works carried out on sold capacity anyway are an unplanned outage attributed to the supplier | TBD | — | not assessed |
 | P1-S66 | Maintenance blocked only by capacity held for a request in flight is rejected with retry_after | TBD | — | not assessed |
-| P1-S67 | The supplier may cancel its own maintenance booking, and the capacity is free from the next minute boundary | TBD | — | not assessed |
+| P1-S67 | The supplier may cancel its own maintenance booking, and the capacity is free from the first minute boundary at or after the cancellation's record | TBD | — | not assessed |
 | P1-S31 | Only the buyer who would otherwise not fit is offered an equivalent path, on the terms of POL-07 | TBD | — | not assessed |
 | P1-S35 | An accepted offer moves the reservation to the equivalent path, at the lower of its original price and the path's price, when the notice ends | TBD | — | not assessed |
 | P1-S36 | A declined offer means revocation when the notice ends | TBD | — | not assessed |
@@ -106,6 +110,7 @@ plan, not in the scenario.
 | P1-S68 | An outage on a link of an open equivalent path leaves the offer open and firm, and its holder is told | TBD | — | not assessed |
 | P1-S71 | A reservation moved to an equivalent path keeps its original age there | TBD | — | not assessed |
 | P1-S69 | A permanent increase recorded by the link's supplier is sellable from the first minute boundary at or after its record | TBD | — | not assessed |
+| P1-S76 | A rise in sellable capacity recorded exactly on a minute boundary takes effect from that boundary | TBD | — | not assessed |
 | P1-S33 | The schedule as known at a past time includes reservations changed since | TBD | — | not assessed |
 | P2-S01 | A route whose every leg fits is confirmed on every leg | TBD | `test/routes.test.ts` › "a route across our links and the partner is confirmed; every leg becomes a fact" *(prior evidence, to be re-validated)* | not assessed |
 | P2-S02 | A route with a leg that does not fit is rejected, naming that leg, and holds nothing | TBD | `test/routes.test.ts` › "a leg that cannot fit rejects the route, names the link, and releases every hold" *(prior evidence, to be re-validated)* | not assessed |
@@ -276,8 +281,11 @@ plan, not in the scenario.
 | P3-S28 | A record that cannot be used is kept with its reason and not charged | TBD | — | not assessed |
 | P3-S29 | A record that cannot be used does not delay the records behind it | TBD | — | not assessed |
 | P3-S30 | A kept record that is corrected by its own exporter is charged once | TBD | — | not assessed |
+| P3-S71 | A payload that does not conform to the record template is rejected, and outside the erasable store only its identity, digest and reason are kept | TBD | — | not assessed |
 | P3-S31 | An accepted record is never altered or removed | TBD | — | not assessed |
 | P3-S66 | A corrected version of an accepted record, from its own exporter within dispute_window, supersedes it for charging | TBD | — | not assessed |
+| P3-S72 | A superseding record may change only measured fields, never the record's identity or attribution keys | TBD | — | not assessed |
+| P3-S73 | A superseding record of a quarantined record is itself quarantined | TBD | — | not assessed |
 | P3-S32 | A late record for a charged minute adds an amendment, computed on the line's new total, and leaves the charge as it was | TBD | `billing/test/rating.test.ts` › "rating and ledger (D18–D20) › a late record is priced at the rate of its own event time, not of its arrival" *(prior evidence, to be re-validated)*<br>`billing/test/rating.test.ts` › "rating and ledger (D18–D20) › seed %i: duplicates, shuffling and late records give the same ledger as in-order delivery" *(prior evidence, to be re-validated)* | not assessed |
 | P3-S33 | Late traffic never decreases a charge | TBD | `billing/test/rating.test.ts` › "rating and ledger (D18–D20) › seed %i: duplicates, shuffling and late records give the same ledger as in-order delivery" *(prior evidence, to be re-validated)* | not assessed |
 | P3-S34 | A price correction lowering a price is an amendment, with who made it, the cause and the reason | TBD | — | not assessed |
@@ -390,16 +398,19 @@ plan, not in the scenario.
 | P4-S53 | A negative balance not recovered within 90 days of the reversal is written off automatically, at Share's cost | TBD | — | not assessed |
 | P4-S94 | After a write-off the account stays suspended until a top-up repays Share, and then resumes by the usual rule | TBD | — | not assessed |
 | P4-S107 | A negative balance not caused by a reversal is written off 90 days after it arose | TBD | — | not assessed |
+| P4-S112 | On a credit-limit account, the 90-day clock runs only on the negative balance no invoice covers | TBD | — | not assessed |
 | P4-S82 | A credit limit can be set only on an account that has passed know-your-business checks | TBD | — | not assessed |
 | P4-S83 | An invoice unpaid 90 days after its due date is written off at Share's cost | TBD | — | not assessed |
 | P4-S92 | An account suspended for an overdue invoice stays suspended whatever its headroom | TBD | — | not assessed |
 | P4-S93 | Paying every overdue invoice resumes the account, if the headroom rule also holds | TBD | — | not assessed |
 | P4-S105 | A top-up to an account with an overdue invoice pays that invoice first, and can resume the account | TBD | — | not assessed |
+| P4-S111 | A top-up repays a written-off amount first, then overdue invoices oldest first, then raises the balance | TBD | — | not assessed |
 | P4-S54 | The daily reconciliation proves what must agree, and reports every difference | TBD | — | not assessed |
 | P4-S90 | Funds at the partner equal the signed balances, less payouts executed but not yet confirmed, plus payments received but not yet posted, and no alert is raised | TBD | — | not assessed |
 | P4-S91 | Share's own balance below the receivables it funds is an alert, even when the sums agree | TBD | — | not assessed |
 | P4-S104 | Every kind of partner transaction is matched to one ledger movement, and raises no alert | TBD | — | not assessed |
 | P4-S106 | A payment posted before the partner received it is counted in flight, and alerts only if not received within settlement_lag_max | TBD | — | not assessed |
+| P4-S113 | A payment posted before the partner received it, and reversed before it did, nets to zero and raises no alert | TBD | — | not assessed |
 | P4-S109 | A payment received before the cut and posted after it, with its FX difference, is counted at the partner's USD amount and raises no alert | TBD | — | not assessed |
 | P4-S80 | Provider settlement reports and bank statements are reconciled daily by the same rule | TBD | — | not assessed |
 | P4-S81 | A reconciliation not completed by 12:00 UTC on the next day is an operational alert | TBD | — | not assessed |
@@ -432,7 +443,7 @@ plan, not in the scenario.
 | X1-S31 | An operator in the role that owns an action not on one account can take it, and it is recorded | TBD | — | not assessed |
 | X1-S32 | An action awaiting a second approval lapses, can be cancelled, and is refused if its preconditions no longer hold | TBD | — | not assessed |
 | X1-S35 | A disclosure under a legal order has the order's scope and ends with it | TBD | — | not assessed |
-| X1-S36 | A termination notice is withheld only by compliance, with a second approval, under a legal order that forbids it | TBD | — | not assessed |
+| X1-S36 | A termination notice is withheld only by compliance, under a legal order that forbids it, as part of the termination and approved with it | TBD | — | not assessed |
 | X1-S16 | An operator cannot end a reservation for a reason outside POL-30 | TBD | — | not assessed |
 | X1-S17 | A termination is recorded with its reason and operator, and the holder is told where the law allows | TBD | — | not assessed |
 | X1-S26 | A termination for fraud or a legal order takes effect only with a second compliance operator's approval | TBD | — | not assessed |
@@ -440,13 +451,14 @@ plan, not in the scenario.
 | X1-S14 | Every change to money or capacity records the principal and the time | TBD | — | not assessed |
 | X1-S15 | An audit record cannot be altered or removed | TBD | — | not assessed |
 | X1-S34 | Erasing a person's personal data leaves every audit and financial record unaltered and attributable | TBD | — | not assessed |
+| X1-S39 | An erasure the data subject requests is executed by one compliance operator, and is complete in every copy within erasure_max | TBD | — | not assessed |
 | X1-S37 | Logs and records hold no personal data | TBD | — | not assessed |
 | X2-S01 | Availability per capability | TBD | — | not assessed |
 | X2-S16 | A minute is available only if at least 90% of its probes succeed | TBD | — | not assessed |
 | X2-S18 | Each capability is probed by its own operation, against its own per-probe limit | TBD | — | not assessed |
 | X2-S20 | Probes run end to end as designated probe accounts, without business side effects | TBD | — | not assessed |
 | X2-S24 | Each probe account books on a credit limit set by finance, and is never invoiced | TBD | — | not assessed |
-| X2-S27 | Enough probe accounts are designated that every part of admission and the wallet serving accounts is probed | TBD | — | not assessed |
+| X2-S27 | Enough probe accounts are designated that every account slot of admission and the wallet is probed | TBD | — | not assessed |
 | X2-S21 | The funds holds and headroom checks bookings need are held to admission's targets, not the wallet's | TBD | — | not assessed |
 | X2-S02 | Ingestion may lag but never loses an accepted record | TBD | — | not assessed |
 | X2-S03 | Admission sustains the design load, on the hottest link too, within its latency targets | TBD | — | not assessed |
@@ -464,6 +476,7 @@ plan, not in the scenario.
 | X2-S25 | A region disaster, and its end, take effect only once declared with evidence and approved by a second operator | TBD | — | not assessed |
 | X2-S26 | A declared region disaster counts from the loss the system recorded, not from its declaration | TBD | — | not assessed |
 | X2-S28 | A region loss that is never declared a disaster counts against every target | TBD | — | not assessed |
+| X2-S29 | A region with no recorded loss may be declared a disaster on probe evidence, counted from the first failing probe minute | TBD | — | not assessed |
 | X2-S09 | An acknowledged fact survives the loss of a node or a zone | TBD | — | not assessed |
 | X2-S12 | No acknowledged fact is lost on the loss of a region | TBD | — | not assessed |
 | X2-S14 | A fact is acknowledged only once it is durable in two regions | TBD | — | not assessed |
