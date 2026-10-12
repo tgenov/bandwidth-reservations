@@ -3,8 +3,8 @@
 | | |
 |---|---|
 | Contract ID | C01 |
-| Version | 1 (draft 2) |
-| Status | **Draft, for fix verification.** Draft 1 was rejected by [review 47](../../reviews/47-contract-C01-review.md) (R47-01, R47-02 Blockers; R47-03 … R47-10 Majors; R47-11 … R47-31 Minors). This draft applies every fix the review proposes and its decisions D1 … D4 (binding; §12 "Review 47 resolution"). The orchestrator settled M1 … M13 (binding; §11 "Settled", unchanged). The errata these imply on slice RFCs and RFC-000 are listed in §10.3 |
+| Version | 1 |
+| Status | **Frozen.** Frozen at C4 on fix verification 59; errata owed listed below (§10.3). History: draft 1 was rejected by [review 47](../../reviews/47-contract-C01-review.md); draft 2 applied every fix of review 47 and its decisions D1 … D4 (§12); [review 59](../../reviews/59-contract-C01-fix-verification.md) accepted draft 2 with changes V59-1 … V59-7, applied in this version with the C04 errata N-01 and N-12 (§13). The orchestrator settled M1 … M13 (§11, unchanged) |
 | Provider | RFC-006 (platform layer: owner runtime, placement, relay and closure emitter, history, probes, alert service). Column encryption's library is RFC-005's (C13); this contract fixes only how the runtime binds it |
 | Consumers | Every owner and reader: RFC-001 (link schedule owner, link registry), RFC-002 (account owner, partner adapters, status readers), RFC-003 (metering ingestion, attribution A/B, rating, catalogue), RFC-004 (funds module in the account owner, ledger, settlement, payments, receivables, reconciliation, payouts), RFC-005 (identity and access, edge, audit, console); and RFC-006's own kinds (placement, notifier, alert service, probe results, history, closure emitter) |
 | Transport | Mixed, by part: **in-process call** (owner runtime library, NestJS/TypeScript); **database** (log, head, projection, outbox, session, slot and integrity-stop tables; the platform reads named in §2.3, under RFC-000 A1); **Kafka event** (feeds, report markers, closure topics, relay progress, placement feed, operational alert feed); **gRPC** (integrity stop, slot-map and splitting operations, probe-set summary, history query, checkpoint store) |
@@ -53,7 +53,7 @@ export type HlcTs = string & { readonly __brand: 'HlcTs' };
 
 export type OwnerKind = string;          // 'account' | 'link' | 'partner' | 'ingest' | 'attr_a' | 'attr_b' | 'rating' | 'catalogue' | 'ledger' | 'settlement' | 'payments' | 'receivables' | 'recon' | 'payouts' | 'iam' | 'placement' | 'notifier' | 'alerts' | 'probe_results' | 'history' | 'closure' | …
 export type SlotNo = number;             // int32, 0 ≤ slot < slot count of the kind (dedicated/override slots above)
-export type PartitionKey = Uint8Array;   // pseudonymous key bytes; '' (empty) is the slot's reserved marker partition
+export type PartitionKey = Uint8Array;   // pseudonymous key bytes; '' (empty) is used only as the partition of marker outbox rows (no head, no log)
 export type Generation = number;         // int32 ≥ 0, +1 per move of the partition
 export type Epoch = bigint;              // int64 ≥ 1, +1 per acquisition, handoff or re-home of the slot
 export type Seq = bigint;                // int64, contiguous per partition from 1, across slots and moves
@@ -163,7 +163,6 @@ CREATE TABLE <kind>_head (
   streams     BYTES NOT NULL,              -- encoded {stream: last stream_seq}
   chain       BYTES NOT NULL,
   batch_id    BYTES NOT NULL,              -- id of the last batch that wrote this row (Ambiguous resolution)
-  report_through DECIMAL NULL,             -- only on partition '' of each slot: last report position a marker carried
   PRIMARY KEY (home_key, partition)
 );
 
@@ -189,6 +188,8 @@ CREATE TABLE owner_slot (
   kind STRING NOT NULL, slot INT4 NOT NULL,
   session_id UUID NULL, epoch INT8 NOT NULL, acquired_at TIMESTAMPTZ, slot_group STRING NULL,
   stops_version INT8 NOT NULL DEFAULT 0,          -- R47-04: incremented by every Stop/Resume touching a partition of the slot
+  report_through DECIMAL NULL,                    -- V59-6: report position of the last marker of this slot (any epoch); NULL before the first
+  marker_seq INT8 NOT NULL DEFAULT 0,             -- V59-6: stream_seq of the slot's marker stream (outbox rows under partition '')
   PRIMARY KEY (kind, slot)
 );
 CREATE TABLE platform_timing (                    -- RFC-006 §6.4; read inside batches for tau
@@ -221,7 +222,8 @@ else fails it):
 
 | Role | Grants |
 |---|---|
-| Owner service `<kind>` | SELECT, INSERT on `<kind>_log`, `<kind>_outbox`, `<kind>_stream_index`; SELECT, INSERT, UPDATE on `<kind>_head` and its projections; DELETE only on projections declared `deletable`; SELECT on `owner_session`, `owner_slot`, `platform_timing` and **`placement_integrity_stops`** (named read, R47-04); UPDATE on `owner_session` and `owner_slot`, confined by row-level security to rows whose `kind` is the role's kind. Within one kind, a forged session or slot write is **detected, not prevented** (chain and lease audit, RFC-005 §4.4); SELECT on another owner's table **only** where RFC-000 §8 names the read (today: the account owner on `link_displacement`) |
+| Owner service `<kind>` | SELECT, INSERT on `<kind>_log`, `<kind>_outbox`, `<kind>_stream_index`; SELECT, INSERT, UPDATE on `<kind>_head` and its projections; DELETE only on projections declared `deletable`; SELECT on `owner_session`, `owner_slot`, `platform_timing` and **`placement_integrity_stops`** (named read, R47-04); UPDATE on `owner_session` and `owner_slot`, confined by row-level security to rows whose `kind` is the role's kind (on `owner_slot`, batches write only `report_through` and `marker_seq`; acquisition, handoff and re-home write the lease columns). Within one kind, a forged session or slot write is **detected, not prevented** (chain and lease audit, RFC-005 §4.4); SELECT on another owner's table **only** where RFC-000 §8 names the read (today: the account owner on `link_displacement`) |
+| `placement` (in addition to its owner grants; V59-3) | UPDATE of the column `stops_version` only on `owner_slot`, for **all** kinds (column privilege), used only in the `Stop` and `Resume` transactions. Placement cannot UPDATE any other `owner_slot` column of another kind |
 | `truncator` | DELETE on log tables, confined by row-level security to `seq ≤ audit_watermark(kind, partition)` |
 | `restore` (break-glass) | Writes only partitions with an open stop in **placement's** `placement_integrity_stops` (row-level security; R47-28). Audit's own table stays the detection record |
 | Platform read roles | Below; read-only |
@@ -272,8 +274,8 @@ export interface EntryInput {
   payload: unknown;                        // encoded, compressed and sealed by the runtime
   emits?: Array<{ stream: string; event: unknown }>; // feed events (stream_seq assigned by the runtime)
   senderFence?: { kind: OwnerKind; partition: PartitionKey } & WriterFence; // R47-24: recorded for admitCommand
-  /** C04 v2: on an outcome entry, the request id if the slot answered that request `pending` before.
-   *  The runtime puts it in `pendingAnswered` of the first marker that covers this entry's ts (§3.4). */
+  /** C04 v2.1: on an outcome entry, the request id if the holder sent `pending` for that request before it formed
+   *  the entry. The runtime puts it in `pendingAnswered` of the first marker that covers this entry's ts (§3.4). */
   pendingAnswered?: Uint8Array;
 }
 export interface ProjectionWrite { table: string; op: 'upsert' | 'delete'; key: unknown; row?: unknown } // delete only on declared deletable
@@ -353,6 +355,9 @@ export interface OwnerRuntime {
   subscribe(topic: string, from: FeedCheckpoint, gate: 'committed' | 'reported', handler: (e: FeedEvent) => Promise<void>): void;
   onResolved(topic: string, handler: (destinationPartition: number, R: HlcTs) => void): void;
   onClosed(handler: (link: PartitionKey, t: HlcTs, feedSeq: StreamSeq) => void): void; // link schedule feed
+  /** N-01: every ReportMarker of the outcome feed, kept by (slot, epoch, reportPosition, chunk.part); not dropped
+   *  by the monotone rule, which applies only to the `reported` gate. Used by the notifier. */
+  onMarker(topic: 'account.outcome.v1', handler: (m: ReportMarker) => Promise<void>): void;
   // timers
   timer(partition: PartitionKey, key: string, atTs: HlcTs): void;   // an existing key is replaced
   cancelTimer(partition: PartitionKey, key: string): void;
@@ -430,16 +435,21 @@ export interface FeedHeaders {
 export interface FeedEvent { headers: FeedHeaders; value: Uint8Array /* sealed under the topic's feed key */ }
 
 /** Report marker, request outcome feed (RFC-002), keyed by slot (M6). Produced with the outcome events.
- *  pendingAnswered and prevReportPosition: binding addition from C04 v2 (review 43 B-01). */
+ *  prevReportPosition, pendingAnswered and chunk: C04 v2.1 (review 43 B-01, N-02, N-12). C04 uses this field name. */
 export interface ReportMarker {
   slot: SlotNo; generation: 0; epoch: Epoch;
   reportPosition: HlcTs;
-  /** The report position of the previous marker of this slot (same or earlier writer). For the first marker after an
-   *  acquisition: the new holder's initial report position (§3.1). */
-  prevReportPosition: HlcTs;
-  /** Request ids answered `pending` whose outcomes this marker is the first to cover, i.e. outcome ts in
-   *  (prevReportPosition, reportPosition]. Empty list if none. Pseudonymous ids only (A11). */
+  /** reportPosition of the previous marker of the SAME slot, read from owner_slot.report_through.
+   *  After an acquisition: the predecessor's last marker in this slot. An adopt does not change it.
+   *  null only for the first marker the slot ever writes. */
+  prevReportPosition: HlcTs | null;
+  /** Requests whose outcome events this marker newly covers (prevReportPosition < ts ≤ reportPosition) and for which
+   *  `pending` was sent. For the first marker after an acquisition: EVERY covered outcome above prevReportPosition.
+   *  Pseudonymous ids only (A11). At most 5,000 ids (est.) per chunk. */
   pendingAnswered: Uint8Array[];
+  /** N-12: a longer list goes in consecutive markers with the same reportPosition, part 0, 1, 2, …;
+   *  the last has last = true. A consumer treats the set as one marker. */
+  chunk: { part: number; last: boolean };
 }
 
 /** Closure topic messages (R47-06), produced only by the closure emitter of the kind. */
@@ -694,15 +704,20 @@ the owner's memory for every partition of the batch is rebuilt (§3.1) before it
 decision. A consumer receiving an **unknown future result** treats it as `Retry` and alerts
 (§8).
 
-**Integrity stops** (R47-04, D2). Placement's `Stop` is one transaction: it inserts the stop
-row and increments `owner_slot.stops_version` of the slot holding the partition, and **of
-both slots** while a `partition_moves` row for it is not `done`. Every batch reads
-`owner_slot` (the fence read), so a batch of that slot in flight when `Stop` commits fails its
-read refresh and restarts; the restart sees the new `stops_version`, re-reads the stops and
-answers the stopped partition's calls `Stopped`. `StopAck` is returned only after that
-transaction commits: from then, no entry of the partition can commit under any holder, across
-takeovers (holders read the table on acquisition, without placement) and across moves (both
-slots fenced; B re-reads stops in its `adopt` batch). `Resume` likewise, after audit's checks.
+**Integrity stops** (R47-04, D2, V59-3 … V59-5). Placement's `Stop` is one transaction. It
+inserts the stop row and increments `owner_slot.stops_version` of the slot that holds the
+partition. It also increments it on **both slots** in two cases: while a `partition_moves`
+row for the partition is not `done`, and for an account whose `slotOf` answer has
+`headDecides: true` (both `s` and `s + n`). Every batch reads `owner_slot` (the fence read).
+The commit timestamp of the `Stop` transaction is `enforced_at`. The guarantee is by
+timestamp, not by wall-clock time: **no entry of the partition commits with `ts` >
+`enforced_at`**. A batch in flight either commits with `ts` below `enforced_at` (and a read at
+`enforced_at` sees it), or restarts, sees the new `stops_version`, re-reads the stops and
+answers the stopped partition's calls `Stopped`. Audit records the partition's head **as of
+`enforced_at`** as its first-seen head for the resume check. `StopAck` is returned only after
+the transaction commits. The guarantee holds across takeovers (holders read the table on
+acquisition, without placement) and across moves (both slots fenced; B re-reads the stops in
+its `adopt` batch). `Resume` works the same way, after audit's checks.
 
 ### 3.3 Moves, `Moving`, `onMovedOut` and `onAdopt`
 
@@ -714,16 +729,18 @@ upper-half account in a doubling split, hot exporter to its own slot):
 | 1 | Placement | `partition_moves` row (X, A → B, generation g+1), `prewarm` | A |
 | 2 | B's holder and standbys | Load X (checkpoint or replay by `(partition, seq)`), then tail A's pushes until within one batch | A |
 | 3 | A's holder | Appends `moved(to B, g+1)` and sets X's head row `slot = B, generation = g+1, adopted = false` in one batch; calls **`onMovedOut(X)`**; from that commit A answers every command for X `MOVING` | nobody (`Moving`) |
-| 4 | A's holder | Report fence: a marker is **due** for `moved` (§3.4), so A advances its report position past `ts(moved)` and writes the marker (`report_through ≥ ts(moved)`); pushes it to B's holder | nobody |
-| 5 | B's holder | After seeing `report_through ≥ ts(moved)` (push, or a bounded-staleness read of A's partition `''` head row after 100 ms), appends `adopt(g+1)` conditional on `head(X).slot = B ∧ generation = g+1 ∧ adopted = false`, sets `adopted = true`, records the fence evidence, re-reads X's stops; continues `seq`, `chain` and every `stream_seq`; calls **`onAdopt(X, g+1)`** | B |
+| 4 | A's holder | Report fence: a marker is **due** for `moved` (§3.4), so A advances its report position past `ts(moved)` and writes the marker (`owner_slot(kind, A).report_through ≥ ts(moved)`); pushes it to B's holder | nobody |
+| 5 | B's holder | After seeing `report_through ≥ ts(moved)` (push, or a bounded-staleness read of the row `owner_slot(kind, A)` after 100 ms), appends `adopt(g+1)` conditional on `head(X).slot = B ∧ generation = g+1 ∧ adopted = false`, sets `adopted = true`, records the fence evidence, re-reads X's stops; continues `seq`, `chain` and every `stream_seq`; calls **`onAdopt(X, g+1)`** | B |
 | 6 | B's holder | Reports nothing for X until `read_lease` + ε after `adopt`: B's report position does not pass the `ts` of any entry of X committed in that window until it ends (R47-16) | B |
 | 7 | Placement | Marks the move done; publishes routing (for accounts, a new map version) | B |
 
 Before step 5, **no entry of X commits in B** (the runtime answers `Moving` to every call of
 X but `adopt`); after it, A answers `MOVED(B, g+1)`. Kinds without status readers skip step 4's
 fence wait. `Moving` beyond `move_cutover_max` (1 s) pages. If A's holder fails after `moved`,
-its successor writes the `moved` marker as soon as its post-acquisition wait ends (§3.4), so B
-adopts within `read_lease` + ε + one commit after the successor acquires (R47-03). If B's
+its successor writes the `moved` marker as soon as its post-acquisition wait ends (§3.4). On
+catch-up, the successor finds each partition whose head names another slot and is not
+adopted. It pushes its first marker to the holder of that slot (V59-7). Thus B adopts within
+`read_lease` + ε + one commit after the successor acquires (R47-03). If B's
 holder fails, B's standby (pre-warmed) adopts. **Rows**: nothing is re-keyed; X's earlier
 log, outbox and projection rows stay where they were written and are reached by partition
 (§2.3, §3.2). **`onMovedOut` obligations**: cancel every timer of X, decide nothing for X,
@@ -760,28 +777,48 @@ holder's view, the holder is not handing off, and the post-acquisition wait is o
 passes a `reportWanted` entry, an entry that emitted an outcome event, **or a `moved` entry**
 (R47-03) — including for a successor whose initial position is at or above `ts(moved)`, which
 writes that marker as soon as its post-acquisition wait ends. A marker rides the slot's next
-batch or a marker-only transaction (at most 20 ms later, outside the lane, serialised on
-partition `''`) and is never written by a stale epoch. Status readers read older state only
+batch or a marker-only transaction (at most 20 ms later, outside the lane). Both write
+`owner_slot(kind, slot).report_through` and `marker_seq`, so they are serialised on that row
+(V59-6). Only the slot's holder writes these columns; `Stop` writes only `stops_version`. A
+marker is never written by a stale epoch. Status readers read older state only
 by `leasedRead` point reads (R47-17).
 
-**Marker chain** (C04 v2, review 43 B-01). The rules for `prevReportPosition` and
-`pendingAnswered` are:
-1. Each marker of a slot names the report position of the marker before it in
-   `prevReportPosition`. Thus the markers of a slot make a chain. Each marker covers the
-   interval (`prevReportPosition`, `reportPosition`].
-2. The holder writes `reportPosition` > `prevReportPosition`. It does not write two markers
-   with the same `prevReportPosition` in one epoch.
-3. After an acquisition, the first marker of the new holder starts its chain at the initial
-   report position (§3.1). Its `prevReportPosition` is that position. The interval below it
-   was covered by the previous holder or is covered by rule 3 reads.
-4. `pendingAnswered` lists each request that the slot answered `pending` and whose outcome
-   entry has `ts` in the interval of the marker. Each such request is in exactly one marker of
-   the chain: the first marker that covers its outcome.
-5. The relay path can deliver markers out of order. A consumer must not use arrival order.
-   The consumer finds the first covering marker of an outcome from the interval
-   (`prevReportPosition`, `reportPosition`], not from which marker arrived first. A copy of a
-   marker (same slot, epoch and `reportPosition`) is a duplicate and the consumer drops it.
-6. The `reported` gate (§3.5) is not changed. It uses `reportPosition` and `epoch` only.
+**Marker chain** (copied from C04 v2.1 "Markers" and "Webhooks and `pending`"; review 43
+B-01, N-01, N-02, N-12; V59-1). The rules are:
+1. A marker is carried by the next batch of any partition of the slot, or by a marker-only
+   transaction within 20 ms (est.) of the report position passing an unmarked event.
+2. Markers never go back for a given (slot, epoch).
+3. After any acquisition, the new holder's first marker is at or above its catch-up read, and
+   none is written until `read_lease` + ε after the acquisition.
+4. `prevReportPosition` is always the `reportPosition` of the previous marker of the **same
+   slot**. The owner reads it from `owner_slot(kind, slot).report_through`. After an
+   acquisition, this is the predecessor's last marker in the same slot. An `adopt` does not
+   change the chain of the destination slot. It is `null` only for the first marker the slot
+   ever writes.
+5. **Chunks.** One marker lists at most 5,000 requests (est.). If the list is longer, the
+   owner writes consecutive markers with the same `reportPosition` and `chunk.part` 0, 1, 2
+   and so on. The last one has `chunk.last = true`. A consumer treats the set as one marker.
+6. `pendingAnswered` lists every request whose event the marker newly covers
+   (`prevReportPosition` < `ts` ≤ `reportPosition`) and for which `pending` was sent.
+7. After an acquisition (expiry, handoff, re-home or resume), the first marker of the new
+   holder lists **every** covered event above `prevReportPosition`. The new holder cannot know
+   the answers of its predecessor. Thus this rule can cause an extra webhook, but it cannot
+   cause a missing webhook. This rule does not apply to an `adopt`. The report fence (§3.3
+   step 4) makes sure that the source slot's chain covers all events of the moved partition
+   from before the move. The destination slot knows its own `pending` answers.
+8. The **first covering marker** of an outcome is the marker with `prevReportPosition` <
+   `ts` ≤ `reportPosition`. A consumer finds it from this interval, not from arrival order.
+   The relay path and the takeover republish can deliver markers out of order.
+9. **Keep every marker (N-01).** The consumer runtime keeps every marker of the outcome feed
+   by (slot, epoch, `reportPosition`, `chunk.part`) and gives each one to `onMarker`. The
+   monotone drop ("ignored at or below the last") applies only to the `reported` gate. It
+   does not apply to `pendingAnswered`. Thus a first covering marker that arrives after a
+   later marker still gives its list to the notifier. A copy with the same key is a
+   duplicate.
+10. **Liveness.** If the first covering marker is not received in `gap_timeout`, the consumer
+    reads it from the outbox or from history, as for a feed gap (§3.5). The notifier rule for
+    a marker that it still cannot get is C04's.
+11. The `reported` gate (§3.5) uses `reportPosition` and `epoch` only.
 
 The producing principals of the outcome topic do not change (§2.5).
 
@@ -795,7 +832,9 @@ position (bounded to 30 s before the acquisition, at most 5,000 rows/s per proce
 buffering later ones, dropping lower ones, and filling a gap after `gap_timeout` (5 s) from
 the producer's outbox through its `gapfill_<consumer>_<producer>` role (by partition, across
 moves) or, below 25 h, from history. Gate `reported` holds an outcome until a marker of the
-same slot (`slot` header) with epoch ≥ the event's and position ≥ its `ts`. Owner consumers
+same slot (`slot` header) with epoch ≥ the event's and position ≥ its `ts`. For the gate
+only, a marker at or below the last one seen is ignored. Every marker also goes to
+`onMarker`, without that drop (N-01, §3.4 rule 9). Owner consumers
 checkpoint (partition, stream, `stream_seq`) **and the applied event's ciphertext digest** in
 their own `append`. Notifications are delivered by `onNotification`, deduplicated by identity,
 in no order, with no high-water rule.
@@ -863,7 +902,8 @@ it got for that account (or retries on `MOVING`), cached until the slot is split
 `h mod 2n`. While `s` is splitting, both slots **defer to the head row** (R47-02): `s`
 answers `MOVED(s+n)` for an account whose head names `s+n` **and is adopted**, and `MOVING`
 while it is not; `s+n` serves an account whose head names it **and is adopted**, answers
-`MOVING` for one whose head names it unadopted, and `MOVED(s)` otherwise.
+`MOVING` for one whose head names it unadopted, **creates an upper-half account that has no
+head row** (implicit `rowAbsent(head)`; V59-2), and answers `MOVED(s)` otherwise.
 
 **Splitting handshake** (R47-05). Placement publishes version v marking `s` splitting. `s`'s
 holder applies v; from then it creates no upper-half account (a creation with no head row gets
@@ -984,7 +1024,8 @@ Checkpoints are sealed under the partition's log key.
 | Feed event | (partition, stream, `stream_seq`) | Dropped | **The database copy wins** (D3, §3.5): read the committed row, block the stream at that `stream_seq` until read, `FEED_CONTENT_CONFLICT` alert |
 | Notification | (subject, attempt, kind) | Dropped | Receiver keeps the first, alerts |
 | Command | `CommandEnvelope.identity` | Answered with the recorded result | Owner contract's refusal |
-| Report / closure marker | (slot or destination, position) | Ignored at or below the last | — (monotone) |
+| Report marker | (slot, epoch, `reportPosition`, `chunk.part`) | For the `reported` gate: ignored at or below the last. For `onMarker`: kept, and only an exact copy is dropped (N-01) | — (an exact copy only) |
+| Closure marker | (destination, position) | Ignored at or below the last | — (monotone) |
 | `Stop` / `Resume` | `detection_ref` | Same `StopAck` | `CONFLICT` |
 | `reslot`, `doubleSlotCount` | `requestId` | Same answer | `CONFLICT` |
 | `ackSplitting` | (slot, `mapVersion`, epoch) | Recorded once | A later epoch's ack replaces an earlier one's list |
@@ -1076,14 +1117,14 @@ P4-S72, P4-S81; X1-S14, X1-S15, X1-S31, X1-S37.
 | CP-2c | Platform read roles: each role of §2.3 can SELECT only its listed tables (gap-fill roles only rows of their consumer's topics) and has no write grant |
 | CP-3 | `decide` is re-run on every restart with a new `ts`; nothing from an earlier attempt commits; `ctx.read` serves only declared `reads`, fetched before any write (M2, R47-11) |
 | CP-4 | `exclusive` + `firstStatement`: placeholders are intents before any other write, and a concurrent displacement read meets them (M3) |
-| CP-5 | Move protocol: `MOVING` in A between `moved` and `adopt`, `MOVED(B, g+1)` once adopted; **no entry of X commits in B before `adopt`**; `onMovedOut` after `moved` commit, `onAdopt` after `adopt` commit; `adopt` never before `report_through ≥ ts(moved)`; B's report position does not pass an entry of X before `read_lease` + ε after `adopt`; `seq`, `chain`, `stream_seq` continue; **after a move and a takeover of the new slot, a decision committed before the move still fails `rowAbsent`**, and a displacement marker written before the move is found; **A's holder killed after `moved`: B adopts within `read_lease` + ε + one commit after A's successor acquires** |
-| CP-6 | Integrity stop: `StopAck` only after the fence transaction commits; **a batch in flight when `Stop` commits does not commit an entry of the stopped partition**; `Stopped` under the current holder, after a takeover **with placement down**, and across a move (stop landing between `moved` and step 7); resume refused on head mismatch without an incident decision; restore role cannot write an unstopped partition |
+| CP-5 | Move protocol: `MOVING` in A between `moved` and `adopt`, `MOVED(B, g+1)` once adopted; **no entry of X commits in B before `adopt`**; `onMovedOut` after `moved` commit, `onAdopt` after `adopt` commit; `adopt` never before `report_through ≥ ts(moved)`; B's report position does not pass an entry of X before `read_lease` + ε after `adopt`; `seq`, `chain`, `stream_seq` continue; **after a move and a takeover of the new slot, a decision committed before the move still fails `rowAbsent`**, and a displacement marker written before the move is found; **A's holder killed after `moved`: the successor pushes its first marker to B, and B adopts within `read_lease` + ε + one commit after A's successor acquires** (V59-7); two slots' markers never touch each other's `report_through` (V59-6) |
+| CP-6 | Integrity stop: `StopAck` only after the fence transaction commits; **no entry of the stopped partition commits with `ts` > `enforced_at`** (V59-5); an account of a splitting slot with `headDecides` is fenced in both `s` and `s + n` (V59-4); placement can update only `stops_version` (V59-3); `Stopped` under the current holder, after a takeover **with placement down**, and across a move (stop landing between `moved` and step 7); resume refused on head mismatch without an incident decision; restore role cannot write an unstopped partition |
 | CP-7 | Initial report position: after expiry, handoff, re-home and resume, no lease with `P_grant` below the catch-up/resolution read; a rule-3 answer during a lapse is never contradicted by a leased reader |
-| CP-7a | Marker chain (C04 v2): for each slot, across takeovers, the markers make a chain with no gap and no overlap (each `prevReportPosition` equals the `reportPosition` of the marker before it, or the initial report position after an acquisition). Each request answered `pending` is in `pendingAnswered` of exactly one marker, the one whose interval holds its outcome `ts`. With markers delivered in random order and as duplicates, the consumer finds the same first covering marker for each request |
+| CP-7a | Marker chain (C04 v2.1): for each slot, across takeovers and `adopt`, the markers make a chain with no gap and no overlap. Each `prevReportPosition` equals the `reportPosition` of the previous marker of the same slot (`owner_slot.report_through`), also after an acquisition (the predecessor's last marker) and after an `adopt`; it is `null` only for the slot's first marker. Each request for which `pending` was sent is in `pendingAnswered` of its first covering marker. The first marker after an acquisition lists every covered outcome above `prevReportPosition`. A list above 5,000 ids (est.) is split in chunks with the same `reportPosition` and one `last`. With markers delivered in random order, late and as duplicates, `onMarker` gets every marker and the consumer finds the same first covering marker for each request. Trace: the holder sends `pending` for q, then crashes before the covering marker; the successor's first marker lists q |
 | CP-8 | Closure: markers never precede a row at or below them on the destination partition, under relay rebalances, emitter takeover, changefeed recreation and **a `cdc` partition added with no progress (holds `R_min` back)**; `R_min` never goes back; a partition-count increase is handled |
 | CP-9 | Feeds: duplicates across direct, relay and republish paths dropped by (partition, stream, `stream_seq`); gaps filled within `gap_timeout` across a move; `reported` gate holds outcomes until a covering marker, using the `slot` header for gap-filled events; **a forged copy with the same `stream_seq` (before and after application) makes the database copy win, blocks the stream and raises `FEED_CONTENT_CONFLICT`** |
-| CP-10 | Slot map: doubling in the §3.8 order (no ordinary account routed to `s+n` before the `2n` version; F9 before the limit; limit `applied` before publication); splitting answers `headDecides` with `slot: s`; `s` and `s+n` defer to adopted heads and answer `MOVING` for unadopted ones; **a creation in flight at `ackSplitting` is either listed or refused `MOVED(s+n)`**; refusals of §3.8; `probeSetSummary` verifies with RFC-005 |
-| CP-11 | Grants: conformance job fails on UPDATE/DELETE on a log table by an application role, DELETE on an undeclared projection, a projection key beginning with `slot`, a session/slot UPDATE outside the role's kind, or a cross-owner SELECT not listed in §2.3 |
+| CP-10 | Slot map: doubling in the §3.8 order (no ordinary account routed to `s+n` before the `2n` version; F9 before the limit; limit `applied` before publication); splitting answers `headDecides` with `slot: s`; `s` and `s+n` defer to adopted heads and answer `MOVING` for unadopted ones; **a creation in flight at `ackSplitting` is either listed or refused `MOVED(s+n)`**; refusals of §3.8; `probeSetSummary` verifies with RFC-005; **during splitting, a new upper-half account is created in `s + n` and does not loop between the slots** (V59-2) |
+| CP-11 | Grants: conformance job fails on UPDATE/DELETE on a log table by an application role, DELETE on an undeclared projection, a projection key beginning with `slot`, a session/slot UPDATE outside the role's kind, or a cross-owner SELECT not listed in §2.3; placement UPDATE of any `owner_slot` column other than `stops_version` (V59-3) |
 | CP-12 | History: completeness over live tail + archive boundary and across a partition's moves; `NOT_CLOSED` above the closed timestamp; operator reads without a grant refused |
 | CP-13 | Encryption: a row copied to another key, sequence or epoch fails to open everywhere; no clear column outside the declared set (schema lint); a moved partition's old rows open in B by `key_id` |
 | CP-14 | Alerts: two raises of one (kind, subject) are two episodes; `cleared` clears only its episode; `PROBING_FAULT` is one episode per (region, minute) and escalates per D1 |
@@ -1128,7 +1169,8 @@ that RFC once this contract is frozen.
 | | `onAdopt(account, g)`: recovery queries for the partition, E9, re-sends, identity catch-up if stale, per-partition reporting wait | Partly (§2.5 prose); hook **No** |
 | | Initial report position after any acquisition (catch-up/resolution read; no `P_grant` below it), cited in the P2-S111 argument | **No** |
 | | Status readers: `leasedRead` as point reads with `adoptTs`, `isMovedOut` ⇒ rule 4, `replicaRule3Check` (R47-17) | Partly (`leasedRead` over a function) |
-| | On each outcome entry of a request that the slot answered `pending`, set `EntryInput.pendingAnswered` to the request id, so that the runtime can fill the marker's `pendingAnswered` (C04 v2, review 43 B-01) | **No** |
+| | On each outcome entry of a request for which the holder sent `pending` before it formed the entry, set `EntryInput.pendingAnswered` to the request id. §8.3: markers chain within one slot (`prevReportPosition` from `owner_slot.report_through`); only an acquisition lists every covered event, not an `adopt`; a list above 5,000 ids (est.) goes in chunks (C04 v2.1, review 43 B-01, N-02, N-12; V59-1) | **No** |
+| | During splitting, create a new upper-half account in `s + n` (implicit `rowAbsent(head)`), not answer `MOVED(s)` for it (V59-2) | **No** |
 | | Report markers only by the runtime, with the `slot` header; feed dedup by (partition, stream, `stream_seq`) for the outcome feed (M5, M6, R47-22) | Partly |
 | | `iam_fresh` advanced from the identity push's closure markers (`onResolved` on its closure topic), price-cache freshness from the catalogue's (M7, R47-10 b) | **No** ("resolved timestamps") |
 | | `STALE_SENDER` row (§5.1 table): per D4, not "stops serving the slot" when the recorded generation is higher (R47-09) | **No** |
@@ -1155,6 +1197,7 @@ that RFC once this contract is frozen.
 | **RFC-005** (identity, edge, audit, console) | Edge forwards by `route`/`slotOf` with `headDecides`, follows `MOVED`/`MOVING`, keeps no mapping | Partly (§2.2 step 8); `headDecides` **No** |
 | | Identity kind: `Stopped`, `Moving`, `onMovedOut`/`onAdopt` | **No** |
 | | Audit is the only caller of `Stop`/`Resume`; resume rule (first-seen head or incident decision); a stop counts only once `StopAck` (enforced) returns (D2) | Partly; "durable with placement" **No** |
+| | Audit records the partition's head as of `enforced_at` (from `StopAck`) as its first-seen head (V59-5) | **No** |
 | | Restore role's row-level security reads **placement's** `placement_integrity_stops` (not audit's table) (R47-28) | **No** |
 | | Verifies `probeSetSummary(v)` signature at the four-eyes approval | Yes |
 | | C13 library meets §3.12's binding; key-release policy gives the `ingest` relay the `ingest` log key (R47-19) | Yes; relay key **No** |
@@ -1167,6 +1210,7 @@ that RFC once this contract is frozen.
 | | §5.2 move bullet: "the new slot serves the partition only from its `adopt` commit; the head row records whether `adopt` has committed, and both slots answer `Moving` until it has"; moves increment the **generation**, not an epoch as for a handoff (A-1, R47-27) | **No** |
 | | §5.5 A6: dedup key "(partition, stream, stream sequence) for feed events; identity for notifications" (A-3, M5) | **No** |
 | | §8 integrity-stop row: "acknowledged once enforced at the fence of the slot (both slots during a move) that holds the partition" (A-4, D2) | **No** |
+| | §8 request outcome feed row: AI-58-1 (each marker that lists `pending`-answered requests is delivered to the notifier; the monotone drop applies only to the gate) and AI-43-1 (markers list newly covered requests answered `pending`) (N-01, B-01) | **No** |
 | | §8 substrate row: closure markers authenticated by a closure topic only the emitter writes, with data high-water offsets (A-5, R47-06) | **No** |
 | | §8 probe designation row and §5.4 ("check the probe designation from the catalogue and identity"): accounts designated by placement's slot map, links/exporters/supplier in the catalogue (settled M11, R47-27) | **No** |
 | **RFC-006** (provider) | §12.2 `append`: `decide(ctx)` with declared `reads`, `AppendOptions`, `displacementRead` keyed `(link, request)` (M2, M3, R47-01, R47-11); canonical refusals with `STALE_SENDER(recorded)` (M4, R47-09) | **No** |
@@ -1178,6 +1222,9 @@ that RFC once this contract is frozen.
 | | §5.3–§5.5: closure topics with `dataHighWater`; `R_min` from topic metadata with no-progress partitions holding it back; closure on six streams with sizing (M7); per-topic producer ACL without a separate republish role (M8, R47-06, R47-20, R47-25); D3 conflict rule; `slot` header on outcome events (R47-22) | **No** |
 | | §16: alert episodes (`alertId` with the raising entry), `cleared` by episode, `PROBING_FAULT` per D1 (M9, R47-08, R47-26) | **No** |
 | | §17.3 and traceability: a slot-minute whose every probe failed is unavailable even with fewer than 3 probes (X2-S30, v1.10); X2-S33 cited, a short-probed slot alerted to network operations per D1 (N1, R47-26) | **No** |
+| | §3.7, §4.6: `report_through` and the marker stream sequence on `owner_slot` (keyed by kind and slot), not on a shared partition `''` head row; marker-only transactions serialise on that row; the successor pushes its first marker to the slot named by an unadopted head (V59-6, V59-7) | **No** |
+| | §5.3, §5.4: `ReportMarker` with `prevReportPosition: HlcTs \| null`, `pendingAnswered`, `chunk`; marker rules as §3.4; the consumer runtime keeps every marker for `onMarker`, and the monotone drop applies only to the `reported` gate (V59-1, N-01, N-12) | **No** |
+| | §7.1, §12.2: placement's column grant on `owner_slot.stops_version` for all kinds; `Stop` fences both `s` and `s + n` for a `headDecides` account; the stop guarantee by `ts` against `enforced_at`, and audit's first-seen head as of `enforced_at` (V59-3, V59-4, V59-5) | **No** |
 | | §19: Kafka partitions per broker after one account-slot doubling (about 8,192 per account topic, est.) and the safety of a partition-count increase (R47-30) | **No** |
 | | §6.3 stated as the precondition of the holder's view and read leases; `leaseValid` margin of `max_loop_delay` (R47-23) | Partly |
 
@@ -1252,3 +1299,21 @@ Unmarked estimates the review found (`Moving` about 100 ms, takeover 3.3–3.8 s
 partitions) are now marked "est.". Settled points M1 … M13 are unchanged; review 47 changed
 how M8 is applied (no separate republish role; closure on its own topic) and completed M10's
 role list, both within the settled decisions.
+
+## 13. Fix verification 59 resolution
+
+[Review 59](../../reviews/59-contract-C01-fix-verification.md) gave ACCEPT WITH CHANGES. All
+seven changes are applied as the review proposes. The C04 errata N-01 and N-12 are also
+applied. This version is frozen.
+
+| ID | Severity | Resolution | Where |
+|---|---|---|---|
+| V59-1 | Major | The marker-chain rules are copied from C04 v2.1. `prevReportPosition` is the previous marker of the same slot (from `owner_slot.report_through`), also after an acquisition and after an `adopt`. It is `null` only for the slot's first marker. The first marker after an acquisition lists every covered outcome; an `adopt` does not. The field name is `pendingAnswered` in both contracts (C04 renames to match) | §2.4, §2.5, §3.4, CP-7a, §10.3 |
+| V59-2 | Major | `s + n` creates an upper-half account that has no head row (implicit `rowAbsent(head)`), so a creation does not loop between the slots | §3.8, CP-10, §10.3 |
+| V59-3 | Major | Placement gets a column grant on `owner_slot.stops_version` for all kinds, only for `Stop` and `Resume`; it cannot update other columns | §2.3, CP-6, CP-11, §10.3 |
+| V59-4 | Major | `Stop` fences both `s` and `s + n` for an account whose `slotOf` answer has `headDecides: true` | §3.2, CP-6, §10.3 |
+| V59-5 | Minor | The stop guarantee is by timestamp: no entry of the partition commits with `ts` > `enforced_at`. Audit records the head as of `enforced_at` as first-seen | §3.2, CP-6, §10.3 |
+| V59-6 | Major | `report_through` and the marker stream sequence move to `owner_slot` (keyed by kind and slot). The head row has no `report_through`, and partition `''` has no head row. Step 5 reads `owner_slot(kind, A)` | §2.1, §2.3, §3.3, §3.4, CP-5, §10.3 |
+| V59-7 | Minor | On catch-up, A's successor finds each unadopted head that names another slot and pushes its first marker to that slot's holder | §3.3, CP-5, §10.3 |
+| N-01 (C04 review 58) | Erratum | The consumer runtime keeps every outcome-feed marker by (slot, epoch, `reportPosition`, `chunk.part`) and gives it to `onMarker`. The monotone drop applies only to the `reported` gate | §2.4, §3.4 rule 9, §3.5, §5, CP-7a, §10.3 |
+| N-12 (C04 v2.1) | Erratum | `ReportMarker.chunk { part, last }`; at most 5,000 ids per marker (est.); a longer list goes in consecutive markers with the same `reportPosition` | §2.5, §3.4 rule 5, CP-7a |
