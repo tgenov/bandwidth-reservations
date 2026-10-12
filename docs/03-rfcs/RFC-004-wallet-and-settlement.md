@@ -2,12 +2,46 @@
 
 | | |
 |---|---|
-| Status | **Draft**, revision 1: rewritten on the accepted architecture. Part A is reviewed and approved together with RFC-002 (RFC-000 §7, R11) |
-| Satisfies | **All of P4**: P4-S01 … P4-S104 (104 scenarios; traceability at the end). **Jointly with RFC-002** (RFC-002 owns the account owner's state machine, this RFC the funds rules its entries apply): P2-S38, P2-S39, P2-S40, P2-S41, P2-S42, P2-S54, P2-S66, P2-S68, P2-S69, P2-S70, P2-S71, P2-S75, P2-S76, P2-S77, P2-S78, P2-S92, P2-S98. **Contributes to** (primary RFC named in the traceability table): P3-S09, P3-S12, P3-S13, P3-S17, P3-S27, P3-S41, P3-S44, P3-S60, P3-S61, X1-S04, X1-S10, X1-S12, X1-S14, X2-S07, X2-S08, X2-S13, X2-S14, X2-S17, X2-S18, X2-S19, X2-S20, X2-S21, X2-S24 |
+| Status | **Draft, revision 2**: rebased on `requirements-v1.6` and RFC-000 revision 4 (see [Revision 2](#revision-2) below). Part A is reviewed and approved together with RFC-002 (RFC-000 §7, R11) |
+| Satisfies | **All of P4**: P4-S01 … P4-S110 (110 scenarios; traceability at the end). **Jointly with RFC-002** (RFC-002 owns the account owner's state machine, this RFC the funds rules its entries apply): P2-S38, P2-S39, P2-S40, P2-S41, P2-S42, P2-S54, P2-S66, P2-S68, P2-S69, P2-S70, P2-S71, P2-S75, P2-S76, P2-S77, P2-S78, P2-S92, P2-S98, P2-S112. **Contributes to** (primary RFC named in the traceability table): P3-S09, P3-S12, P3-S13, P3-S17, P3-S27, P3-S41, P3-S44, P3-S60, P3-S61, P3-S63, P3-S65, P3-S66, X1-S04, X1-S10, X1-S12, X1-S14, X1-S28, X1-S37, X2-S07, X2-S08, X2-S13, X2-S14, X2-S17, X2-S18, X2-S19, X2-S20, X2-S21, X2-S24, X2-S27 |
 | Policies | POL-01, POL-04, POL-06, POL-07, POL-08, POL-10, POL-11, POL-12, POL-14, POL-15, POL-16, POL-17, POL-18, POL-19, POL-20, POL-21, POL-22, POL-23, POL-24, POL-25, POL-27, POL-28, POL-29, POL-30, POL-32, POL-33 |
 | Prior decisions | History log D19, D20, D24, D25, D29 (carried forward in Competition) |
-| Builds on | The requirements at tag `requirements-v1.5`; the architecture [RFC-000](RFC-000-architecture.md) at tag `rfc-000-accepted` (revision 3.2), whose components, ownership, principles A1 … A10, contracts (§8) and allocation (§7) bind this RFC |
-| Supersedes | The pre-baseline draft of this file, written from the prototype in `billing/` |
+| Builds on | The requirements at tag `requirements-v1.6` (decisions in [review 11](../reviews/11-requirements-amendments-from-detailed-rfcs.md)); the architecture [RFC-000](RFC-000-architecture.md) revision 4: its components, ownership, principles A1 … A11, the substrate of §5.5 (CockroachDB at 2 + 2 + 1, NestJS owner services with epoch-fenced owner leases, insert-only log tables, commit timestamps, closed timestamps, Kafka through a transactional outbox), contracts (§8) and allocation (§7) bind this RFC |
+| Supersedes | Revision 1 of this RFC (on RFC-000 revision 3.2 and `requirements-v1.5`, kept in git history); the pre-baseline draft written from the prototype in `billing/` |
+
+### Revision 2
+
+What changed from revision 1, in one list (each item points to where it now lives):
+
+1. **Substrate.** Every log of this RFC (account log, ledger partitions, payments,
+   receivables, payouts, reconciliation) is an insert-only table of its owner kind, with
+   epoch-conditional batch transactions by the owner-lease holder; positions are
+   (partition, sequence) with the commit timestamp as the entry's time; feeds go through
+   the transactional outbox to Kafka (§A10, §A11, §B1.3, §B11). "Leader" now means the
+   owner-lease holder.
+2. **Cuts at one database timestamp.** Revision 1's per-partition `Cut(T)` markers and
+   `Close(T)` heartbeats are gone: reconciliation and payout runs read every ledger
+   partition at one database timestamp `T`, once the closed timestamp has passed it, and
+   invoice issue uses the feed's resolved timestamp (§B1.3, §B5, RFC-000 §4.5).
+3. **Contracts aligned with RFC-000 §8 revision 4**: identity status push with KYB (F4
+   now carries KYB; F5 only the credit limit), key status as applied with a `key_status`
+   call, standing feed and enforcement acknowledgement on Kafka, posting and
+   usage-applied acknowledgements, supplier-debt register in payouts, authenticity of
+   notifications, confirmations and partner reports by RFC-005's verifier, investigation
+   stream (§A4, §A10, §B3.1, §B4.1, §B7.1, §B12).
+4. **`requirements-v1.6` applied**: arrival-order checks (§A5.1); release of an ended
+   reservation's hold after posting (§A6); the 90-day clock for every negative balance
+   (§B5, M18); the third in-flight term with `settlement_lag_max` and in-flight terms at
+   the partner's amount (§B6); a top-up pays overdue invoices first (§A3 `RA`, §B5); the
+   price notice's hold and top-up quote (F11, §A7); the dearer-path difference (M13);
+   reversed attributions, superseding records and the shorten fee (§B3.4, §A6);
+   supplier statements by opaque charge-line reference, pseudonymous principals (§B8,
+   §B1.2); several probe accounts and a probe supplier (§A3, §B7.2).
+5. **Joint items with RFC-002** JR-1 … JR-4 resolved as RFC-000 revision 4 directs
+   (§A10, "Interface with RFC-002").
+6. **New scenarios** P4-S105 … P4-S110 and amended P4-S11, P4-S54, P4-S61, P4-S66 covered
+   (traceability); issues raised by revision 1 marked resolved; new issues RQ4-10 …
+   RQ4-12 and AI4-10.
 
 Terms are used in the sense of the [glossary](../02-specs/glossary.md). Every latency,
 volume and size marked "est." is an estimate, to be replaced by measurement (RFC-000 R1).
@@ -23,13 +57,15 @@ keeps apart (§2, "Funds holds are split from the ledger"):
 1. **Account funds and standing** (Part A), inside the account owner, on admission's
    targets (99.99%, RTO 1 min; POL-06, X2-S21). Every booking and change needs a funds or
    credit hold sized exactly (P4-N3), checked with key headroom, capacity in flight and
-   rate limits as if one at a time (P4-N3, POL-25), against one headroom figure that
+   rate limits one at a time in the order received, each counting the holds then in
+   place (P4-N3, POL-25), against one headroom figure that
    itemises and adds up (P4-N4); and the account's standing must move by rule, never by
    surprise: suspension on a stated cause, a funded grace, automatic resumption at a
    quoted amount, a warning per crossing, release after the grace (P4-N5), announced to
    network operations reliably (P4-N6). Any figure shown must be rebuildable exactly
    (P4-N16). RFC-000 makes this a deterministic module with no writer of its own,
-   evaluated by entries of the account owner's log, which RFC-002 specifies.
+   evaluated by entries of the account owner's log (an insert-only table, RFC-000 §5.5),
+   which RFC-002 specifies.
 2. **Money** (Part B): a double-entry journal that is conserved, immutable and
    once-only for 7 years (P4-N7, P4-N15, P4-N16), at about 1 M charge lines/s (est.,
    RFC-000 §6); a split that is exact, monotone and deterministic (P4-N8, P4-N9); supplier
@@ -37,13 +73,14 @@ keeps apart (§2, "Funds holds are split from the ledger"):
    exactly once whatever the provider's delivery order (P4-N1, P4-N2); reversals, invoices
    and bad debt by rule (P4-N13, P4-N17); payouts weekly, exact and never instructed
    twice (P4-N12); statements anyone can check (P4-N10); and a daily proof, by 12:00 UTC,
-   that the books equal the money (P4-N14).
+   that the books equal the money (P4-N14), with payouts and payments in flight in both
+   directions, each counted at the partner's USD amount.
 
 The hard parts are where the two meet and where time intervenes: holds must track charges
 that are posted up to minutes after they accrue; suspension must be decided at one point
 in the account's serial order (POL-04); a ledger partitioned by home account must still
-give one consistent cut for reconciliation and payouts; and payouts and payments stay in
-flight across that cut.
+give one consistent cut for reconciliation and payouts (on the substrate, one database
+timestamp, RFC-000 §4.5); and payouts and payments stay in flight across that cut.
 
 ## Approach
 
@@ -55,25 +92,35 @@ flowchart LR
     BK["Booking module (RFC-002)"]
     FM["Funds and standing module (Part A)"]
   end
-  RA["Rating (RFC-003)"] -- charge lines --> ST["Settlement"]
-  RA -. unposted usage .-> AO
-  ST -- post --> LE["Ledger (journal by home)"]
-  PR["Payments, receivables, reconciliation"] -- post --> LE
-  PO["Payouts"] -- post --> LE
-  LE -. movements, cuts .-> AO
-  LE -. movements, cuts .-> PR
-  LE -. movements, cuts .-> PO
-  LE -. movements .-> RP["Reporting and statements"]
-  PR -. invoice overdue / paid, credit limit removed .-> AO
-  PAY["Payment providers, payment partner"] --> PR
+  RA["Rating (RFC-003)"] -->|"charge lines (Kafka)"| ST["Settlement"]
+  ST -.->|"posting ack (Kafka)"| RA
+  RA -.->|"unposted usage (Kafka)"| AO
+  AO -.->|"usage-applied ack (Kafka)"| RA
+  ID["Identity and access (RFC-005)"] -.->|"identity status push: keys, limits, KYB"| AO
+  CAT["Catalogue (RFC-003)"] -.->|"prices, weights, exposure terms, price notices"| AO
+  ST -->|"post (gRPC)"| LE["Ledger (log tables by home)"]
+  PR["Payments, receivables, reconciliation"] -->|post| LE
+  PO["Payouts"] -->|post| LE
+  LE -.->|"movements (outbox, Kafka)"| AO
+  LE -.->|movements| PR
+  LE -.->|movements| PO
+  LE -.->|movements| RP["Reporting and statements"]
+  LE ==>|"cut: read at one database timestamp T"| PR
+  LE ==>|"cut: read at one database timestamp T"| PO
+  PR -.->|"invoice overdue / paid, credit limit removed"| AO
+  PAY["Payment providers, payment partner"] -->|"authenticated by the RFC-005 verifier"| PR
   PO --> PAY
-  AO -. standing feed .-> NET["Network operations"]
-  NET -. enforcement ack .-> AO
+  AO -.->|"standing feed (Kafka)"| NET["Network operations"]
+  NET -.->|"enforcement ack (Kafka)"| AO
 ```
 
 Part A (§A1 … §A11) is the funds-and-standing module of the account owner. Part B (§B1 …
 §B13) is the ledger, settlement, payments and receivables, reconciliation, payouts and
-statements. Notation used throughout:
+statements. Every component of Part B is a NestJS owner service over its own insert-only
+log tables in the database (RFC-000 §5.5); the ledger, payments, receivables, payouts and
+reconciliation are owner kinds with epoch-fenced owner leases per partition, settlement is
+a consumer with a hot standby, and reporting holds read models only. Notation used
+throughout:
 
 | Symbol | Meaning |
 |---|---|
@@ -82,27 +129,32 @@ statements. Notation used throughout:
 | `a_r(m)` | the reservation charge line of reservation `r` for minute `m`: the exact sum over its parts active at `m` of rate × price, rounded down once to the µ (POL-11) |
 | `cov_r(x, y)` | Σ `a_r(m)` over minutes `m` in `[x, y) ∩ [start_r, end_r)`; minutes before the evaluation time at the price they had, minutes from it on at the reservation's **current** price (a scheduled price change counts only once it takes effect, POL-27) |
 | `p_r` | the first minute of `r` not yet posted (posted-through + 1 min), from the ledger feed; `start_r` until its first line is posted |
+| Position | (partition, sequence) of an owner's log table; its **commit timestamp** is the entry's time (RFC-000 §4.3). "Owner" is the owner-lease holder of the partition, writing only in transactions conditional on its epoch |
+| `OD` | the overdue invoices of an account (from receivables, F6), oldest first; `ΣOD` their unpaid total |
 
 ## Part A — Account funds and standing
 
 ### A1. Scope, and the division with RFC-002
 
-The account owner is **one component, one log, one leader per account** (RFC-000 §2).
-RFC-002 owns the state machine: the log envelope, the registry of entry kinds, the
-intake and deciding entries, marks, "releases durable", takeover, the workflow, snapshots
-and the status replicas. This Part owns the **funds-and-standing module**: the state
-listed in §A2, the formulas of §A3, the payload and apply rule of every funds entry kind
-(§A4), and the admission, hold, standing and query rules (§A5 … §A9). The module is a pure
-function of the log (§A10); it never writes, sends or reads a clock.
+The account owner is **one component, one log, one owner-lease holder per account**
+(RFC-000 §2): a NestJS owner service whose account log is an insert-only table keyed by
+(account partition, sequence), written in batch transactions conditional on its owner
+epoch, with projection rows of the current state written in the same transactions
+(RFC-000 §5.5). RFC-002 owns the state machine: the log envelope, the registry of entry
+kinds, the intake and deciding entries, marks, "releases durable", takeover, the workflow,
+the projection rows and the status replicas. This Part owns the **funds-and-standing
+module**: the state listed in §A2, the formulas of §A3, the payload and apply rule of every
+funds entry kind (§A4), and the admission, hold, standing and query rules (§A5 … §A9). The
+module is a pure function of the log (§A10); it never writes, sends or reads a clock.
 
 | State or entry | Module | Who appends it |
 |---|---|---|
-| Booking requests, their marks, deciding entries, "releases durable", takeover; reservations, parts, locked prices, legs, partner terms shown at booking, lifecycle and end cause; change queue | Booking (RFC-002) | The leader's workflow |
-| The **funds payload** inside the intake, deciding and reservation-change entries (hold taken, converted, resized or released; capacity in flight; rate count) | Funds (this Part), carried in booking entries | Computed by this module when the leader builds the booking entry |
-| Funds entry kinds F1 … F10 (§A4): ledger, usage, exposure parameters, key status and limits, credit limit and vetting, invoice status, funds ticks, enforcement acknowledgements, probe designation, rules version | Funds (this Part); registered as kinds of the account log in RFC-002's registry | The leader, from a feed or a timer |
-| Derived outcomes (standing change and its sequence number, warning, notices, release due, alerts) | Funds | Never appended on their own: recorded in the outcome field of the entry that caused them (§A4) |
+| Booking requests, their marks, deciding entries, "releases durable", takeover; reservations, parts, locked prices, legs, partner terms shown at booking, lifecycle and end cause; change queue | Booking (RFC-002) | The owner's workflow |
+| The **funds payload** inside the intake (E1, E1′), deciding (E4 … E7) and reservation-change (E11) entries (hold taken, converted, resized or released; capacity in flight) | Funds (this Part), carried in booking entries | Computed by this module when the owner builds the booking entry |
+| Funds entry kinds F1 … F11 (§A4): ledger, usage, exposure parameters, identity status (keys, key limits, KYB), credit limit, invoice status, funds ticks, enforcement acknowledgements, probe designation, rules version, price notices | Funds (this Part); registered as kinds of the account log in RFC-002's registry | The owner, from a feed or a timer |
+| Derived outcomes (standing change and its sequence number, warning, notices, release due, keys revoked as applied, alerts) | Funds | Never appended on their own: recorded in the outcome field of the entry that caused them (§A4); the booking records an outcome requires are written in the same entry (§A10) |
 
-RFC-002 must list F1 … F10 in its entry registry, embed the funds payload of §A4 in its
+RFC-002 must list F1 … F11 in its entry registry, embed the funds payload of §A4 in its
 intake, deciding and reservation-change entries, and call the interface of §A10 at the
 points named there. That is the whole coupling; nothing else in either module reads the
 other's state except through §A10.
@@ -111,27 +163,32 @@ other's state except through §A10.
 
 | State | Meaning | Changed by |
 |---|---|---|
-| `Bal`, `ledger_pos` | Ledger balance of the account, through ledger position `ledger_pos` (partition, epoch, sequence) of its one home partition (RFC-000 §2) | F1 |
+| `Bal`, `ledger_pos` | Ledger balance of the account, through ledger position `ledger_pos` (ledger partition, sequence; its commit timestamp) of its one home partition (RFC-000 §2) | F1 |
 | `W` | Written-off amount still owed (POL-21): written off less repaid, as derived by the ledger (§B2, M18, M19, M1) | F1 |
 | Per reservation `r`: `p_r`, `H_r`, `hold_state_r`, `Wend_r`, `fee_r`, `fee_end_r`, `key_r` | First unposted minute; actual hold (µ); state of the hold machine (§A6); frozen window end while suspended; shown partner fee and the end of the partner's minimum term (from the booking module's reservation record); the key that booked it | Booking entries' funds payload, F1, F7 |
 | Per pending request `q`: `h_q`, `mbps_q`, `key_q` | Intake hold, capacity in flight, key | Intake, deciding entry |
-| `U[product]`, `rating_pos` | Unposted usage per product (POL-18), through rating position | F2 |
-| `LB[product]` inputs | `usage_rate_cap`, `max_lateness`, `attribution_lag_max`, highest `usage_price` on any route, per product the account is onboarded for | F3 |
-| `CL`, `kyb`, `mode` | Credit limit (0 if none), know-your-business status as recorded by identity and access, and prepaid or credit-limit mode | F5 |
-| Per key `k`: `status_k`, `ksl_k`, `kif_k`, `krl_k` | Key status (D6), `key_spend_limit`, `key_inflight_limit`, `key_rate_limit` | F4 |
-| `overdue` | Set of invoices overdue (from receivables) | F6 |
+| `U[product]`, `rating_pos`, `assumed_ledger_pos` | Unposted usage per product (POL-18), through a rating position, with the ledger position X it was computed against (RFC-000 §8, AI3-3) | F2 |
+| `LB[product]` inputs | `usage_rate_cap` (account-product terms, set by finance, POL-32), `max_lateness`, `attribution_lag_max`, highest `usage_price` on any route (set by commercial, changed only with `price_notice`, POL-27), per product the account is onboarded for | F3 |
+| `kyb` | Know-your-business status as recorded by identity and access | F4 (identity status push, AI4-2) |
+| `CL`, `mode` | Credit limit (0 if none) and prepaid or credit-limit mode | F5 |
+| Per key `k`: `status_k`, `ksl_k`, `kif_k`, `krl_k` | Key status **as applied** (D6; identity and access is its writer, this module holds the applied copy, AI4-3), `key_spend_limit`, `key_inflight_limit`, `key_rate_limit` | F4 |
+| `OD` | Invoices overdue, with unpaid amounts, oldest first (from receivables) | F6 |
 | `standing`, `causes`, `since`, `grace_end`, `released`, `std_seq` | Standing machine (§A7) | Any entry, as a derived outcome |
 | `warn_armed` | Whether a low-balance warning may be sent on the next crossing (§A7) | Any entry, derived |
 | `enforced[std_seq]` | Enforcement acknowledgement from network operations | F8 |
-| `excluded` | The account is a designated probe account, excluded from rating (POL-06) | F9 |
+| `excluded` | The account is a designated probe account, excluded from rating (POL-06; several probe accounts, X2-S27) | F9 |
 | `rules` | The rules version in force from a log position | F10 |
-| Rate windows | Leader-memory submission timestamps per key and account in the last second (§A5.4) | Not logged (soft, rebuilt from intakes) |
+| Rate windows | Owner-memory submission timestamps per key and account in the last second (§A5.4) | Not logged (soft, rebuilt from intakes) |
+
+The state is held as projection rows of the account owner (RFC-002), written in the same
+transaction as the entry that changes it, and in the owner's memory; both are derived from
+the log (RFC-000 A4) and rebuilt from it.
 
 ### A3. The quantities
 
 Every quantity below is a function of the module state at one log position and the
-timestamp of the entry or answer that evaluates it (§A10), so each is exactly
-reproducible (P4-N16, P4-S72).
+timestamp of the entry or answer that evaluates it (§A10: an entry's commit timestamp, or
+the read timestamp of an answer), so each is exactly reproducible (P4-N16, P4-S72).
 
 | Quantity | Definition | Source |
 |---|---|---|
@@ -148,9 +205,10 @@ reproducible (P4-N16, P4-S72).
 | Capacity in flight | `IF_k = Σ_{q of k} mbps_q`, `IF_a = Σ_q mbps_q`; `account_inflight_limit = max(account_inflight_floor, 10 × the largest peak reserved rate among the account's reservations not ended)` | POL-25 |
 | One window's charges | `CWC = Σ_r C_r` (coverage only, no fee part) | POL-16 |
 | Warning threshold | `LBW = max(ceil(CWC / 4), 1,000,000 µ)` | POL-16 |
-| Resume amount | `RA = W + max(0, LBW − h_full)`; an account with an overdue invoice is told to pay every overdue invoice as well (the amount alone never resumes it) | POL-16, POL-21 |
+| Resume amount | `RA = W + max(0, ΣOD, LBW − h_full)`: a top-up first repays `W` (M1, §B2), then pays the overdue invoices oldest first (§B5), and every µ of it raises `Bal` and so `h_full`; so `RA` is the least top-up after which `W = 0`, no invoice is overdue and `h_full ≥ LBW`. It never exceeds POL-16's "overdue amount plus the resume amount" (`W + ΣOD + max(0, LBW − h_full)`), which therefore also resumes the account. With no invoice overdue it is revision 1's `W + max(0, LBW − h_full)` | POL-15, POL-16, POL-21; RQ4-6, RQ4-10 |
 | Warning quote | `WQ = LBW + CWC − h` | POL-16, P4-S24 |
 | Insufficient-funds amounts | For a request needing hold `x` with headroom `h < x`: `x − h`, and `x − h + LBW` | POL-10 |
+| Price-notice amounts | For an announced price change of open-ended `r`: the hold it will need `R'_r` (`R_r` recomputed at the new price), the growth `g = R'_r − R_r`, and, if `h < g`, the top-up `g − h` that would cover it | POL-27, P4-S108 |
 
 Why the hold is anchored at `p_r`, the first unposted minute, and not at the clock: POL-18
 requires that "charges accrued but not yet posted stay within funds held". With the window
@@ -160,55 +218,73 @@ hold stays the coverage of the next `CW` (P4-S10) and nothing is counted twice o
 
 **Probe accounts** (`excluded`, POL-06) are never rated, so nothing is ever posted for
 them. For them `p_r` is taken to advance with the clock (every minute counts as posted at
-its end, with a charge of 0): their credit holds roll forward and end exactly as anyone's
-(X2-S24), their balance never moves, and they are never invoiced (§B5).
+its end, with a charge of 0: `p_r` is the minute of the evaluating timestamp, so no entry
+is needed for it):
+their credit holds roll forward and end exactly as anyone's (X2-S24), their balance never
+moves, and they are never invoiced (§B5). `requirements-v1.6` designates **several** probe
+accounts, spread over the account partitions so that every account-owner slot and status
+replica serving accounts is probed (X2-S27), and a designated **probe supplier** owning the
+probe links (§B7.2); each probe account is flagged by its own F9, and none is a buyer's
+account.
 
 ### A4. Entry kinds and their funds payload
 
-**Funds payload in booking entries** (RFC-002 kinds; this Part defines the payload).
+**Funds payload in booking entries** (RFC-002 kinds E1 … E14; this Part defines the payload).
 
 | Booking entry (RFC-002) | Funds payload | Apply rule |
 |---|---|---|
-| Intake (entry 1), admitted | `h_q`, hold kind, `mbps_q`, key, the headroom and key headroom it was checked against, with the position | Adds the request hold and the capacity in flight (§A5) |
-| Intake, ended at intake (rejected for standing, limits or funds) | The refusal reason and amounts | Nothing held |
-| Deciding entry, confirmed | Request `q` → reservation `r`; new `H_r` | Removes `h_q`, `mbps_q`; sets `H_r = R_r` (new reservation) or the resized hold (change) (§A6) |
-| Deciding entry, not confirmed (rejected, failed, withdrawn, key revoked, suspended, expired) | Request `q` released | Removes `h_q` and `mbps_q` (P4-S12) |
-| Reservation change applied (decrease or shorten effective, cancellation effective, revocation, cut under POL-07, move to an equivalent path, termination, release after grace, a price change taking effect) | The reservation's new schedule, end cause, fee due from the buyer | Resizes or ends the hold (§A6) |
+| E1 Intake, admitted | `h_q`, hold kind, `mbps_q`, key, the headroom and key headroom it was checked against, with the position | Adds the request hold and the capacity in flight (§A5) |
+| E1′ Intake, decided at intake (rejected for standing, limits or funds) | The refusal reason and amounts | Nothing held |
+| E5 Confirm | Request `q` → reservation `r`; new `H_r` | Removes `h_q`, `mbps_q`; sets `H_r = R_r` (new reservation) or the resized hold (change) (§A6) |
+| E4 Withdraw, E6 Expire, E7 End (rejected, failed, withdrawn, key revoked, suspended, expired) | Request `q` released | Removes `h_q` and `mbps_q` (P4-S12) |
+| E11 Reservation change (decrease or shorten effective, cancellation effective, revocation, cut under POL-07, move to an equivalent path, termination, release after grace, **a price change taking effect**, JR-4) | The reservation's new schedule (for a price change, its new price from the effective minute: `PriceTookEffect`), end cause, fee due from the buyer | Resizes or ends the hold (§A6) |
 
-**Funds entry kinds** (this Part defines them; RFC-002 registers them).
+**Funds entry kinds** (this Part defines them; RFC-002 registers them). Feed events arrive
+through Kafka from the producer's outbox (RFC-000 §5.5) and are applied once, by the
+producer's (partition, epoch, sequence) (§B9).
 
 | Kind | Payload | Appended when | Apply rule |
 |---|---|---|---|
-| **F1 Ledger applied** | Ledger position; movements for the account since the last F1 (kind, amount, source reference); new `Bal`; per reservation the new posted-through minute; change of `W`; posted accrual per key in the period | The leader has received ledger feed events for the account (one per movement; batched in group commits) | Updates `Bal`, `W`, `p_r`; rolls or consumes holds (§A6); evaluates standing (§A7) |
-| **F2 Usage applied** | Per product unposted usage `U`, rating position, and the ledger position the report assumes | A rating report has arrived **and** the account has applied F1 through the ledger position it assumes (so a usage charge leaves `U` only once it is in `Bal`, never before) | Replaces `U[product]`; evaluates standing |
-| **F3 Exposure parameters** | Per product `usage_rate_cap`, `max_lateness`, `attribution_lag_max`, highest `usage_price` | Catalogue or onboarding change (RFC-003) | Recomputes `LB`; evaluates standing |
-| **F4 Key status** | Per key status (active, revoked), `key_spend_limit`, `key_inflight_limit`, `key_rate_limit` | Key-status push from identity and access (RFC-005), within 60 s (D6) | Updates keys; the booking module reads `status_k` for revocation (P2-S72) |
-| **F5 Credit and vetting** | One of: KYB status recorded; credit limit set (amount, finance operator, reason); credit limit removed (operator and reason, or "invoice written off" with the invoice) | Identity push (KYB); operator console command (finance role, POL-32); receivables feed (write-off) | Set is **refused, recorded, and changes nothing** unless `kyb` is passed (P4-S82); sets `CL`, `mode`; relabels holds; evaluates standing |
-| **F6 Invoice status** | Invoice overdue (invoice, amount) or invoice paid (invoice) | Receivables feed (§B5) | Updates `overdue`; evaluates standing (P4-S18 row 5, P4-S93) |
-| **F7 Funds tick** | One of: fee term ended (`r`); grace ended (re-check, see §A7) | The leader's timer reaches the instant (from the entry's own state, A8) | Applies the time-driven change (§A6, §A7) |
-| **F8 Enforcement acknowledgement** | `std_seq`, enforced-at time | Network operations acknowledges a standing change (§A8) | Records it; a late or missing acknowledgement raises the late-enforcement report (P4-S27) |
-| **F9 Probe designation** | `excluded` on or off | Catalogue and identity designation (RFC-006, POL-06) | As §A3 |
+| **F1 Ledger applied** | Ledger position (partition, sequence, commit timestamp); movements for the account since the last F1 (kind, amount, source reference); new `Bal`; per reservation the new posted-through minute; change of `W`; posted accrual per key in the period | The owner has received ledger movement-feed events for the account (one per movement; several in one batch transaction) | Updates `Bal`, `W`, `p_r`; rolls or consumes holds (§A6); evaluates standing (§A7) |
+| **F2 Usage applied** | Per product unposted usage `U`, rating position, and the ledger position X the figure was computed against | A rating report has arrived **and** the account has applied F1 through X (RFC-000 §8, AI3-3), so a usage charge leaves `U` only once it is in `Bal`, never before | Replaces `U[product]`; evaluates standing. Its commit puts a **usage-applied acknowledgement** (rating position applied) in the outbox, for rating (RFC-000 §8; emitted by RFC-002's owner) |
+| **F3 Exposure parameters** | Per product `usage_rate_cap`, `max_lateness`, `attribution_lag_max`, highest `usage_price` | Catalogue change (RFC-003; account-product terms, AI3-6), at the minute a new value takes effect (a `usage_price` change takes effect only after `price_notice`, POL-27) | Recomputes `LB`; evaluates standing |
+| **F4 Identity status** | Per key: status (active, revoked), `key_spend_limit`, `key_inflight_limit`, `key_rate_limit`; and the account's KYB status | The **identity status push** from identity and access (RFC-005, Kafka), within 60 s (D6, AI4-2, AI4-3) | Updates keys and `kyb`. Outcome `revoked`: the keys whose status became revoked as applied; the booking module writes, in the same entry, the endings ("key revoked") of their undecided requests (P2-S72, JR-1) |
+| **F5 Credit limit** | Credit limit set (amount, finance operator, reason); or removed (operator and reason, or "invoice written off" with the invoice) | Operator console command (finance role, POL-32, through the operator action envelope); receivables feed (write-off) | Set is **refused, recorded, and changes nothing** unless `kyb` (from F4) is passed (P4-S82); sets `CL`, `mode`; relabels holds; evaluates standing |
+| **F6 Invoice status** | Invoice overdue (invoice, unpaid amount) or invoice paid (invoice), with the receivables position | Receivables feed (§B5) | Updates `OD`; evaluates standing (P4-S18 row 5, P4-S93, P4-S105) |
+| **F7 Funds tick** | One of: fee term ended (`r`); grace ended; enforcement check (`std_seq`) | The owner's timer reaches the instant (from `due(S)`, §A10) | Applies the time-driven change (§A6, §A7, §A8). *Grace ended*'s outcome `release_due` lists the reservations to release; the booking module writes their E11 release records **in this same entry** (JR-2) |
+| **F8 Enforcement acknowledgement** | `std_seq`, enforced-at time | Network operations' **standing enforcement acknowledgement** (Kafka, RFC-000 §8) | Records it; an acknowledgement later than `since + 60 s` raises the late-enforcement report (P4-S27) |
+| **F9 Probe designation** | `excluded` on or off | Probe designation in catalogue and identity (RFC-006, POL-06) | As §A3 |
 | **F10 Rules version** | The version of this module's rules in force from this position | Deployment of a new rules version | Later entries are evaluated with it; replay uses the version recorded |
+| **F11 Price notice** | Reservation, new price per Mbps-minute, effective minute, catalogue reference | The catalogue feed announces a price change for an open-ended reservation of the account, `price_notice` ahead (POL-27) | No state change. Outcome: the **notice** to the buyer stating the new price, the hold it will need and, if headroom would not cover the growth, that it would not and the top-up that would (§A3, §A7; P4-S108, RQ4-8) |
 
-**Inputs and outcomes in one entry.** For every entry the leader computes the module's
-outcomes (§A10) and records them in the entry beside its inputs: hold changes, any
-standing transition with its new `std_seq`, a warning, notices, a release due, alerts.
-Followers recompute the outcomes from the inputs and compare; a mismatch stops that
-follower applying and raises an alert (it signals a non-deterministic rule or a version
-skew). Recording outcomes makes the standing feed, notices and audit read straight from
-the log, and makes every decision visible at the position it was taken (POL-04).
+**Inputs and outcomes in one entry.** For every entry the owner computes the module's
+outcomes (§A10) inside the batch transaction that appends it and records them in the
+entry beside its inputs: hold changes, any standing transition with its new `std_seq`, a
+warning, notices, a release due, keys revoked as applied, alerts. The owner's hot standby,
+which tails the log table (RFC-000 §5.5), and the replay tests (§B13) recompute the
+outcomes from the inputs with the recorded rules version and compare; a mismatch raises
+an alert (it signals a non-deterministic rule or a version skew). Recording outcomes makes the standing feed, notices and audit read straight from
+the log (their outbox rows are written in the same transaction), and makes every decision
+visible at the position it was taken (POL-04).
 
 ### A5. Admission rules
 
 #### A5.1 What an intake is checked against
 
 The booking module calls `admit` (§A10) when it builds an intake entry, in the account's
-serial order, so concurrent bookings and changes by one account or key are checked one at
-a time against the holds already taken (P4-S66, P2-S70, P2-S71). The checks, in order,
-with the reason each refusal states:
+serial order, which is the order the owner received the submissions. Concurrent bookings
+and changes by one account or key are therefore checked **one at a time, in the order
+received, each counting the holds and capacity in flight of the requests then undecided**
+(POL-25 as amended by B-RQ-1 and RQ4-1; P4-S66, P2-S70, P2-S71). Outcomes need only match
+that sequence of checks: a request refused because of a hold that a request in flight
+holds stays refused even if that request later fails and releases it, so two concurrent
+requests may both fail where a strictly serial run would have let one succeed (P2-S112).
+No check waits for another request's outcome. The checks, in order, with the reason each
+refusal states:
 
 | # | Check | Refused with (POL-10 wording) |
 |---|---|---|
+| 0 | `key_status(S, k)` is revoked as applied (F4) | Not a check of `admit`: the booking module calls `key_status` first and treats the submission as unauthenticated, not accepted (X1-S06, JR-1) |
 | 1 | The request adds something (a booking, an extension or an increase) and the account is suspended | "account suspended", the resume amount `RA` and, if any, the overdue invoices (P2-S42, P2-S78) |
 | 2 | `IF_k + mbps_q > kif_k` (if the key has a limit) | key's limit on capacity in flight reached (P2-S40) |
 | 3 | `IF_a + mbps_q > account_inflight_limit` | account's limit on capacity in flight reached (P2-S40, P2-S54, P2-S66, P2-S98) |
@@ -239,24 +315,28 @@ funds check itself is not repeated: the request already holds `h_q`, and headroo
 fall below zero only through an entry that suspends the account. On confirmation `h_q`
 becomes the reservation's hold: `H_r = R_r` for a new reservation; for a change,
 `H_r = R_r(after)` at the deciding entry. A change's hold can differ from
-`H_r(before) + h_q` by at most the added part's accrual over the minutes posted between
-intake and decision (at most one minute, since the deadline is at most 60 s); if headroom
+`H_r(before) + h_q` only by the added part's coverage for the minutes the window gains
+as minutes are posted between intake and decision (one or two at the usual posting lag,
+since the deadline is at most 60 s; more only while rating catches up); if headroom
 cannot cover that difference it is a failed roll-forward (§A7), and the confirmation
 stands. Every other outcome releases `h_q` in the deciding entry itself (P4-S12); its
 reporting follows RFC-002's "releases durable" rule.
 
 #### A5.4 Rate limits
 
-`key_rate_limit` and `account_rate_limit` are exact counts of booking submissions (new
+`key_rate_limit` and `account_rate_limit` are counts of booking submissions (new
 requests and retries with their key; never status polls, P2-S68) in the **sliding second**
-ending at the leader's timestamp. The leader evaluates them before proposing anything:
-a submission over a limit is **not accepted** and creates nothing (P2-S41), with
-`retry_after` the time until the oldest submission in the window leaves it. Accepted
-submissions are counted in leader memory and rebuilt by a new leader from the intake
-entries of the last second (retries answered from state are not logged, so for one second
-after a leader change the count can be low by the retries of that second; nothing else
-depends on it). `key_poll_limit` is not applied here: polls never reach the leader
-(RFC-000 §4.6; see AI4-6).
+ending at the owner's clock reading when the submission arrives. The owner evaluates them
+before proposing anything: a submission over a limit is **not accepted** and creates
+nothing (P2-S41), with `retry_after` the time until the oldest submission in the window
+leaves it. Accepted submissions are counted in owner memory and rebuilt by a new owner
+from the intake entries of the last second (by their commit timestamps). Retries answered
+from state are not logged, so the count is exact except for **one second after an owner
+change, when a key or account can be admitted up to twice its limit** (RFC-000 §2, B-AI-4;
+JR-3 adopted). Nothing else depends on the count: the funds, key-headroom and in-flight
+checks of §A5.1 are exact regardless. `key_poll_limit` is not applied here: polls never
+reach the owner; the edge enforces it exactly with key-sharded counters (RFC-000 §2,
+AI4-6).
 
 ### A6. The hold of a reservation
 
@@ -283,14 +363,18 @@ stateDiagram-v2
 | F1: minutes `[p, p')` of `r` posted | `p_r = p'`; `H_r = R_r`, the window `[p_r, p_r + CW)` having slid (P4-S10). If headroom cannot cover the minutes the window gains, the hold cannot roll forward: §A7 | `p_r = p'`; `H_r = max(0, H_r − cov(p, p'))`: charges are taken from the hold, which does not roll (P4-S64); charges beyond it reduce `Bal` (P4-S70, P4-S101) |
 | Change applied: decrease (newest part first), shorten, cut under POL-07, move to a cheaper or equal equivalent path | `H_r = R_r` from the new schedule (P4-S60) | `H_r = min(H_r, cov(p_r, Wend_r))` at the new schedule |
 | Confirmed increase or extension | §A5.3 | Not possible |
-| Price change takes effect (POL-27) | `H_r = R_r` at the new price; if the growth cannot be covered, §A7 (P4-S62, P4-S101) | `H_r` unchanged; the higher charges are taken from it |
+| Price change takes effect (POL-27): RFC-002's E11 with cause "price change" at the effective minute, carrying `PriceTookEffect` (JR-4); the new price applies to every part, parts added later included (P3-S64) | `H_r = R_r` at the new price; if the growth cannot be covered, §A7 (P4-S62, P4-S101); the buyer had the F11 notice with its top-up quote `price_notice` earlier (P4-S108) | `H_r` unchanged; the higher charges are taken from it |
 | F7 fee term ended | `R_r` drops to the coverage alone (P4-S96) | `H_r = min(H_r, cov(p_r, Wend_r))` |
-| Reservation ends (cancelled, shortened to an end, revoked, released, terminated, P4-S11, P4-S61) | **Draining**: `H_r = min(H_r, cov(p_r, end_r) + fee_due)`, where `fee_due` is the shown fee if the buyer pays it (own cancellation within the minimum term, release after grace, termination; not on revocation or a cut, POL-08); no funds are held for any minute after the end | Same |
+| Reservation ends (cancelled, shortened to an end, revoked, released, terminated, P4-S11, P4-S61) | **Draining**: `H_r = min(H_r, cov(p_r, end_r) + fee_due)`, where `fee_due` is the shown fee if the buyer pays it (own cancellation within the minimum term, release after grace, termination; not on revocation or a cut, POL-08); no funds are held for its charges from the minute it ends | Same |
+| Shortened, the new end `end'` inside a partner leg's minimum term (POL-08 as amended by RQ3-4) | The shown fee is due as for a cancellation and posted as M10 at the change's effective minute (P3-S63): `H_r = min(H_r, C'_r + fee_due)` with `C'_r` the coverage to `end'`, so the hold never grows at a shorten; the F1 that posts the fee takes it from the hold, then `H_r = R_r` from the new schedule as for any posted minute | `H_r = min(H_r, cov(p_r, min(Wend_r, end')) + fee_due)`; the fee is taken from it when posted |
 | F1 in Draining | `H_r` falls by what is posted, to 0 (**Closed**) | Same |
 
 The Draining rule keeps POL-18's invariant at the end too: a charge accrued before the end
 but not yet posted, and a fee due, stay within funds held until posted, instead of
-vanishing from headroom for the up to 2 minutes rating takes (RQ4-2 records the reading).
+vanishing from headroom for the up to 2 minutes rating takes. `requirements-v1.6` adopted
+this reading (RQ4-2, POL-15 "When a reservation ends"; P4-S11 and P4-S61 as amended): the
+rest of the hold is released as each remaining line is posted, and at the latest when
+the last line before the end and the fee are posted (**Closed**).
 
 **Invariant A-1.** While the account is active, `H_r = R_r` for every reservation after
 every entry; so `Σ H_r` is the coverage still required (P4-N3). While suspended, `H_r`
@@ -338,18 +422,21 @@ stateDiagram-v2
 | Cause | Holds when | Clears when |
 |---|---|---|
 | `headroom` | In the active state, applying an entry would leave `h < 0` with every hold at `R_r`: a hold cannot roll forward (F1), a price change needs more (POL-27), usage exposure grows (F2, F3), a reversal (F1), a lower credit limit (F5) (P4-S18 rows 1 to 4, P4-S51) | Only through resumption (below) |
-| `invoice` | `overdue` is not empty (F6; P4-S18 row 5) | Every overdue invoice is paid (P4-S93) |
+| `invoice` | `OD` is not empty (F6; P4-S18 row 5) | Every overdue invoice is paid (P4-S93), by an invoice payment or by a top-up, which pays overdue invoices first (§B5; P4-S105) |
 | `written_off` | `W > 0` (POL-21) | `W = 0` (P4-S94) |
 
 **Suspending.** When a cause first holds in the active state, the entry that caused it
-records the transition, a new `std_seq`, `since` = the entry's timestamp,
+records the transition, a new `std_seq`, `since` = the entry's commit timestamp,
 `grace_end = since + SG`. If the cause is `headroom` because holds had to grow (roll-forward
 or price change), the holds grow by whatever headroom remains, `max(0, h)` before the
 growth, given to the reservations in age order (oldest first), so headroom is then exactly
 0 or as negative as it already was (POL-16, P4-S101); every reservation's window end is
 frozen (`Wend_r = p_r + CW`, or as grown). The entry's outcome carries: the suspension
-notice to the buyer, quoting `RA` (and any overdue invoices), and the standing event for
-network operations (§A8). A suspension applied before a request's deciding entry ends that
+notice to the buyer, quoting `RA` (and any overdue invoices, which `RA` includes), and the
+standing event for network operations (§A8). Both leave through the outbox rows written in
+the same transaction; the buyer has been **told** once the notice is in the account's
+notice list and its first webhook delivery attempted (the notifier, RFC-006; POL-04 as
+amended by RQ-E). A suspension applied before a request's deciding entry ends that
 request not confirmed (P2-S69); one after it changes nothing (P2-S103).
 
 **While suspended.** No booking, extension or increase is admitted (§A5.1); reductions
@@ -365,12 +452,19 @@ is empty (no overdue invoice, `W = 0`) **and** `h_full ≥ LBW`. Resumption reco
 buyer. Because top-ups, charges and reversals of one account all reach it through the
 one ledger partition of its home, in ledger order (F1), a top-up racing a suspension is
 applied before or after it, and both orders end in the standing the final headroom implies
-(P4-S65).
+(P4-S65). A top-up to an account with an overdue invoice resumes it in two steps of the
+same order: its F1 raises `Bal`; receivables applies it to the overdue invoices oldest
+first (§B5) and sends F6 *paid* for each invoice it clears; the F6 that empties `OD`
+resumes the account if `h_full ≥ LBW` (P4-S105). Both arrive within the 10 s of X2-S07
+(about 0.3 s, est., §B4.2).
 
 **Release after grace.** At `grace_end`, if still suspended and not yet released, the
-leader appends F7 *grace ended*; its outcome is **release due**, and the booking module
-appends the release of every reservation (RFC-002, reservation command port, "release after
-grace"; RFC-000 §8), with the buyer told which and why (P4-S23). Each released reservation
+owner appends F7 *grace ended*; its outcome is **release due** with the list of
+reservations, and the booking module writes the release of every listed reservation (E11
+records, cause "released", POL-16; RFC-000 §8 reservation command port, "release after
+grace") **in the same F7 entry** (RFC-002 rule 5, JR-2), so the release has the grace tick's
+position and there is no state with the tick and not its releases. The buyer is told which
+and why (P4-S23). Each released reservation
 goes to Draining with its shown fee due (§A6): the fee is charged against what is left of
 the hold and any shortfall becomes a negative balance (P4-S97). The account stays
 suspended until it resumes.
@@ -378,7 +472,17 @@ suspended until it resumes.
 **Warnings.** After every entry in the active state: if `warn_armed` and `h < LBW`, the
 outcome is a warning quoting `WQ`, and `warn_armed` becomes false; whenever `h ≥ LBW`,
 `warn_armed` becomes true. So one warning per crossing (P4-S69). A crossing that coincides
-with a suspension sends the warning, then the suspension notice.
+with a suspension sends the warning, then the suspension notice, from the same entry: this
+is how a price change that cannot be covered at its effective minute warns "before or with"
+the suspension notice (POL-27 as amended by RQ4-8).
+
+**Price notices** (F11; POL-27 as amended by RQ4-8). When the catalogue announces a new
+price for an open-ended reservation, `price_notice` ahead, the owner appends F11 and its
+outcome is the notice: the new price, the hold `R'_r` it will need, and, if headroom at the
+announcement would not cover the growth `g = R'_r − R_r`, that it would not and the top-up
+`g − h` that would (§A3). The buyer, or its agent, thus has the whole notice period to
+act. At the effective minute the E11 price change resizes the hold as in §A6, with the
+warning and suspension rules above.
 
 **Worked examples.**
 
@@ -396,7 +500,9 @@ with a suspension sends the warning, then the suspension notice.
 | P4-S97 | suspended; grace consumes `288,000` of `H = 500,000`; release: Draining `min(212,000, 0 + 500,000)`; fee posted | `H` 212,000 then 0; `Bal 212,000 − 500,000 = −288,000`; loss ≤ min(fee, coverage) |
 | P4-S101 | price takes effect: `R = 432,000`, growth 144,000 > `h` 100,000; hold grows by 100,000 | suspended, `H = 388,000`; grace charges 432,000: `Bal 388,000 − 432,000 = −44,000` if not resumed |
 | P4-S92 | `h = −1,000,000 − 288,000 + 5,000,000 = 3,712,000`; cause `invoice` | a posted minute changes nothing: still suspended |
-| P4-S93 | invoice of 1.000000 paid: `Bal 0`, `overdue` empty, `h_full = 4,712,000 ≥ LBW` | active; unblock |
+| P4-S93 | invoice of 1.000000 paid: `Bal 0`, `OD` empty, `h_full = 4,712,000 ≥ LBW` | active; unblock |
+| P4-S105 | as P4-S92: `ΣOD = 1,000,000`, `W = 0`, `h_full = 3,712,000`; `RA = 0 + max(0, 1,000,000, 1,000,000 − 3,712,000) = 1,000,000`. Top-up 1,500,000: M1 `r = 0`, `Bal −1,000,000 + 1,500,000 = 500,000` (F1, still suspended: cause `invoice`); receivables applies 1,000,000 to the invoice as an invoice payment and 500,000 stays in the balance; F6 *paid*: `OD` empty, `h_full = 500,000 − 288,000 + 5,000,000 = 5,212,000 ≥ LBW` | active, no request from the buyer; headroom `5,212,000 µ`; unblock |
+| P4-S108 | `h = 100,000`, `H = R = 100 × 2 × 1,440 = 288,000`; F11 at 3 µ: `R' = 100 × 3 × 1,440 = 432,000`, `g = 144,000 > h` | notice: new price, hold 0.432000, headroom would not cover 0.144000 more, top-up `144,000 − 100,000 = 44,000 µ` |
 | P4-S94 | `W = 4.7`, top-up repays first (§B2 M1); `RA = W + max(0, 1 − 0)` = 5.7 | 4.0 → `W 0.7`, `Bal 0`, suspended; 5.7 → `W 0`, `Bal 1.0`, active; `e1`: 11.0 → `W 0`, `Bal 1.0`, active prepaid (`CL` removed at the write-off, F5) |
 
 **P4-S19, the exposure argument.** At every position, the money owed for usage-priced
@@ -413,18 +519,21 @@ would fall below zero, and what it can still carry is inside `LB`.
 
 | Element | Semantics |
 |---|---|
-| Standing event | `(account, std_seq, standing, since, decision position)`, emitted from the outcome field of the committed entry that changed standing. Delivered at least once, in `std_seq` order per account; a consumer applies an event only if its `std_seq` is higher than the last it applied, so repeats change nothing (P4-S25) |
-| Timing | The account owner's outbox relay sends it within about 100 ms of the commit (est.), inside `standing_notice_time` (10 s, POL-06; X2-S17), and resends until acknowledged |
-| Query | Served by account-owner replicas: current standing, `since`, `std_seq`, at a stated position (P4-S26) |
-| Enforcement acknowledgement | Network operations returns `(account, std_seq, enforced_at)` once it has blocked or unblocked usage-priced traffic; it is appended as F8. At `since + 60 s` (X2-S08) the leader's timer checks: no F8 for that `std_seq`, or one with `enforced_at` later than the target, raises the late-enforcement report to operations and finance through the alert feed (P4-S27) |
+| Standing event | `(account, std_seq, standing, since, decision position)`, written as an outbox row in the transaction of the entry that changed standing (from its outcome field). Published to the Kafka standing topic, keyed by account, by the owner after commit and by the changefeed relay as the guaranteed path (RFC-000 §5.5): delivered at least once, in `std_seq` order per account; a consumer applies an event only if its `std_seq` is higher than the last it applied, so repeats, including the two publish paths' duplicates, change nothing (P4-S25) |
+| Timing | The owner publishes within about 50 ms of the commit, the changefeed within about a second (est.), both inside `standing_notice_time` (10 s, POL-06; X2-S17) |
+| Query | Served by the status replicas (RFC-000 §4.6): current standing, `since`, `std_seq`, at a stated position (P4-S26) |
+| Enforcement acknowledgement | RFC-000 §8's **standing enforcement acknowledgement**: network operations publishes `(account, std_seq, enforced_at)` on Kafka once it has blocked or unblocked usage-priced traffic; the owner appends it as F8. `due(S)` arms an F7 *enforcement check* at `since + 60 s` (X2-S08): no F8 for that `std_seq` by then, or a later F8 with `enforced_at` after the target, raises the late-enforcement report to operations and finance through the operational alert feed (P4-S27). The check is an entry, so whether enforcement was late is decided in the log, not by a clock read |
 
 Standing events carry no cause: network operations only blocks and unblocks (P4 Out of
 scope). Usage-priced traffic is blocked at suspension (P4-S21) and unblocked at resumption.
 
 ### A9. Headroom and balance query
 
-Served by account-owner status replicas from their applied state (RFC-000 §4.6), never by
-the leader's write path; one answer within 200 ms (POL-06's wallet probe, X2-S18).
+Served by the status replicas (RFC-000 §4.6), never by the owner's write path: from the
+state the owner pushed to them under a read lease, or by a bounded-staleness follower read
+of the account's projection rows through a Kenyan replica in their own facility; one
+answer within 200 ms (POL-06's wallet probe, X2-S18). The replica evaluates `answer`
+(§A10) on the state at one position, with the read timestamp as `ctx.ts`.
 
 | Field | Content |
 |---|---|
@@ -436,61 +545,98 @@ the leader's write path; one answer within 200 ms (POL-06's wallet probe, X2-S18
 `Bal` is the ledger's balance at the stated ledger position, the exact sum of the
 account's entries there (P4-S17), because every movement touching the buyer is in its one
 home partition. An answer that gates a decision is not this query: the decision is taken
-inside the deciding entry (§A5). P4-S72 (rebuild any past figure): load the account log
-snapshot at or before the position an answer carried, replay to the position with the
-rules version recorded (F10), and evaluate `answer` at that entry's timestamp; the figures
-are equal by determinism (§A10). History (RFC-006) keeps the account log for 7 years.
+inside the deciding entry (§A5). P4-S72 (rebuild any past figure): read the account log
+up to the position an answer carried (the live table, or history's sealed segments of
+it), replay it from an earlier snapshot of the projection with the rules version recorded
+(F10), and evaluate `answer` at the timestamp the answer carried; the figures are equal by
+determinism (§A10). History (RFC-006) keeps the account log for 7 years. Every principal
+in an answer or entry is a pseudonymous identifier (RFC-000 A11, X1-S37).
 
 ### A10. The in-process interface
 
-The module is a library linked into the account owner, with no I/O, no clock and no
-randomness. Language-neutral signatures (wire formats belong to `04-delivery/contracts.md`):
+The module is a TypeScript library linked into the account owner's NestJS service, with
+no I/O, no clock and no randomness (amounts are `bigint` µ; nothing is a JavaScript
+`number`). Language-neutral signatures (wire formats belong to `04-delivery/contracts.md`):
 
 ```
-Ctx      = { pos: LogPosition, ts: Timestamp /* the entry's leader timestamp */, rules: RulesVersion }
+Ctx      = { pos: LogPosition, ts: Timestamp /* the entry's commit timestamp, or an answer's read timestamp */,
+             rules: RulesVersion }
 Ask      = { request, principal, key?, kind: New | Increase | Extend,
              schedule_after: Schedule, schedule_before?: Schedule, fee_terms?: FeeTerms, mbps }
 Verdict  = Admit { hold: Micros, hold_kind: Funds | Credit, mbps }
          | Refuse { reason: Suspended{ra, overdue} | KeyInflight | AccountInflight
                            | InsufficientFunds{min, min_plus_lbw} | KeySpendLimit }
 Input    = Intake{request, verdict} | Decided{request, Confirmed{reservation, schedule} | NotConfirmed}
-         | ReservationChanged{reservation, schedule, end?: {cause, fee_due}}
-         | PriceTookEffect{reservation, schedule} | F1 … F10 payloads (§A4)
+         | ReservationChanged{reservation, schedule, end?: {cause, fee_due}, fee_due?}  // fee_due? for a shorten into a minimum term (RQ3-4)
+         | PriceTookEffect{reservation, price_version, effective_minute}  // carried by E11, cause "price change" (JR-4); every part re-priced (RQ3-5)
+         | F1 … F11 payloads (§A4)
 Outcomes = { hold_changes, standing?: {from, to, std_seq, causes, ra}, warning?: {wq},
-             notices[], release_due?: [reservation], alerts[] }
+             notices[], release_due?: [reservation], revoked_keys?: [key], alerts[], outbox[] }
 
-rate_check(soft: RateWindows, ts, principal) -> Accept | NotAccepted{retry_after}   // leader memory only
+rate_check(soft: RateWindows, now, principal) -> Accept | NotAccepted{retry_after}   // owner memory only
+key_status(S, key)           -> Active | Revoked | Unknown                            // as applied by F4 (JR-1)
 admit(S, ctx, ask)           -> Verdict
 apply(S, ctx, input)         -> (S', Outcomes)        // the only state transition
-due(S)                       -> [(instant, F7 payload)] // timers the leader must arm: fee term ends, grace end, enforcement checks
+due(S)                       -> [(instant, F7 payload)] // fee term ends, grace end, enforcement checks
 answer(S, ctx, principal)    -> HeadroomAnswer        // §A9
 standing(S)                  -> {standing, since, std_seq}
 ```
 
+**Time.** `ctx.ts` is the entry's **commit timestamp**, which RFC-000 §4.3 makes the
+entry's time: the owner reads it inside the batch transaction (the database's
+hybrid-logical clock) and only then evaluates `admit` and `apply` for the batch's entries
+and writes them, so every recorded figure is computed at the timestamp the entry commits
+at. A transaction pushed to a later timestamp fails and is retried, and the retry
+re-evaluates (RFC-000 §5.5). The entries of one batch share one timestamp and are ordered
+by sequence. `rate_check` alone uses the owner's clock (`now`), because it decides only
+whether to propose anything, and logs nothing.
+
 | Call site (RFC-002) | Call |
 |---|---|
-| A booking submission arrives at the leader | `rate_check`; if accepted, `admit`, whose verdict goes into the intake entry's funds payload; the booking module ends the request at intake on `Refuse` |
-| Building the deciding entry | `standing(S)` must be active for a request that adds something; then `apply(Decided)` |
+| A booking submission arrives at the owner | `key_status`: `Revoked` → not accepted as unauthenticated (X1-S06); then `rate_check`; if accepted, `admit` inside the batch transaction, whose verdict goes into E1's funds payload, or ends the request at intake (E1′) on `Refuse` |
+| Building the deciding entry | `standing(S)` must be active for a request that adds something (also checked before a partner confirm is sent); then `apply(Decided)` |
 | Applying any booking entry with a funds payload | `apply` with the corresponding `Input` |
-| A feed event or timer | The leader builds F1 … F10 and calls `apply`; the outcomes go into the entry |
-| `release_due` in outcomes | The booking module appends the release after grace for the listed reservations |
+| A feed event or timer | The owner builds F1 … F11 and calls `apply`; the outcomes go into the entry |
+| `standing` to suspended, `revoked_keys`, `release_due` in outcomes | The booking module writes, **in the same entry**, the endings of the account's undecided additions (suspension, P2-S69), of the revoked keys' undecided requests (P2-S72), or the E11 release of each listed reservation (P4-S23) (RFC-002 rule 5; JR-1, JR-2) |
+| The catalogue's price change takes effect for an open-ended reservation | The booking module appends E11 with cause "price change" and calls `apply(PriceTookEffect)` (JR-4) |
 | Status replicas | `answer`, `standing` |
 
 **Determinism rules.** Integer arithmetic only; iteration over reservations in
 `(start_r, id)` order and over keys in id order; time only from `ctx.ts`; every
 parameter (POL values, prices, limits) from state applied by an entry; the rules version
-from F10. The leader records outcomes and followers check them (§A4).
+from F10. The owner records outcomes; its hot standby and the replay tests check them
+(§A4).
+
+#### Interface with RFC-002 (the joint items)
+
+RFC-002 (revision 1, §2.4) raised four alignment items; RFC-000 revision 4 directs how
+each is closed, and this revision closes them so:
+
+| # | Item | Resolution here | RFC-002 must |
+|---|---|---|---|
+| JR-1 | Key revocation as applied | `key_status(S, key)` added, the plain read of `S` RFC-002 revision 2 accepts in place of a `revoked` result from `rate_check` (which reads only owner memory); F4's outcome lists `revoked_keys` (RFC-000 §2, §8: the identity status push is applied by this module and read by booking; AI4-3) | Call `key_status` at intake before `rate_check`; write the "key revoked" endings in the F4 entry |
+| JR-2 | Release after grace | The release records are written in the F7 *grace ended* entry itself (§A7), not appended later | Write the E11 releases in the F7 entry, cause "released" |
+| JR-3 | Rate counts after an owner change | Adopted with RFC-000's bound: up to twice the limit for one second after an owner change (§A5.4, B-AI-4) | State the same bound |
+| JR-4 | Price changes of open-ended reservations | A booking reservation-change entry: E11 with cause "price change", carrying `PriceTookEffect{reservation, price_version, effective_minute}`, re-pricing every part (RQ3-5); the announcement itself is F11 (§A4) | Append E11 at the effective minute; register F11 and append it when the catalogue announces a change |
+
+Further points RFC-002 must match: F4 carries KYB status and F5 only the credit limit
+(RFC-000 §2, AI4-2); F7 has a third variant, *enforcement check*, armed by `due(S)` (§A8);
+F2's transaction writes the usage-applied acknowledgement to the outbox (§A4); the funds
+calls are evaluated inside the batch transaction at its commit timestamp, the entries of
+one batch sharing it (§A10, "Time"); and RFC-002's "no followers" reading is this RFC's
+(outcomes re-computed by the hot standby and every replay, §A4).
 
 ### A11. Sizing and recovery (Part A)
 
 | Item | Estimate |
 |---|---|
-| State | About 60 B per reservation (`p_r`, `H_r`, window, fee, key, state) and 40 B per pending request: about 4 GB for 63 M active reservations across every account group (est.) |
-| F1 entries | One per posted movement touching the account: about 1,700 a second for reservation charges at 100,000 active accounts (one movement per account and minute, RFC-000 §6), plus payments (1,000/s peak). Each carries posted-through minutes compactly: "every reservation of the movement's lines through minute m", with exceptions listed |
-| F2 entries | Rating coalesces each account's unposted-usage changes to at most one report every 2 s (est.), within `attribution_lag_max` (10 s) end to end: at most about 50,000 entries/s across all groups (est.), each about 50 B |
+| State | About 60 B per reservation (`p_r`, `H_r`, window, fee, key, state) and 40 B per pending request: about 4 GB for 63 M active reservations across every account partition (est.), in owner memory and as projection rows |
+| F1 entries | One per posted movement touching the account: about 1,700 a second for reservation charges at 100,000 active accounts (one movement per account and minute, RFC-000 §6), plus payments (1,000/s peak). Each carries posted-through minutes compactly: "every reservation of the movement's lines through minute m", with exceptions listed. They ride the account's batch transactions with the booking entries (RFC-000 §3), so they add rows, not transactions |
+| F2 entries | Rating coalesces each account's unposted-usage changes to at most one report every 2 s (est.), within `attribution_lag_max` (10 s) end to end: at most about 50,000 entries/s across all partitions (est.), each about 50 B |
+| F11 entries | One per announced price change per open-ended reservation; rare |
 | Cost per F1 | O(reservations in the movement): slide or consume each window by one minute (one subtraction and one addition) |
 | Admission cost | `admit` is O(parts of the requested reservation) plus O(1) for the totals, which are maintained incrementally; within entry 1's budget (RFC-000 §3) |
-| Recovery | Everything is in the two-region account log (RFC-000 §5.3); a new leader replays from the latest snapshot and arms `due(S)` timers; nothing is rebuilt from other components. Feeds are consumed idempotently by position: an F1 or F2 for a position already applied changes nothing. Admission's targets apply, since the module runs in the account owner (POL-06, X2-S21) |
+| Recovery | Everything is in the account log table and its projection rows, committed at 2 + 2 + 1 (RFC-000 §5.3, §5.5). A new owner takes the owner lease after the old one expires, reads the projection rows and the log tail at its new epoch, arms the `due(S)` timers, and resumes; nothing is rebuilt from other components. The hot standby tails the log, so takeover is seconds (RFC-000 §5.4). Feeds are consumed idempotently by the producer's (partition, epoch, sequence): an F1 or F2 for a position already applied changes nothing, and a Kafka offset is committed only after the entry commits. Admission's targets apply, since the module runs in the account owner (POL-06, X2-S21) |
 
 ## Part B — Ledger, settlement, payments, payouts, statements
 
@@ -501,8 +647,8 @@ from F10. The leader records outcomes and followers check them (§A4).
 | Class | Ledger accounts | Sign | Lives in |
 |---|---|---|---|
 | Buyer | `B:<account>` (prepaid or credit-limit) | positive = money Share holds for the buyer; negative = a receivable Share funds | Only the buyer's home partition |
-| Supplier | `S:<supplier>:earn` (shares, Share-paid costs, payouts), `S:<supplier>:debt` (supplier debts, marked `fault` or `duplicate payout`, and their repayments) | positive = owed to the supplier; the supplier balance is `earn + debt`, signed | Any partition (aggregated at cuts) |
-| Share's own | `SH:<category>` with categories commission, costs borne, corrections borne, write-offs, repayments, FX, treasury | positive = Share's own money at the partner | Any partition (aggregated at cuts) |
+| Supplier | `S:<supplier>:earn` (shares, Share-paid costs, payouts), `S:<supplier>:debt` (supplier debts, marked `fault` or `duplicate payout`, and their repayments) | positive = owed to the supplier; the supplier balance is `earn + debt`, signed | Any partition (summed over partitions at a cut, §B1.3) |
+| Share's own | `SH:<category>` with categories commission, costs borne, corrections borne, write-offs, repayments, FX, treasury | positive = Share's own money at the partner | Any partition (summed over partitions at a cut) |
 | External | `X:<partner>:<provider>` (clearing, one per payment provider through the partner) | negative = money that has come in | Any partition |
 
 A partner (supplier with a partner link) is a supplier. By construction
@@ -513,16 +659,16 @@ sums to zero.
 
 | Field | Content |
 |---|---|
-| `movement_id` | (home partition, sequence) |
+| `movement_id` | (home partition, sequence): the row's primary key in the partition's log table (§B1.3) |
 | `kind` | One of M1 … M22 (§B2) |
 | `source_ref` | The input's source reference (§B9); the home is a function of it alone (RFC-000 §2) |
-| `principal`, audit | Posting principal (settlement, payments, payouts, receivables, or an operator through the console with role and reason, X1-S14) |
+| `principal`, audit | Posting principal (settlement, payments, payouts, receivables, reconciliation), or for an operator action relayed by one of them the operator's role, reason and approver from the operator action envelope (X1-S14); every principal is a **pseudonymous identifier**, never a name or contact detail (RFC-000 A11, POL-19; X1-S37) |
 | `cause` | Reference to the causing fact: charge line, notification, invoice, instruction or confirmation, operator action with reason (P4-S71); for a correction, the movement it corrects (P4-S30) |
 | `currency` | One currency; every entry carries it (P4-S31) |
 | `lines[]` | Each line `(line_ref?, split_ref?, entries[(account, amount)])`, summing to zero on its own; a charge or amendment line names its line key and the weights version and split mode it was split with |
 | `party_totals[]` | Per account, the sum over lines (what balances and statements read) |
-| `posting_time` | `max(leader clock, previous posting time, last cut + 1 µs)` (RFC-000 §4.5) |
-| `digest`, `prev` | Content digest; hash of the previous movement in the partition (a tamper-evident chain) |
+| `posting_time` | The movement's commit timestamp (RFC-000 §4.3, §4.5) |
+| `digest`, `prev` | Content digest; hash of the previous movement in the partition (a tamper-evident chain over the insert-only table, beside the database's grants; the sealed segments' Merkle roots are archived, RFC-000 AI5-3) |
 
 **Validation at append** (an invalid movement is refused, recorded, and moves nothing):
 one currency and every amount tagged; every line sums to zero; amounts are non-zero
@@ -531,41 +677,75 @@ integers; each account's class is allowed for the kind (for example, only M15 an
 `source_ref`; dedup per §B9.
 
 **Immutability (P4-S29).** The posting port (§B12) is append-only; there is no command
-that alters or removes a movement, for any principal. A request to alter one is refused by
-the console (RFC-005) and audited. Segments are hash-chained and sealed segments are
-content-addressed in two-region object storage (RFC-000 §5.3). A correction is a new
-movement whose `cause` is the original (P4-S30).
+that alters or removes a movement, for any principal. The movement table is insert-only:
+no database role, the ledger's own included, is granted update or delete on it (RFC-000
+§5.5). A request to alter one is refused by the console (RFC-005) and audited. History
+seals the table into hash-chained, content-addressed segments in two-region object storage
+and only then truncates the live tail (RFC-000 §5.3, §5.5). A correction is a new movement
+whose `cause` is the original (P4-S30).
 
-#### B1.3 Partitioning and positions
+#### B1.3 Partitioning, tables and positions
 
-Movements are homed by RFC-000 §2's rule, and homes are mapped to **128 ledger groups**
-(est.) by a hash of the home, with **16 Share sub-partitions** (est.) for Share-only
-movements. A buyer's balance is therefore local to one partition; supplier, Share and
+Movements are homed by RFC-000 §2's rule, and homes are mapped to **128 ledger
+partitions** (est.) by a hash of the home, with **16 Share sub-partitions** (est.) for
+Share-only movements. Each partition has one owner-lease holder in the ledger service
+(NestJS; RFC-000 §5.5). A buyer's balance is local to one partition; supplier, Share and
 external balances are sums over partitions.
 
-**Cuts.** The ledger defines **cut instants**: every UTC day boundary (reconciliation)
-and every weekly payout boundary. Posting time is monotone in log order, so the movements
-with posting time ≤ T are a prefix of each partition's log. When a partition's state
-machine applies the first entry with posting time > T, it first emits **`Cut(T)`**: the
-log position of the prefix and its aggregates (Σ buyer balances signed, Σ of negative
-buyer balances, per supplier `earn` and `debt`, per Share category, per external account,
-counts and digests of external-kind movements). If no entry arrives, the leader appends a
-`Close(T)` entry at its clock `T + ε` with posting time `T + 1 µs`, so every partition
-reaches every cut within about a second (est.). Readers (reconciliation, payouts) wait for
-`Cut(T)` from all 128 partitions; the sum is a consistent cut because a movement never spans
-partitions (RFC-000 §4.1, §4.5).
+| Table (per ledger partition) | Rows | Written |
+|---|---|---|
+| `ledger_movement` | The **partition log**: one row per movement, primary key (partition, sequence), with kind, epoch, commit timestamp, source reference digest, audit fields (pseudonymous) and the encrypted payload (§B1.2). **Insert-only**: no role holds update or delete on it (RFC-000 §5.5) | One row per movement, in the posting transaction |
+| `ledger_head` | The partition's last sequence, digest and owner epoch | Same transaction (the epoch condition) |
+| `ledger_balance` | Projection: per (partition, ledger account) the balance through the head; for a buyer also `W`, its negative-episode start and its posted-through minutes per reservation | Same transaction |
+| `ledger_dedup_*` | Watermarks, exception sets and the reference index (§B1.4) | Same transaction |
+| `outbox` | The movement-feed event and the posting answer | Same transaction |
+
+A post is **one database transaction** in the home partition, conditional on the owner's
+epoch: it reads the head, the dedup rows of the movement's lines and the balances it
+touches, evaluates the templates of §B2, and inserts the movement, the projections and the
+outbox row. Movements arriving while a transaction is in flight form the next batch (one
+batch transaction in flight per partition, RFC-000 §3). The movement's **posting time is
+its commit timestamp**, monotone within the partition across owner changes (RFC-000
+§4.3, §4.5), so revision 1's `max(leader clock, previous, last cut + 1 µs)` rule and the
+cut fence it needed are gone.
+
+**Cuts at one database timestamp.** A **cut** at `T` is every movement with posting time
+≤ T, in every partition. The ledger defines cut instants: every UTC day boundary
+(reconciliation) and every weekly payout boundary. Since no
+transaction can commit at or below the database's **closed timestamp**, an in-flight one
+included (RFC-000 §4.5), once the closed timestamp has passed `T` (seconds, est.) a read
+of every partition **at the one database timestamp `T`** (a historical read, `AS OF SYSTEM
+TIME T`) sees exactly the cut, consistently across partitions, with no marker in any log.
+The ledger's **cut job** does that read once per cut instant and records the result,
+with `T`, as the cut record:
+
+| Cut record at `T` | Content |
+|---|---|
+| Class totals | Σ buyer balances signed; Σ of negative buyer balances; per supplier `earn` and `debt` (summed over partitions); per Share category; per external account |
+| External movements | Every movement of kind M1, M2, M3, M14 … M17, M20, M21, M22 touching `X:*` with posting time in the period ending at `T`, with reference, kind and amount (for matching, §B6.3) |
+| Check | `Σ buyer + Σ supplier + Σ Share + Σ external = 0` (§B1.1); a non-zero sum is an alert |
+
+Reconciliation (§B6) and payout runs (§B7.2) read the cut record of their `T` and never
+read live balances. Invoice issue needs one account only, so receivables uses the same
+closure on the movement feed instead (its resolved timestamp, §B5). The cut job reads the projection rows (`ledger_balance`)
+as of `T`, about 130 k rows (est.), and the movement rows in the period for the external
+list; it decrypts payloads in the ledger service, never in SQL. The database's MVCC
+garbage-collection window for the ledger tables must exceed the cut job's worst delay
+(RFC-006 substrate conventions; R4-B2); the job runs within minutes of `T`, and records
+its cut before the window could close.
 
 #### B1.4 Deduplication state
 
-Per partition, for 7 years (POL-29; sizes in §B10):
+Per partition, for 7 years (POL-29; sizes in §B10), as rows read and written in the
+posting transaction (RFC-000 §5.5, "A ledger posting is retried after a crash"):
 
 | Source kind | Structure |
 |---|---|
-| Reservation lines | Watermark per reservation "posted through minute m" plus an exception set of out-of-order minutes (RFC-000 §4.4) |
+| Reservation lines | Watermark row per reservation "posted through minute m" plus exception rows for out-of-order minutes (RFC-000 §4.4) |
 | Usage lines | Watermark per (account, product, route) plus exceptions |
 | Amendments | Per line key, the highest amendment sequence posted (amendments arrive in sequence per line, RFC-000 §4.5) |
-| Fee lines | Exception set per reservation |
-| Every other source reference | A 7-year index (LSM) keyed by the reference's digest → (movement, principal, content digest) |
+| Fee lines | Exception rows per reservation |
+| Every other source reference | A reference index keyed by the reference's digest → (movement, principal, content digest): rows for the last 18 months in the database (which covers P4-S100's 400 days), older entries in sealed index segments in two-region object storage with a per-segment filter, consulted by the owner before the transaction on a miss. The owner is the partition's single writer, so no second post of the same reference can race the cold check |
 
 Content comparison for a redelivered line uses a recent-lines cache (the last 15 minutes
 of lines, est.) and otherwise the sealed segment, read by reservation and minute.
@@ -576,34 +756,36 @@ of lines, est.) and otherwise the sealed segment, read by reservation and minute
 
 | # | Movement | Entries (signed µ) | Home | Source reference | Posted by, when |
 |---|---|---|---|---|---|
-| M1 | Top-up | `X:p −x`; `B +(x − r)`; `SH:repayments +r`, with `r = min(x, W)` evaluated **at append** in the buyer's partition | buyer | (provider, txn, completed) | Payments, on the binding event |
+| M1 | Top-up | `X:p −x`; `B +(x − r)`; `SH:repayments +r`, with `r = min(x, W)` evaluated **at append** in the buyer's partition. To a credit-limit account with an overdue invoice, receivables then applies `x − r` to the overdue invoices oldest first, each such part recorded as an invoice payment (§B5, POL-15); the ledger entries are the same | buyer | (provider, txn, completed) | Payments, on the binding event |
 | M2 | Invoice payment | As M1 (repayment first, then the balance); receivables applies it to invoices (§B5) | buyer | (provider, txn, completed) | Payments |
 | M3 | Reversal | `B −x`; `X:p +x` (receivables reopens an invoice payment's invoice) | buyer | (provider, txn, reversed) | Payments, once its payment is applied |
 | M4 | Reservation charge lines, one movement per account and charge minute | per line: `B −a`; each supplier party `S:earn +s_i`; `SH:commission +s_c`, with `(s_i, s_c) = split(a, weights of the line's route at its minute)` | buyer | per line (reservation, minute, 0) | Settlement |
 | M5 | Usage charge lines | as M4 for (account, product, route, minute) lines | buyer | per line (account, product, route, minute, 0) | Settlement |
 | M6 | Amendment, normal mode (late traffic; a price correction upward) | `B −Δ`; each party `+[split(T_new) − split(T_old)]_i`, all ≥ 0 by monotonicity | buyer | (line key, minute, seq) | Settlement |
 | M7 | Amendment, own mode (any later amendment of a line after a borne correction) | `B −Δ`; each party `+split(Δ)_i` | buyer | (line key, minute, seq) | Settlement |
-| M8 | Downward correction, cause Share or "other" | `B +Δ`; `SH:corrections −Δ`; the line enters own mode | buyer | (line key, minute, seq), carrying the correction's reference | Settlement |
-| M9 | Downward correction, cause supplier `f` | `B +Δ`; `S:f:debt −d` (`fault`, reason), `d = max(0, posted_f − split(T_new)_f)`; `SH:corrections −(Δ − d)`; line enters own mode | buyer | as M8 | Settlement |
-| M10 | Cancellation fee charged to the buyer | `B −fee`; partner `S:earn +fee`; not split | buyer | (reservation, fee) | Settlement |
+| M8 | Downward correction, cause Share or "other": a price correction with that cause; a **reversed attribution** (POL-17, P3-S65: the charge amended to zero, the supplier keeping its shares); a **superseding record** from Share's own exporter (POL-23, P3-S66) | `B +Δ`; `SH:corrections −Δ`; the line enters own mode | buyer | (line key, minute, seq), carrying the correction's derived reference (AI4-1) | Settlement |
+| M9 | Downward correction, cause supplier `f`: a price correction with that cause, or a superseding record from `f`'s own exporter (P3-S66) | `B +Δ`; `S:f:debt −d` (`fault`, reason), `d = max(0, posted_f − split(T_new)_f)`; `SH:corrections −(Δ − d)`; line enters own mode | buyer | as M8 | Settlement |
+| M10 | Cancellation fee charged to the buyer: own cancellation or **shorten into the minimum term** (POL-08, RQ3-4, P3-S63), release after grace, termination | `B −fee`; partner `S:earn +fee`; not split | buyer | (reservation, fee) | Settlement |
 | M11 | Cost Share bears to a partner: partner booking left without Share's confirmation (POL-28), fee on revocation or after a cut (POL-07, POL-08), fee not shown | `SH:costs −fee`; partner `S:earn +fee`, with reason | the causing buyer | (reservation or request, fee, reason) | Settlement |
 | M12 | Carried excess | `SH:costs −Σ s_i`; each supplier `S:earn +s_i`, `s = split(v, route weights)` of the charge `v` the traffic would have made at `usage_price`; the commission share is not posted; `B` untouched | the causing buyer | (excess line key, minute) | Settlement |
-| M13 | Dearer equivalent path | as M12, `v` the minute's price difference, split among the new path's parties | the causing buyer | (reservation, minute, path difference) | Settlement |
+| M13 | Dearer equivalent path | as M12, with `v = ⌊rate × path price⌋ − a`: the new path's charge for the minute computed exactly and rounded down once, less the buyer's charge `a` for it (POL-07, POL-23 as amended by RQ3-8; computed by rating as a cost line), split among the new path's parties, no commission share posted | the causing buyer | (reservation, minute, path difference) | Settlement |
 | M14 | FX difference on a top-up | `SH:fx +d`; `X:p −d`, `d = partner USD − credited` | the buyer | (provider, txn, fx) | Payments, when the partner reports the USD amount |
 | M15 | Payout confirmed | `S:earn −P`; `X:p +P` (P = the USD debited, §B7.5) | supplier | (instruction ref, confirmed) | Payouts |
 | M16 | Duplicate payout | `S:debt −P_lot` (`duplicate payout`); `X:p +P_lot` | supplier | (instruction ref, confirmed) | Payouts |
 | M17 | FX difference on a payout | `SH:fx −d`; `X:p +d` (`d` = partner USD debited − USD debited) | Share sub-partition | (instruction ref, fx) | Payouts |
-| M18 | Write-off of a negative balance | `B +w`; `SH:write-offs −w`, `w = max(0, −Bal)` **at append**; `W += w` | buyer | (account, negative episode start) | Receivables, 90 days after the episode began |
+| M18 | Write-off of a negative balance (a reversal, a fee shortfall at release, accrual beyond a hold; POL-21 as amended by RQ4-3) | `B +w`; `SH:write-offs −w`; `W += w`. Receivables states `w` and the buyer-partition position it computed it at; the ledger posts only if no movement has touched `B` since that position (a conditional append in the posting transaction), else refuses it as stale and receivables recomputes (§B5). So `w` never exceeds the negative balance, and never includes what an invoice covers | buyer | (account, negative episode start) | Receivables, 90 days after the episode began |
 | M19 | Write-off of an invoice | `B +w`; `SH:write-offs −w`, `w` = the invoice's unpaid remainder; `W += w` | buyer | (invoice, write-off) | Receivables, 90 days after the due date |
 | M20 | Supplier-debt payment | `X:p −x`; `S:debt +x` | supplier | (provider, txn, completed) | Payments |
-| M21 | Share's own funds: deposit or withdrawal | deposit `X:p −x`, `SH:treasury +x`; withdrawal the reverse | Share sub-partition | (partner, partner transaction ref) | Treasury through the console (POL-24: recorded before its day's reconciliation) |
-| M22 | Resolution of a money escalation, or a correction of a posted movement | explicit entries chosen by the finance operator (for example `X:p −P`, `S:earn +P` when a confirmation proves false), referring to the movement or escalation | by its `source_ref` | (resolution ref) | Finance through the console (POL-32) |
+| M21 | Share's own funds: deposit or withdrawal | deposit `X:p −x`, `SH:treasury +x`; withdrawal the reverse | Share sub-partition | (partner, partner transaction ref) | Reconciliation, on a treasury operator action from the console (POL-24: recorded before its day's reconciliation) |
+| M22 | Resolution of a money escalation, or a correction of a posted movement | explicit entries chosen by the finance operator (for example `X:p −P`, `S:earn +P` when a confirmation proves false), referring to the movement or escalation | by its `source_ref` | (resolution ref) | The escalation's owner (payments for a reversal, payouts for a payout), on the finance operator's action from the console (POL-32); the console never posts itself |
 
 `W` (written-off owed) is derived in the buyer's partition as Σ M18, M19 amounts less Σ
-repayments `r` of M1 and M2, and published in F1. M1 and M18 are the two **templates the
-ledger evaluates at append**: their amounts depend on the partition's state at that
-position, so two top-ups never both repay the same written-off amount and a write-off
-never exceeds the negative balance (AI4-8).
+repayments `r` of M1 and M2, kept in the buyer's `ledger_balance` row and published in F1.
+M1 and M18 are the two movements whose amounts **depend on the partition's state at
+append** (AI4-8, adopted by RFC-000 revision 4): M1's `r` is evaluated in the posting
+transaction from the `W` it reads, so two top-ups never both repay the same written-off
+amount; M18 is conditional on the position its amount was computed at, so a write-off
+never races a top-up. Both are partition-local and need no other writer.
 
 **Worked examples.**
 
@@ -621,6 +803,9 @@ never exceeds the negative balance (AI4-8).
 | P4-S103 | partner reports 9.520000: M14 `SH:fx +3,021`, `X −3,021`; reports 9.510000: `SH:fx −6,979`, `X +6,979` | the external account equals the partner's USD; reconciliation exact (§B6) |
 | P4-S52 | `Bal −2,000,000`, not written off (`W = 0`): M1 `+5,000,000`, `r = 0` | `Bal 3,000,000` |
 | P4-S53 | 90 days after the reversal, M18 `w = −Bal` | written off at Share's cost; `W = w` stays owed; no supplier changes |
+| P4-S107 | `Bal` became −288,000 on day D at the fee posting of P4-S97 (episode start D); no top-up; at D + 90 days receivables states `w = 288,000` at the buyer's position; nothing moved since: M18 `B +288,000`, `SH:write-offs −288,000` | `Bal 0`, `W = 288,000` owed; no supplier balance changes |
+| P4-S110 | 3 Mbps at 1.5 µ: buyer `a = ⌊4.5⌋ = 4`; path `⌊3 × 2.7⌋ = ⌊8.1⌋ = 8`; M13 `v = 8 − 4 = 4`, `split(4)` among the new path's parties; each supplier `S:earn +s_i`, `SH:costs −Σ s_i` (the commission's share, Share paying itself, is not posted) | buyer charged 4 µ; Share bears the 4 µ difference |
+| P4-S105 | M1 of 1,500,000 to `e1` (`W = 0`): `X −1,500,000`, `B +1,500,000`; receivables records 1,000,000 of it as the payment of the overdue invoice | `Bal −1,000,000 → 500,000`; invoice paid |
 | P4-S94 | `W = 4,700,000`: M1 of 4,000,000 → `r = 4,000,000`, `B +0`; M1 of 5,700,000 → `r = 4,700,000`, `B +1,000,000` | as §A7's example |
 | P4-S97 | M10 fee 500,000 at release | `Bal −288,000`, collected by the next M1 or written off by M18 |
 
@@ -628,32 +813,42 @@ never exceeds the negative balance (AI4-8).
 
 #### B3.1 Composition and posting
 
-Settlement is partitioned by buyer account, consuming rating's charge-line feed (RFC-003),
-which is partitioned the same way.
+Settlement is a NestJS consumer partitioned by buyer account, consuming rating's
+charge-line feed (RFC-003; a Kafka topic keyed by account, RFC-000 §8), which is
+partitioned the same way.
 
 - **Reservation lines.** Rating emits every reservation line of an account for minute `m`
   together; settlement splits each line and posts **one M4 movement per (account, `m`)**
-  (RFC-000 §6), synchronously, idempotent per line. At about 600 lines per movement
+  (RFC-000 §6) through the posting port (gRPC to the home partition's owner),
+  synchronously, idempotent per line. At about 600 lines per movement
   (1 M lines/s over 1,700 movements/s, est.), and rating emitting within about 30 s of the
   minute's end, the movement is acknowledged two-region durable within about 1 min of
   the minute's end (est.), inside the 2 min target (X2-S13).
 - **Usage lines, amendments, fees and Share-borne lines** are batched per account per
   arrival minute into one movement of mixed kinds (each line keeps its own source
   reference and kind).
-- **Restarts.** Settlement checkpoints its feed position after each acknowledged post. A
-  restarted or standby instance re-composes batches from the checkpoint; the ledger drops
-  lines already posted with the same contents and reports any whose contents differ
-  (RFC-000 §4.4, A0R-10), so a re-composed batch is neither refused nor double-posted.
-  The hot standby (RFC-000 §2) takes over in about 30 s (est.).
+- **Posting acknowledgement** (RFC-000 §8, AI3-3; owned here). For every line, once its
+  movement is acknowledged, settlement publishes on Kafka **posted** (with the ledger
+  position: partition, sequence, commit timestamp) or **excluded** and why (a duplicate
+  with different contents, a refused movement). Rating marks a line posted only on it,
+  which is what lets rating's unposted-usage figure carry the ledger position X it was
+  computed against (F2).
+- **Restarts.** Settlement commits its Kafka offset only after each acknowledged post. A
+  restarted or standby instance re-composes batches from the committed offset; the ledger
+  drops lines already posted with the same contents and reports any whose contents differ
+  (RFC-000 §4.4, A0R-10), so a re-composed batch is neither refused nor double-posted, and
+  the posting acknowledgement is re-sent from the ledger's answer. The hot standby takes
+  over in about 5 s at p99 (est.; RFC-000 §2, AI3-9).
 - **State per line** is only what cannot be derived: a line in normal mode has posted
   shares `split(T_posted)` (the ledger has `T_posted`); a line in **own mode** keeps its
   explicit posted shares per party (rare: only lines with a borne correction).
 
-**Input contract** (from the charge-line feed, RFC-003): each line carries its kind
-(reservation, usage, fee, amendment, correction with cause, excess carried, path
-difference, Share-paid fee with reason), its line key, minute, amendment sequence, new
-exact total rounded once and the amount charged before (for amendments), route and
-weights version, payer (buyer or Share) and reason (AI4-7).
+**Input contract** (RFC-000 §8's charge-line feed, with cost lines, AI3-5 and AI4-7,
+adopted): each line carries its kind (reservation, usage, fee, amendment, correction with
+cause, reversed attribution, superseding record with the erring exporter's owner, excess
+carried, path difference, Share-paid fee with reason), its source reference, line key,
+minute, amendment sequence, new exact total rounded once and the amount charged before
+(for amendments), route and weights version, payer (buyer or Share) and reason.
 
 #### B3.2 The Webster split
 
@@ -710,12 +905,24 @@ its own movement with its reason, homed by its causing buyer (P4-S77, P4-S56). A
 quarantine attribution within `dispute_window` reaches settlement as usage lines carrying
 the attribution's reference (P3-S27); the supplier is paid by the normal split.
 
+`requirements-v1.6` adds three kinds of downward amendment, all produced by rating and all
+posted by the existing movements (no new posting rule):
+
+| Case | Posted as | Effect |
+|---|---|---|
+| A finance operator **reverses a mistaken attribution** within `dispute_window` (POL-17 as amended by RQ3-3) | M8, cause Share, `Δ` = the charge (P3-S65: −10,000 µ) | The buyer's charge goes to zero; Share bears it in full; the supplier keeps its shares (earnings final, POL-23). That the traffic is never attributed again is attribution's rule (RFC-003) |
+| An exporter's **superseding record** within `dispute_window` of the original's last minute (POL-23 as amended by RQ3-11) | M9 with cause the supplier whose exporter erred (its own reduction as a `fault` debt), or M8 when the exporter is Share's | P3-S66: −10,000 µ, the route's only supplier owing its reduction, or Share bearing it |
+| A **shorten into a partner's minimum term** (RQ3-4) | M10, the shown fee, to the partner | As a cancellation (P3-S63) |
+
+Every `dispute_window` runs from the end of the minute of the traffic or charge (RQ3-6);
+rating applies the window, settlement only posts what it receives.
+
 #### B3.5 Deviation report
 
 For each line split by Webster (M4 … M7, M9's recomputation, M12, M13), each party's
 deviation is `s_i − n·w_i/W`. Settlement's buyer partitions accumulate, per (party, payout
 period, weights version), the exact integer `Σ (s_i·W − n·w_i)` and send period totals to
-settlement's **supplier partition**, which reports per party per period the signed sum
+settlement's **supplier partition** (its only state, AI4-4), which reports per party per period the signed sum
 `Σ_versions total/W` in µ with its fraction (P4-S37). Duplicate-payout debts are not
 split, so never counted (POL-22, P4-S95).
 
@@ -725,10 +932,10 @@ split, so never counted (POL-22, P4-S95).
 
 | Step | Rule |
 |---|---|
-| Authenticity | Verified per provider by RFC-005's scheme before anything else; an unproven notification is refused, moves nothing, and is recorded for investigation (X1-S10) |
-| Routing | To the payments partition of (provider, transaction reference) (RFC-000 §2) |
+| Authenticity | Verified per provider by RFC-005's verifier before anything else (RFC-000 §8, AI5-2); an unproven notification is refused, moves nothing, and is recorded in the **investigation stream**, partitioned by provider, never creating a binding (X1-S10, AI5-5) |
+| Routing | To the payments partition of (provider, transaction reference) (RFC-000 §2), at its owner-lease holder (gRPC routed by slot) |
 | Well-formedness | Known type (completed top-up, completed invoice payment, completed supplier-debt payment, reversed); amount > 0; amount a whole number of the currency's smallest unit; a provider reference; an account reference. A malformed notification is recorded **without creating a binding**, rejected as malformed (a permanent refusal, so the provider does not retry it), and moves nothing (P4-S05) |
-| Acknowledgement | Only once the event entry is durable in two regions (X2-S14) |
+| Acknowledgement | Only once the event entry's transaction has committed (at 2 + 2 + 1, so durable in two regions; X2-S14) |
 
 #### B4.2 One provider transaction's state machine
 
@@ -742,22 +949,37 @@ stateDiagram-v2
   Escalated --> Resolved: finance resolution (POL-21, POL-32)
 ```
 
+- **Tables.** Per payments partition: the event log (insert-only, primary key (partition,
+  sequence)); a **binding** row whose primary key is (provider, transaction reference), so
+  a second binding cannot commit even under a stale owner (the epoch condition and the key
+  both refuse it, RFC-000 §5.5); pending-reversal rows with their 72 h deadline column; and
+  the outbox.
 - **Binding** (A0R-04, V-05): the first authenticated and well-formed event binds the
-  reference to (account, kind, amount, currency, quote), in the same entry that records it.
+  reference to (account, kind, amount, currency, quote), in the same transaction that
+  records it.
 - **Later events**: one with the same contents is a duplicate and changes nothing (P4-S01,
   P4-S57); one whose account, amount or currency differ moves nothing, is recorded as a
   **mismatch** and reported for reconciliation (P4-S04); a different provider principal is
   refused (POL-29). Bindings are kept 7 years, so a redelivery after 400 days is still a
   duplicate (P4-S100).
 - **Orphan reversal** (P4-S02, P4-S03): held pending; if its completion arrives within
-  72 h, both are posted in order (M1 then M3: net 0); otherwise at 72 h the partition
-  escalates it to operations for reconciliation with the payment partner, resolved by
-  finance (M22 if money must move); it is never applied on its own.
-- **Posting**: each event's movement (M1, M2, M3, M20) is sent to the ledger from the
-  partition's outbox with its source reference until acknowledged; idempotent there too.
-- **Latency** (X2-S07): event commit (about 25 ms) + ledger post (about 30 ms) + ledger
-  feed to the account owner and F1 commit (about 100 ms) ≈ 0.2 s at p99 (est.), against
-  10 s; 1,000 notifications/s spread evenly over partitions by construction.
+  72 h, both are posted in order (M1 then M3: net 0); otherwise, when the owner's timer
+  passes the deadline column, it appends the escalation to operations for reconciliation
+  with the payment partner, resolved by finance (M22, posted by payments, if money must
+  move); it is never applied on its own.
+- **Posting**: each event's movement (M1, M2, M3, M20) is an outbox row written with the
+  event; the owner sends it to the ledger's posting port after commit, and resends from the
+  outbox (on restart, from every unacknowledged row) until acknowledged; idempotent there
+  by source reference.
+- **Notified before settled** (POL-24 as amended by RQ4-7). A provider that notifies a
+  payment before settling it to the payment partner (cards) is credited on its
+  notification like any other: the payment is posted, and reconciliation counts it in
+  flight until the partner reports it received, alerting after `settlement_lag_max`
+  (§B6.1). Payments itself does nothing different.
+- **Latency** (X2-S07): event commit (about 30 ms) + ledger post (about 35 ms) + ledger
+  outbox publish to Kafka and the account owner's F1 commit (about 50 to 150 ms) ≈ 0.2 to
+  0.3 s at p99 (est.), against 10 s; 1,000 notifications/s spread evenly over partitions
+  by construction.
 
 #### B4.3 Conversion
 
@@ -771,84 +993,120 @@ stateDiagram-v2
 
 ### B5. Receivables: invoices and write-offs
 
-Partitioned by account (V-04), fed by the ledger feed (filtered to the account) and by the
-payments partitions (invoice payments, by their reference).
+An owner kind partitioned by account (V-04), with its own insert-only log table, fed by
+the ledger movement feed (filtered to the account, applied in ledger order, deduplicated
+by (partition, epoch, sequence)) and by the payments partitions (invoice payments, by
+their reference). Its overdue, paid and credit-limit-removed events reach the account
+owner through its outbox (F6, F5).
 
 | Item | Rule |
 |---|---|
-| Issue | At each calendar month end (UTC) for an account with a credit limit: amount = Σ of the account's posted M4 … M10 (charges, amendments, corrections, fees) with posting time in the month, read at the month-end position of its one ledger partition; due `invoice_terms` (30 days) after issue (P4-S14). Never for a probe account (X2-S24) |
-| Payment | An invoice payment (M2) is applied to the invoice it names, else to the oldest open invoice; any excess stays in the balance. A top-up (M1) is not an invoice payment (RQ4-6) |
+| Issue | At each calendar month end `T` (UTC) for an account with a credit limit, once the ledger feed's resolved timestamp for the account's partition has passed `T` (so every movement with posting time ≤ `T` has been applied): amount = Σ of the account's posted M4 … M10 (charges, amendments, corrections, fees) with posting time in the month; due `invoice_terms` (30 days) after issue (P4-S14). Never for a probe account (X2-S24) |
+| Invoice payment | An invoice payment (M2) is applied to the invoice it names, else to the oldest open invoice; any excess stays in the balance |
+| **Top-up to an account with an overdue invoice** (POL-15 as amended by RQ4-6) | When receivables applies an M1 to an account with overdue invoices, it applies `x − r` (the part left after the written-off repayment, §B2; RQ4-10) to the overdue invoices, **oldest first**, recording each part as an **invoice payment** of that invoice, with the M1 as its movement (POL-24); only what is left is a top-up. Invoices not yet due are never paid this way. Which invoices are overdue is decided in receivables' own order: an invoice becomes overdue by an entry at its due date, so a top-up applied before that entry pays nothing of it (P4-S105) |
 | Overdue | Still unpaid at its due date (issue + `invoice_terms`) → F6 *overdue* to the account owner (P4-S18 row 5) |
-| Paid | Paid in full → F6 *paid* (P4-S93) |
-| Write-off | 90 days after the due date, unpaid → M19 for the unpaid remainder, and F5 *credit limit removed (invoice written off)* to the account owner (P4-S83): it books prepaid until a finance operator sets a limit again (POL-21, POL-32) |
-| Negative-balance write-off | A negative episode starts when the buyer's balance goes below zero (for a reversal, at the reversal) and ends when it returns to zero or above; 90 days after it starts, M18 writes off the then-negative balance (P4-S53; RQ4-3 for episodes not started by a reversal) |
+| Paid | Paid in full, by an invoice payment or by a top-up's allocation → F6 *paid* (P4-S93, P4-S105) |
+| Invoice write-off | 90 days after the due date, unpaid → M19 for the unpaid remainder, and F5 *credit limit removed (invoice written off)* to the account owner (P4-S83): it books prepaid until a finance operator sets a limit again (POL-21, POL-32) |
+| **Negative-balance write-off** (POL-21 as amended by RQ4-3) | Every negative balance not covered by an invoice has a 90-day clock from when it arose: a reversal (P4-S53), a fee shortfall at release (P4-S97, P4-S107), accrual beyond a hold after a price change or a reversal (P4-S101). Receivables keeps, per account, the **uncovered negative** `N = max(0, −Bal − I)`, where `I` is what invoices cover: the unpaid remainder of issued invoices plus the M4 … M10 posted since the last issue (0 for a prepaid account; RQ4-11). A **negative episode** starts at the first ledger position where `N > 0` and ends where `N = 0`; 90 days after it starts, receivables posts M18 for the `N` at its current position, conditional on that position (§B2), and recomputes on a stale refusal. A top-up during the episode lowers `N` first, so only what is still owed is written off |
 | Supplier debts | Invoiced by payouts (§B7.6); their payments arrive as M20 |
 
 ### B6. Reconciliation
 
-Partitioned by day (V-04). Run for day D after every ledger partition's `Cut(T_D)`,
-`T_D` = D + 1 00:00:00 UTC, and the inputs for D have arrived: the payment partner's
-statement (funds held at end of D in USD, and every transaction with its reference, kind,
-USD amount and time), each provider's settlement report and each bank statement. Each
-input file is recorded idempotently by (source, report id, version).
+An owner kind partitioned by day (V-04). The run for day D starts once the ledger's cut
+record at `T_D` = D + 1 00:00:00 UTC exists (every partition read at that one database
+timestamp, §B1.3) and the inputs for D have arrived: the payment partner's statement
+(funds held at end of D in USD, and every transaction with its reference, kind, USD amount
+and time), each provider's settlement report and each bank statement. Every input is
+authenticated by RFC-005's verifier (RFC-000 §8, AI5-2) and recorded idempotently by
+(source, report id, version).
 
 #### B6.1 The signed invariant (P4-N14 (1))
 
 ```
-Funds_at_partner(T_D) = Σ buyer + Σ supplier (earn + debt) + Σ Share  (all signed, from the cuts)
-                        − E + Rcv
-E   = Σ over partner debits for payouts with time ≤ T_D:  partner USD − USD the ledger posted for that instruction at or before the cut
+Funds_at_partner(T_D) = Σ buyer + Σ supplier (earn + debt) + Σ Share   (all signed, from the cut record at T_D)
+                        − E + Rcv − Pnr
+E   = Σ over partner debits for payouts with time ≤ T_D:
+          partner USD − USD the ledger posted for that instruction at or before T_D
 Rcv = Σ over partner credits (top-ups, invoice payments, supplier-debt payments) with time ≤ T_D:
-                                                    partner USD − USD the ledger posted for that transaction at or before the cut
+          partner USD − USD the ledger posted for that transaction at or before T_D
+Pnr = Σ over payment transactions (M1, M2, M20, with any M3 and M14 for them) posted at or before T_D
+      for which the partner has reported no credit with time ≤ T_D:
+          USD the ledger posted for that transaction at or before T_D, net
 ```
 
-Each term of `E` and `Rcv` is matched to its partner debit or credit by reference. A
-transaction not posted at all contributes its whole partner amount; one posted but whose
-FX difference is posted after the cut contributes the difference (RQ4-4). The ledger's own
-identity `Σ buyer + Σ supplier + Σ Share = −Σ external` is checked at the same cut.
+The three in-flight terms are POL-24's as amended by RQ4-4 and RQ4-7: payouts executed
+and not yet confirmed (`E`), payments received and not yet posted (`Rcv`), and payments
+posted and not yet received (`Pnr`, a provider that notifies before settling). Each is
+counted **per transaction**, matched by reference to its partner debit or credit (or, for
+`Pnr`, to its ledger movements): a payout or payment at the partner's USD amount less what
+the ledger has posted for it, so a transaction not posted at all contributes its whole
+partner amount and one whose FX difference (M14, M17) is posted after the cut contributes
+only that difference, which is therefore not a difference of the run (P4-S109); a payment
+posted and not received at what the ledger posted for it, net of its reversal. The
+ledger's own identity is checked in the same cut record (§B1.3).
 
-| Scenario (P4-S90) | Funds | Buyers | Suppliers | Share | E | Rcv | Check |
-|---|---|---|---|---|---|---|---|
-| reversed spent top-up | 4.25 | −5.00 | 4.25 | 5.00 | 0 | 0 | 4.25 = 4.25 |
-| credit-limit mid-cycle | 8.50 | −10.00 | 8.50 | 10.00 | 0 | 0 | 8.50 = 8.50 |
-| payout executed, not confirmed | 0 | 0 | 120.00 | 0 | 120.00 | 0 | 0 = 0 |
-| supplier debt covered | 100.00 | 50.00 | 35.00 (50 and −15) | 15.00 | 0 | 0 | 100 = 100 |
-| top-up just before the cut | 25.00 | 0 | 0 | 0 | 0 | 25.00 | 25 = 25 |
-| both in flight | 95.00 | 50.00 | 120.00 | 0 | 100.00 | 25.00 | 95 = 95 |
+| Scenario | Funds | Buyers | Suppliers | Share | E | Rcv | Pnr | Check |
+|---|---|---|---|---|---|---|---|---|
+| P4-S90 reversed spent top-up | 4.25 | −5.00 | 4.25 | 5.00 | 0 | 0 | 0 | 4.25 = 4.25 |
+| P4-S90 credit-limit mid-cycle | 8.50 | −10.00 | 8.50 | 10.00 | 0 | 0 | 0 | 8.50 = 8.50 |
+| P4-S90 payout executed, not confirmed | 0 | 0 | 120.00 | 0 | 120.00 | 0 | 0 | 0 = 0 |
+| P4-S90 supplier debt covered | 100.00 | 50.00 | 35.00 (50 and −15) | 15.00 | 0 | 0 | 0 | 100 = 100 |
+| P4-S90 top-up just before the cut | 25.00 | 0 | 0 | 0 | 0 | 25.00 | 0 | 25 = 25 |
+| P4-S90 both in flight | 95.00 | 50.00 | 120.00 | 0 | 100.00 | 25.00 | 0 | 95 = 95 |
+| P4-S106 posted, not yet received | 80.00 | 100.00 | 0 | 0 | 0 | 0 | 20.00 | 80 = 100 − 20 |
+| P4-S109 received before the cut, posted after it (that transaction alone) | 9.520000 | 0 | 0 | 0 | 0 | 9.520000 | 0 | 9.52 = 0 + 9.52: counted at the partner's amount, no alert |
+
+**P4-S109 in detail.** At `T_D` the ledger has posted nothing for the 1,234 KES top-up, so
+its `Rcv` term is 9.520000 − 0 = 9.520000 USD, the partner's amount. After the cut the
+ledger credits 9.516979 (M1, §B4.3) and the FX difference +0.003021 (M14); the next day's
+run matches the partner credit to the M1 (and its M14) and raises nothing. Had the cut
+fallen between the M1 and the M14, the term would have been 9.520000 − 9.516979 =
+0.003021 USD: still no difference.
 
 #### B6.2 The safeguarding rule (P4-N14 (2))
 
 `Σ Share ≥ 0` and `Σ Share ≥ Σ_buyers max(0, −balance) + Σ_suppliers max(0, −(earn + debt))`
-(the receivables Share funds; RQ4-5 records the per-supplier net reading). With the
-invariant this gives funds at the partner ≥ every positive buyer and supplier balance
-− E + Rcv. A breach is an operational alert; nothing in the system refuses or delays a
-movement because of it, and the system never cures it (POL-24). P4-S91:
-`0 = −5.00 + 4.25 + 0.75`, invariant holds, but Share 0.75 < receivable 5.00: alert, and
-no movement is affected.
+(the receivables Share funds: negative buyer balances and negative supplier balances net
+of supplier debts, POL-24 as amended by RQ4-5). With the invariant this gives funds at the
+partner ≥ every positive buyer and supplier balance − E + Rcv − Pnr. A breach is an
+operational alert; nothing in the system refuses or delays a movement because of it, and
+the system never cures it (POL-24). P4-S91: `0 = −5.00 + 4.25 + 0.75`, invariant holds,
+but Share 0.75 < receivable 5.00: alert, and no movement is affected.
 
 #### B6.3 Matching (P4-N14 (3))
 
 Every partner transaction of D is matched to exactly one ledger movement of kind M1, M2,
 M3, M15 (or M16), M20 or M21 by (provider or partner, reference, kind), and every such
-movement with posting time in D to exactly one partner transaction, a payment received
-before the cut and posted after it being matched once posted (in the next day's run).
-Provider settlement reports and bank statements are matched by the same rule
-(P4-S80). Alerts (P4-S54): the invariant differs; an `Rcv` term matching no partner
+movement with posting time in D to exactly one partner transaction. A payment received
+before the cut and posted after it is matched once posted (in the next day's run); a
+payment posted before it is received is in `Pnr` and matched to its partner credit once
+received. A top-up that paid overdue invoices (§B5) is one M1 matched to one partner
+credit; its allocation is receivables' record, not a second movement. Provider settlement
+reports and bank statements are matched by the same rule (P4-S80).
+
+Alerts (P4-S54, as amended): the invariant differs; an `Rcv` term matching no partner
 credit; a partner transaction matching no movement; a movement matching no partner
-transaction; a transaction matching more than one movement. P4-S104's four kinds each
-match one movement and raise nothing.
+transaction, except a payment in `Pnr` posted less than `settlement_lag_max` (7 days)
+before `T_D`; a payment in `Pnr` posted `settlement_lag_max` or more before `T_D`
+(P4-S106: no alert at 2 days, an alert at 8 days); a transaction matching more than one
+movement. A payment and its reversal both posted with nothing at the partner net to zero
+in `Pnr` and are matched to each other (RQ4-12). P4-S104's four kinds each match one
+movement and raise nothing.
 
 #### B6.4 Timing and recovery
 
 Inputs are expected by about 06:00 UTC (assumed, R4-B3); the run takes minutes (§B10). At
-12:00 UTC on D + 1, an incomplete run (inputs missing, a partition's cut missing, or the
-run not finished) raises an alert to finance (P4-S81). A run is a deterministic function
-of its inputs and the cuts, recorded with its result and differences; a late input
-produces a new version of the run for D.
+12:00 UTC on D + 1, an incomplete run (inputs missing, the cut record missing, or the run
+not finished) raises an alert to finance (P4-S81). A run is a deterministic function of
+its inputs and the cut record, recorded with its result, differences and `T_D`; a late
+input produces a new version of the run for D. Earlier runs' `Pnr` items are carried by
+reference, so the age of each is known to the day.
 
 ### B7. Payouts
 
-Partitioned by supplier. All amounts USD µ except the provider amount.
+An owner kind partitioned by supplier, with its own insert-only log table (runs, lots,
+instructions, confirmations, escalations, the debt register) and an outbox. All amounts
+USD µ except the provider amount.
 
 #### B7.1 Lots and instructions
 
@@ -859,7 +1117,7 @@ provider with that reference as the provider's idempotency key.
 
 ```mermaid
 stateDiagram-v2
-  [*] --> Instructed: run entry (durable), then sent
+  [*] --> Instructed: run entry committed (instruction in the outbox), then sent
   Instructed --> Confirmed: confirmation: M15 (or M16 for lots already paid)
   Instructed --> FailedFinal: final failure: lots become payable again
   Instructed --> TimedOut: no answer in payout_confirmation_timeout: escalated
@@ -868,20 +1126,24 @@ stateDiagram-v2
   TimedOut --> Resolved: finance resolution
 ```
 
-**Confirmations and failures** are routed by instruction reference to the supplier's
-partition, recorded with the provider's reference, deduplicated there (V-04): a repeat
-has no further effect (P4-S79). For a confirmation, each lot of the instruction is
+**Confirmations and failures** are authenticated by RFC-005's verifier, the one that
+verifies payment notifications (RFC-000 §8, AI5-2); an unproven one is refused, recorded in
+the investigation stream and changes nothing. They are routed by instruction reference to
+the supplier's partition, recorded with the provider's reference, deduplicated there
+(V-04): a repeat has no further effect (P4-S79). For a confirmation, each lot of the instruction is
 **paid** if it is the first confirmation of that lot (M15: earnings debited), and a
 **duplicate payout** otherwise (M16: a supplier debt marked "duplicate payout", P4-S95).
 A non-final failure leaves the instruction in flight.
 
 #### B7.2 The run
 
-Weekly, at the payout cut `T_w`. The run entry for (supplier, week) is written once; a
-repeated or retried run finds it and pays nothing again (P4-S46). For each supplier:
+Weekly, at the payout cut `T_w`, from the ledger's cut record at `T_w` (every partition
+read at that one database timestamp, §B1.3). The run entry for (supplier, week) is written
+once (its primary key); a repeated or retried run finds it and pays nothing again
+(P4-S46). For each supplier:
 
 ```
-N   = Σ over ledger partitions of (earn + debt) at Cut(T_w), plus the open invoiced debt items (§B7.6)
+N   = Σ over ledger partitions of (earn + debt) in the cut record at T_w, plus the open invoiced debt items (§B7.6)
 F   = Σ lots not available to pay: instructed and not FailedFinal (in flight or timed out),
       under an open escalation, or confirmed by a movement posted after T_w
 pay = N − F;  if pay ≥ payout_minimum: instruct round_down(pay) as a new lot plus every FailedFinal lot not escalated
@@ -889,8 +1151,13 @@ pay = N − F;  if pay ≥ payout_minimum: instruct round_down(pay) as a new lot
 
 Lots failed finally before the run executes are paid in this run under a new reference
 (P4-S86); amounts in flight are in no other payout (P4-S78); a debt posted at the cut is
-in this run's `N` if its posting time is ≤ `T_w`, otherwise in the next, never both
-(P4-S67).
+in this run's `N` if its posting time (commit timestamp) is ≤ `T_w`, otherwise in the
+next, never both (P4-S67), because the cut is one timestamp for every partition.
+
+The designated **probe supplier** (POL-06 as amended by RQ-C; X2-S27) owns the probe links
+and is a supplier like any other for the payouts probe, which asks for its payout status.
+Probe accounts are never rated, so nothing is ever posted to it: its `N` is 0, no run ever
+instructs it, and probing has no money side effects.
 
 #### B7.3 Escalations
 
@@ -927,8 +1194,8 @@ reports the USD it debited, M17 posts the FX difference to Share.
 
 #### B7.6 Supplier debts
 
-Payouts keeps the **debt register** per supplier from the ledger feed (M9 and M16 items,
-and M20 repayments): each item's amount, reason and age. Netting is implicit in `N`
+Payouts keeps the **debt register** per supplier (RFC-000 §2, AI4-4 adopted: payout state,
+not settlement's) from the ledger feed (M9 and M16 items, and M20 repayments): each item's amount, reason and age. Netting is implicit in `N`
 (debts reduce it); the run records which items its earnings netted, oldest first. An item
 still open more than 90 days is **invoiced** to the supplier and from then excluded from
 netting (added back to `N`) until paid by M20 or resolved, so it is never recovered twice
@@ -936,13 +1203,15 @@ netting (added back to `N`) until paid by M20 or resolved, so it is never recove
 
 ### B8. Statements
 
-Reporting owns read models only (RFC-000 §2), built from the ledger feed, settlement's
-split references and deviation, payouts and payments.
+Reporting owns read models only (RFC-000 §2), built from the Kafka feeds of the ledger,
+settlement (split references, deviation), payouts and payments. Its records name every
+principal by pseudonymous identifier; a name shown on a statement is resolved from the
+personal-data store at view time and never stored (RFC-000 §8, A11; X1-S37).
 
 | Statement | Content | Source |
 |---|---|---|
-| Supplier (P4-S40) | Per reservation reference on its links (opaque, POL-33): each line's charge, the weights version, the rule and tie order, its share; payouts with references and FX rates; debts with reasons (duplicate payouts marked so); residue carried; every Share-paid amount (M11 … M13) with its reason; deviation per period | Lines are recomputable from what is shown (`split` is published) |
-| Buyer (P4-S76) | Charges and amendments with reasons (P3-S35), fees, top-ups with conversion rates and whether the quote had expired, reversals, write-offs and `W`, repayments | Ledger feed, payments |
+| Supplier (P4-S40) | Per reservation reference on its links (opaque, POL-33), with the reservation's termination points on the supplier's own link, never the route's ends (POL-33 as amended by RQ5-1; X1-S28): each line's charge, the weights version, the rule and tie order, its share; **usage-priced shares by an opaque reference of their charge line**, used for no other line, never by the buyer's account (RQ5-1); payouts with references and FX rates; debts with reasons (duplicate payouts marked so); residue carried; every Share-paid amount (M11 … M13) with its reason; deviation per period | Lines are recomputable from what is shown (`split` is published) |
+| Buyer (P4-S76) | Charges and amendments with reasons (P3-S35), fees, top-ups with conversion rates and whether the quote had expired, the part of a top-up that paid overdue invoices, shown as invoice payments (§B5), reversals, write-offs and `W`, repayments | Ledger feed, payments, receivables |
 
 Pre-aggregated per account and day, so one day's statement is served within 2 s
 (POL-06); line-level drill-down reads the sealed segments by reservation and minute. Only
@@ -955,14 +1224,17 @@ the account's own principals see it (RFC-005, X1-S04).
 | Payment notification (top-up, invoice payment, supplier-debt payment, reversal) | (provider, transaction reference, event kind) | Payments partition of (provider, reference); the ledger again by the movement's reference | Mismatch recorded and reported; no money (P4-S04) | Refused |
 | Posting of a charge, amendment or fee line | (line key, minute, amendment sequence); fee (reservation, fee) | Ledger partition, per line (§B1.4) | Line excluded and reported; the rest of the movement posted | Refused |
 | Settlement of a cancellation fee; cost Share bears; supplier debt | Their references in §B2 (M10, M11 … M13, M9) | Ledger partition | Reported, no money | Refused |
-| Operator price correction; quarantine attribution | The operator's reference (P4-S99's "C1") | The receiving owner: catalogue for corrections, attribution for attributions (RFC-003, 7 years); each movement they cause carries a derived reference checked by the ledger (AI4-1) | Reported | Refused, the first unaffected (P4-S99) |
+| Operator price correction; quarantine attribution and its reversal (RQ3-3) | The operator's reference (P4-S99's "C1") | The receiving owner: catalogue for corrections, attribution for attributions and reversals (RFC-003, 7 years); each movement they cause carries a derived reference (source reference, line) checked by the ledger (AI4-1, adopted) | Reported | Refused, the first unaffected (P4-S99) |
+| Superseding record (RQ3-11) | (exporter, epoch, sequence) of the corrected version | Ingestion (RFC-003); its amendment reaches settlement as a line with its amendment sequence | As a line | Refused (only the record's own exporter, RQ3-2) |
 | Payout instruction | (supplier, run, n) | Payouts partition; the provider, by the same reference | — (generated) | — |
 | Payout run | (supplier, week) | Payouts partition | — | — |
-| Transfer confirmation or failure report | Instruction reference, with the provider's reference recorded | Payouts partition (V-04) | Escalated | Refused |
-| Write-off | (account, episode) or (invoice, write-off) | Receivables partition, then the ledger | — | — |
+| Transfer confirmation or failure report | Instruction reference, with the provider's reference recorded | Payouts partition (V-04), after RFC-005's verifier | Escalated | Refused |
+| Write-off | (account, episode) or (invoice, write-off) | Receivables partition, then the ledger (M18 also conditional on its position, §B2) | — | — |
+| Allocation of a top-up to overdue invoices | The M1's movement reference and the invoice | Receivables partition | — (derived) | — |
 | Resolution of a money escalation | Resolution reference | The escalation's owner (payments or payouts), then the ledger | Reported | Refused |
 | Movement of Share's own funds | Partner transaction reference | Ledger, Share sub-partition | Reported | Refused |
-| Ledger feed events into the account owner | (ledger partition, epoch, sequence) | Account owner (F1 applies each position once) | — | — |
+| Ledger feed events into the account owner, receivables, payouts, reporting | (ledger partition, epoch, sequence) | Each consumer; the duplicates of the owner's direct publish and the changefeed relay are dropped here (RFC-000 §4.4, §5.5) | — | — |
+| Posting acknowledgement to rating | (line key, minute, amendment sequence) | Rating (RFC-003) | — | — |
 | Reconciliation input file | (source, report id, version) | Reconciliation partition | New version of the run | — |
 
 Retention of every money identity is 7 years (P4-S100).
@@ -971,57 +1243,65 @@ Retention of every money identity is 7 years (P4-S100).
 
 | Item | Estimate (est.) |
 |---|---|
-| Ledger groups | 128, each about 8,000 lines/s and 15 movements/s of charges, plus payments; group commit every 5 ms |
-| Live log | A line in the live log is about 36 B (line key 16, amount 8, shares as needed); 1 M lines/s is about 36 MB/s across all groups, five voters each (RFC-000 §5.1); the tail is kept on voters about 1 h, then sealed |
-| Sealed segments | Hourly per partition, re-sorted by (reservation, minute): line key dictionary, minute delta (mostly +1), amount and split reference run-length encoded (a reservation's amount is constant between changes), shares not stored where derivable (normal mode), stored for own-mode lines. Target ≤ 10 B a line as RFC-000 §6 assumes: **at most 2.2 PB per copy over 7 years, 4.4 PB in two regions**; with run-length encoding expected 1 to 3 B a line (0.2 to 0.7 PB per copy), to be confirmed by the spike on real reservation-length distributions (R4-B1) |
-| Movement records | About 3.7×10¹¹ over 7 years at about 200 B with party totals: about 75 TB per copy |
-| Dedup | About 63 M live watermarks (about 2 GB); the reference index about 2×10¹¹ entries at 32 B, about 7 TB per copy |
-| Cuts | Per partition per cut: about 1,000 suppliers × 16 B plus class totals: about 20 KB |
+| Ledger partitions | 128, each about 8,000 lines/s and 15 movements/s of charges, plus payments; one batch transaction in flight per partition (RFC-000 §3), each carrying the movements that arrived meanwhile (about 1 to 3 at 15 to 30 ms a commit) |
+| Transaction size | One reservation-charge movement of about 600 lines is about 21 KB of encrypted payload plus a few hundred dedup watermark and balance rows touched, well within one transaction; a very large account's movement is split per 5,000 lines, each part its own movement with its own lines (lines are the unit of idempotency, so a split changes nothing) |
+| Live log | A line in the live log is about 36 B (line key 16, amount 8, shares as needed); 1 M lines/s is about 36 MB/s into the database across all partitions, at five replicas each (2 + 2 + 1, RFC-000 §5.1); the live tail is kept about 1 h, then sealed by history and truncated (RFC-000 §5.5) |
+| Sealed segments | Hourly per partition, re-sorted by (reservation, minute): line key dictionary, minute delta (mostly +1), amount and split reference run-length encoded (a reservation's amount is constant between changes), shares not stored where derivable (normal mode), stored for own-mode lines. Target ≤ 10 B a line as RFC-000 §6 assumes: **at most 2.2 PB per copy over 7 years, 4.4 PB in two regions**; with run-length encoding expected 1 to 3 B a line (0.2 to 0.7 PB per copy), to be confirmed by the spike on real reservation-length distributions (R4-B1). This is the layout RFC-004 asks of history's ledger segments |
+| Movement records | About 3.7×10¹¹ over 7 years at about 200 B with party totals: about 75 TB per copy, in sealed segments |
+| Dedup | About 63 M live watermark rows (about 2 GB, × 5 replicas); the reference index about 2×10¹¹ entries over 7 years at 32 B (about 7 TB per copy): the last 18 months, about 4.5×10¹⁰ entries, about 1.4 TB per replica, in the database, the rest in sealed index segments (§B1.4) |
+| Balance projections | About 100,000 buyer rows plus, per partition, a row per supplier and Share category touched: about 130 k rows (est.) |
+| Cut record | About 1,000 suppliers × 16 B plus class totals, about 20 KB, plus the day's external movements (about 20 M references) |
 | Reconciliation | About 20 M partner transactions a day (est.): a hash join by reference, minutes |
 | Payouts | One run per supplier per week; thousands of instructions |
 
 Access paths: P4-N16 and P3-N9 (trace, rebuild, reproduce a charge) read segments by
 reservation and minute; statements read daily aggregates; reconciliation and payouts read
-cuts and the external-kind movement lists.
+cut records and the external-kind movement lists.
 
 ### B11. Recovery
 
 | Failure | Behaviour |
 |---|---|
-| Ledger partition leader | New leader in seconds; posting time stays monotone (RFC-000 §4.5); callers retry posts, deduplicated per line or reference |
-| Settlement instance | Hot standby resumes from the checkpoint; re-composed batches deduplicated per line (§B3.1) |
-| Payments partition | Events are acknowledged only once durable; the outbox resends postings until acknowledged |
-| Payouts | Instructions are facts written before sending; a restarted run resumes by reference and never re-instructs (RFC-000 §5.4); the provider deduplicates by reference |
-| Reconciliation | Re-run for any day from its inputs and the cuts |
+| Ledger partition owner | The owner lease expires; the standby takes it at a new epoch and reads the head; a deposed owner's writes fail the epoch condition (RFC-000 §5.2, §5.5). A batch in flight committed or not, atomically; posting time stays monotone (commit timestamps, RFC-000 §4.5); callers retry posts, deduplicated per line or reference |
+| Settlement instance | Hot standby resumes from the committed Kafka offset in about 5 s (AI3-9); re-composed batches deduplicated per line (§B3.1) |
+| Payments partition | Events are acknowledged only once committed; the outbox resends postings until acknowledged |
+| Payouts | Instructions are rows committed before sending (the outbox); a restarted run resumes by reference and never re-instructs (RFC-000 §5.4); the provider deduplicates by reference |
+| Receivables | Resumes from its log and its feed offset; a stale M18 is refused and recomputed (§B5) |
+| Reconciliation | Re-run for any day from its inputs and the cut record; a cut record is re-derivable from sealed segments if lost (the movements with posting time ≤ `T`) |
 | Reporting | Rebuilt from feeds and history within its 30 min RTO |
-| Region | Every log is two-region durable; nothing is rebuilt (RFC-000 §5.3) |
+| The owner dies between commit and Kafka publish | The changefeed relays the committed outbox rows; consumers drop duplicates by (partition, epoch, sequence) (RFC-000 §5.5) |
+| Region | Every table is committed at 2 + 2 + 1; nothing is rebuilt (RFC-000 §5.3) |
 
 ### B12. Contracts
 
-**Owned by this RFC** (RFC-000 §8), with their semantics; schemas belong to
+**Owned by this RFC** (RFC-000 §8 revision 4), with their semantics; schemas belong to
 `04-delivery/contracts.md`.
 
-| Contract | Semantics |
-|---|---|
-| Funds-and-standing module (in-process) | §A10: pure, deterministic; the verdicts and outcomes defined in §A4 … §A7 |
-| Headroom and balance query | §A9: served by account-owner replicas at a stated position; read-only; any number of retries |
-| Standing feed and query | §A8: at least once, ordered by `std_seq` per account, latest wins; acknowledgement of enforcement back (AI4-5) |
-| Ledger posting port | `post(movement) → {movement_id, posting_time, position, per line: posted / duplicate(of) / conflict(of)} \| refused(invalid, wrong home, principal)`. Synchronous; acknowledged only once durable in two regions (X2-S14); idempotent by source reference per line and per movement; callers retry until acknowledged; only the principals named in §B2 may post each kind |
-| Ledger movement feed and cuts | Per partition, in log order, at least once, idempotent by (partition, epoch, sequence): `MovementPosted` (with party totals and posted-through summaries), `Cut(T)`; filtered views per buyer (account owner, receivables), per supplier (payouts, settlement), per external kind (reconciliation), and the full feed (reporting, history, audit) |
-| Payment notification ingress | §B4.1: an answer per notification: accepted, duplicate, mismatch recorded (all acknowledged, so the provider stops), malformed (permanent refusal), unauthentic (refused); acknowledged only once durable in two regions |
-| Payout instruction and confirmation | Instruction with reference (provider idempotency key), amount in the provider's currency and minor unit, the rate; confirmations and failures (final or not) keyed by the instruction reference, at least once |
+| Contract (RFC-000 §8) | Kind | Semantics here |
+|---|---|---|
+| Funds-and-standing module | In-process | §A10: pure, deterministic; the verdicts and outcomes of §A4 … §A7; concurrent requests checked one at a time in arrival order (§A5.1); `key_status`; F1 … F11 registered by RFC-002 |
+| Headroom and balance query | Synchronous query, status replicas | §A9: at a stated position; read-only; any number of retries |
+| Standing feed and query | Kafka (outbox) and query | §A8: at least once, ordered by `std_seq` per account, latest wins |
+| Standing enforcement acknowledgement | Kafka, applied as F8 | §A8 (AI4-5): `(account, std_seq, enforced_at)`; the late-enforcement check is an F7 entry |
+| Posting acknowledgement | Kafka | §B3.1 (AI3-3): per line, posted with the ledger position, or excluded and why |
+| Ledger posting port | Synchronous command (gRPC to the partition's owner) | `post(movement) → {movement_id, posting_time (commit timestamp), position, per line: posted / duplicate(of) / conflict(of)} \| refused(invalid, wrong home, principal, stale)`. Acknowledged only once committed (two regions, X2-S14); idempotent by source reference per line and per movement; callers retry until acknowledged; only the principals named in §B2 may post each kind: settlement, payments, payouts, receivables and reconciliation, all within this RFC (finance's console actions reach the ledger only through the escalation's owner or reconciliation) |
+| Ledger movement feed and closed positions | Kafka (outbox and changefeed) | Per partition, in sequence order, at least once, idempotent by (partition, epoch, sequence): `MovementPosted` (party totals, posted-through summaries, commit timestamp); the changefeed's resolved timestamp as the feed's closure; filtered views per buyer (account owner, receivables), per supplier (payouts, settlement), per external kind (reconciliation), and the full feed (reporting, history, audit). **Cuts** are reads of every partition at one database timestamp below the closed timestamp, recorded as cut records with their `T` (§B1.3); there is no `Cut(T)` event |
+| Payment notification ingress | External API | §B4.1: per notification, accepted, duplicate, mismatch recorded (all acknowledged, so the provider stops), malformed (permanent refusal), unauthentic (refused, recorded in the investigation stream; authenticity by RFC-005, AI5-5); acknowledged only once committed |
+| Payout instruction and transfer confirmation; payment partner's reports | External API | Instruction with reference (provider idempotency key), amount in the provider's currency and minor unit, the rate; confirmations and failures (final or not) keyed by the instruction reference, at least once; partner reports by (source, report id, version). All authenticated by RFC-005's verifier (AI5-2) |
 
 **Consumed**, and what this RFC needs of each.
 
 | Contract (owner) | Needed |
 |---|---|
-| Charge-line feed (RFC-003) | The line content of §B3.1, by buyer account, at least once, ordered per line |
-| Unposted-usage feed (RFC-003) | Per account and product `U` through a rating position, with the ledger position it assumes; coalesced (§A11) |
-| Catalogue (RFC-003; link registry RFC-001) | Weights per route and party with versions on minute boundaries; supplier and leg order; partner terms; `usage_rate_cap`, `max_lateness`, `attribution_lag_max`, highest `usage_price`; probe designations |
+| Charge-line feed with cost lines (RFC-003, Kafka) | The line content of §B3.1, by buyer account, at least once, ordered per line |
+| Unposted-usage feed (RFC-003, Kafka) | Per account and product `U` through a rating position, with the ledger position X it was computed against; applied as F2 only once F1 has reached X; coalesced (§A11) |
+| Usage-applied acknowledgement (RFC-002, emitted by the account owner) | Written in F2's transaction (§A4); this RFC defines when it is due |
+| Catalogue (RFC-003; link registry RFC-001) | Weights per route and party with versions on minute boundaries (set by commercial, POL-32); supplier and leg order; partner terms; account-product terms with `usage_rate_cap` (AI3-6), `max_lateness`, `attribution_lag_max`, highest `usage_price`; price changes with their announcement and effective minute (F11, E11); probe designations |
 | Reservation lifecycle (RFC-002, in process) | Through §A10 |
-| Key-status push (RFC-005) | Revocations and limit changes, and KYB status (AI4-2) |
-| Principal and authorisation; operator action envelope; audit record (RFC-005) | Finance role for credit limits, corrections, escalations; audit fields in every entry and movement |
-| Platform (RFC-006) | Logs, fencing, closed positions, `ε`; history for 7 years; alert feed; notifier for buyer notices |
+| Identity status push (RFC-005, Kafka) | Key revocations and limit changes, and KYB status, applied as F4 within 60 s (AI4-2, AI4-3) |
+| Principal and authorisation; operator action envelope; audit record; payload encryption; personal-data store (RFC-005) | Pseudonymous principals; finance role for credit limits, corrections, attribution reversals, escalations; treasury actions; audit fields in every entry and movement; every payload encrypted owner-side; names resolved at view time only |
+| Authenticity verifier (RFC-005) | One verifier for payment notifications, transfer confirmations and partner reports (AI5-2) |
+| Substrate conventions (RFC-006) | Database topology, log-table schema, owner leases and epoch-conditional writes, closed timestamps and an MVCC window longer than the cut job's delay, outbox and changefeeds, Kafka topics; history for 7 years (and the ledger segment layout of §B10); operational alert feed; notifier for buyer notices; probe designation |
 
 ### B13. Design-level acceptance tests
 
@@ -1032,14 +1312,17 @@ cuts and the external-kind movement lists.
 | Per-line dedup: re-composed batches after injected crashes post every line once; a changed line is excluded and reported | P4-S57, P3-S12, P3-S13 |
 | Funds replay determinism: every account log replayed on the current and previous rules version reproduces every recorded outcome and every answer | P4-S72, §A4 |
 | Hold invariant A-1 checked after every entry in a randomized simulation of bookings, changes, postings with lag, price changes and suspensions | P4-S66, P4-N3 |
-| Cut consistency: the sum over partitions at `Cut(T)` equals a single-threaded replay of the movements with posting time ≤ T | P4-S90 |
+| Cut consistency: the cut record at `T`, read at one database timestamp while posts commit concurrently in every partition, equals a single-threaded replay of the movements with posting time ≤ T, and its class totals sum to zero | P4-S90 |
+| In-flight terms: generated partner reports with payments received before and posted after the cut, posted before received (up to and beyond `settlement_lag_max`), FX differences on either side of the cut, and reversals before settlement, give no difference and alert exactly on the overdue `Pnr` items | P4-S54, P4-S90, P4-S106, P4-S109 |
+| Overdue-first allocation and write-off clocks: random top-ups, invoices falling due and negative episodes across credit-limit and prepaid accounts; every overdue invoice paid oldest first, nothing not yet due paid, every M18 at most the uncovered negative and refused when stale | P4-S105, P4-S107, P4-S53 |
+| Owner change under load: kill and pause ledger, payments and account owners mid-batch; no movement lost or doubled, posting times monotone, no F-entry applied twice | P4-S57, P4-N15 |
 | Payout lots: injected provider behaviours (duplicate confirmations, false final failures, late confirmations, timeouts) never instruct a lot twice and always raise M16 for a second execution | P4-S46, P4-S79, P4-S95 |
 | Payments in any order: every permutation and triplication of a notification set gives the same bindings and postings | P4-S01, P4-S02 |
 
 ### Traceability
 
-Every P4 scenario, and every other scenario this RFC serves, mapped to the section that
-satisfies it. "Primary" names the RFC that owns the scenario where it is not this one.
+Every P4 scenario (110), and every other scenario this RFC serves, mapped to the section
+that satisfies it. "Primary" names the RFC that owns the scenario where it is not this one.
 
 | Scenario | Section |
 |---|---|
@@ -1052,10 +1335,10 @@ satisfies it. "Primary" names the RFC that owns the scenario where it is not thi
 | P4-S07 | §B4.3 |
 | P4-S08, P4-S09, P4-S59 | §A3, §A6 (examples) |
 | P4-S10 | §A3 (anchored at `p_r`), §A6 |
-| P4-S11, P4-S61 | §A6 (Draining; RQ4-2) |
+| P4-S11, P4-S61 (amended in v1.6) | §A6 (Draining: nothing held for later charges; unposted earlier charges and any fee held until posted; RQ4-2 adopted) |
 | P4-S12 | §A4, §A5.3, §A6 |
 | P4-S13 | §A3, §A6 (credit hold) |
-| P4-S14 | §B5 (issue) |
+| P4-S14 | §B5 (issue at the feed's resolved timestamp) |
 | P4-S15, P4-S16 | §A3, §A7 (examples), §A9 |
 | P4-S17 | §A9 |
 | P4-S18 | §A7 (causes); §B5 (overdue) |
@@ -1063,7 +1346,7 @@ satisfies it. "Primary" names the RFC that owns the scenario where it is not thi
 | P4-S20 | §A7 (while suspended) |
 | P4-S21 | §A8 |
 | P4-S22 | §A7 (resuming; example) |
-| P4-S23 | §A7 (release after grace); RFC-002 executes the release |
+| P4-S23 | §A7 (release after grace, written in the F7 entry; JR-2) |
 | P4-S24 | §A3 (`WQ`), §A7 (example) |
 | P4-S25, P4-S26, P4-S27 | §A8 |
 | P4-S28, P4-S31 | §B1.1, §B1.2 (validation) |
@@ -1082,8 +1365,8 @@ satisfies it. "Primary" names the RFC that owns the scenario where it is not thi
 | P4-S50 | §B7.5 |
 | P4-S51 | §A7 (cause `headroom`), §B2 (M3) |
 | P4-S52 | §B2 (M1; example) |
-| P4-S53 | §B5 (negative-balance write-off), §B2 (M18) |
-| P4-S54 | §B6.3 (alerts) |
+| P4-S53 | §B5 (negative-balance write-off), §B2 (M18, conditional on its position) |
+| P4-S54 (row 1 amended in v1.6) | §B6.1 (`Pnr` in the invariant), §B6.3 (alerts) |
 | P4-S55 | §A3, §A7 (example), §A9 |
 | P4-S56 | §B2 (M12; example), §B3.4 |
 | P4-S57 | §B9 (one row per input) |
@@ -1091,7 +1374,7 @@ satisfies it. "Primary" names the RFC that owns the scenario where it is not thi
 | P4-S60, P4-S62, P4-S63 | §A6 (examples) |
 | P4-S64 | §A6 (Frozen; example) |
 | P4-S65 | §A7 (one ledger order) |
-| P4-S66 | §A5.1, §A6 (invariant A-2); RQ4-1 |
+| P4-S66 (amended in v1.6) | §A5.1 (one at a time in arrival order, each counting the holds then in flight), §A6 (invariant A-2); RQ4-1 adopted |
 | P4-S67 | §B7.2 (cut) |
 | P4-S68 | §A3 (key spending), §A7 (example); RQ4-9 |
 | P4-S69 | §A7 (warnings) |
@@ -1106,12 +1389,12 @@ satisfies it. "Primary" names the RFC that owns the scenario where it is not thi
 | P4-S78, P4-S79 | §B7.1, §B7.2, §B7.4 |
 | P4-S80, P4-S104 | §B6.3 |
 | P4-S81 | §B6.4 |
-| P4-S82 | §A4 (F5 refused without KYB) |
+| P4-S82 | §A4 (F5 refused unless F4 recorded KYB passed) |
 | P4-S83 | §B5 (invoice write-off, credit limit removed) |
 | P4-S85 | §B2 (M7, M8; example), §B3.3 |
 | P4-S86, P4-S87, P4-S88 | §B7.1, §B7.2, §B7.3 |
 | P4-S89 | §B2 (M10; example) |
-| P4-S90 | §B6.1 (table) |
+| P4-S90 | §B6.1 (table), §B1.3 (cut at one database timestamp) |
 | P4-S91 | §B6.2 |
 | P4-S92, P4-S93 | §A7 (examples); §B5 |
 | P4-S94 | §A7 (example), §B2 (M1 repayment) |
@@ -1123,13 +1406,20 @@ satisfies it. "Primary" names the RFC that owns the scenario where it is not thi
 | P4-S100 | §B4.2, §B9 |
 | P4-S101 | §A6, §A7 (example) |
 | P4-S103 | §B2 (M14; example), §B6.1 (RQ4-4) |
+| P4-S105 | §A3 (`RA`), §A7 (resuming; example), §B5 (top-up pays overdue invoices first), §B2 (example) |
+| P4-S106 | §B6.1 (`Pnr`; table), §B6.3 (`settlement_lag_max` alert), §B4.2 (notified before settled) |
+| P4-S107 | §B5 (90-day clock from when it arose), §B2 (M18; example) |
+| P4-S108 | §A3 (price-notice amounts), §A4 (F11), §A7 (price notices; example) |
+| P4-S109 | §B6.1 (in-flight terms at the partner's amount; P4-S109 in detail) |
+| P4-S110 | §B2 (M13; example) |
 | P2-S38, P2-S75 | Primary RFC-002; rule §A5.1 check 4, §A5.2; example §A7 |
 | P2-S39, P2-S76 | Primary RFC-002; §A3 (key spending), §A5.1 check 5; example §A7 |
 | P2-S40, P2-S54, P2-S66, P2-S98 | Primary RFC-002; §A3 (capacity in flight), §A5.1 checks 2, 3, §A5.2 |
 | P2-S41, P2-S68 | Primary RFC-002; §A5.4 |
 | P2-S42, P2-S78 | Primary RFC-002; §A5.1 check 1 (`RA`) |
 | P2-S69 | Primary RFC-002; §A5.3, §A7 |
-| P2-S70, P2-S71 | Primary RFC-002; §A5.1 (serial intake); RQ4-1 |
+| P2-S70, P2-S71 | Primary RFC-002; §A5.1 (arrival-order checks); RQ4-1 |
+| P2-S112 | Primary RFC-002; §A5.1 (a request refused because of a hold in flight stays refused) |
 | P2-S77 | Primary RFC-002; §A5.1 (reductions not checked) |
 | P2-S92 | Primary RFC-002; §A5.1 (hold in the intake, before any capacity hold) |
 | P3-S09 | Primary RFC-003; §A7 (accrues during the grace), §A6 (Draining after release) |
@@ -1138,8 +1428,13 @@ satisfies it. "Primary" names the RFC that owns the scenario where it is not thi
 | P3-S41 | Primary RFC-003; §B2 (M12) |
 | P3-S44, P3-S60 | Primary RFC-003; §B2 (M10, M11) |
 | P3-S61 | Primary RFC-003; §A4 (F2) |
+| P3-S63 | Primary RFC-003; §A6 (shorten into the minimum term), §B2 (M10) |
+| P3-S65 | Primary RFC-003; §B3.4 (reversed attribution as M8) |
+| P3-S66 | Primary RFC-003; §B3.4 (superseding record as M8 or M9) |
 | X1-S04 | Primary RFC-005; §B8 |
-| X1-S10 | Primary RFC-005; §B4.1 |
+| X1-S28 | Primary RFC-005; §B8 (termination points; usage-priced shares by opaque charge-line reference) |
+| X1-S37 | Primary RFC-005; §B1.2 (pseudonymous principals), §A9, §B8 |
+| X1-S10 | Primary RFC-005; §B4.1 (investigation stream), §B7.1 |
 | X1-S12 | Primary RFC-005; money effects §A4 (F5), §B2 (M8, M9, M22), §B3.4 |
 | X1-S14 | Primary RFC-005; audit fields §A4, §B1.2 |
 | X2-S07 | Primary RFC-006; §B4.2 (latency) |
@@ -1150,6 +1445,7 @@ satisfies it. "Primary" names the RFC that owns the scenario where it is not thi
 | X2-S20 | Primary RFC-006; §A3 (probe accounts); probes are never rated, so nothing reaches settlement or statements |
 | X2-S21 | Primary RFC-006; §A11 (Part A runs in the account owner) |
 | X2-S24 | Primary RFC-006; §A3 (credit holds), §B5 (never invoiced) |
+| X2-S27 | Primary RFC-006; §A3 (several probe accounts), §B7.2 (probe supplier) |
 
 ## Benefits
 
@@ -1161,14 +1457,16 @@ Figures marked "est." are estimates (§A11, §B10).
 | One headroom, reproducible (P4-N4, P4-N16) | Every input is an account-log entry; `answer` is a pure function of a position and a timestamp; a rebuild is a replay with the recorded rules version |
 | Suspension at one point, never by surprise (P4-N5, POL-04) | Causes are evaluated in the entry that creates them, recorded with a sequence number; a decision before it stands, one after it sees it |
 | Funds checks on admission's path | No extra write: the hold is in entry 1, the conversion in entry 2 (RFC-000 §3); `admit` is O(parts) in memory |
-| Standing to network operations within 10 s (POL-06) | About 100 ms from the deciding entry's commit (est.); latest-wins by `std_seq`; lateness of enforcement reported from acknowledgements |
-| Top-up to headroom within 10 s at p99 (X2-S07) | About 0.2 s (est.): one payments commit, one ledger commit, one account-log commit |
+| Standing to network operations within 10 s (POL-06) | About 50 ms from the entry's commit by the owner's publish, about a second by the changefeed (est.); latest-wins by `std_seq`; lateness of enforcement decided by an F7 entry from acknowledgements |
+| Top-up to headroom within 10 s at p99 (X2-S07) | About 0.2 to 0.3 s (est.): one payments commit, one ledger commit, a Kafka hop, one account-log commit; one more receivables hop when the top-up pays an overdue invoice |
+| The buyer can act on a price change in time (POL-27, RQ4-8) | F11 quotes the hold and the top-up `price_notice` ahead; the warning comes before or with any suspension at the effective minute |
 | Conservation and immutability (P4-N7) | Every line balanced on its own, every movement in one partition and one currency, append-only with a hash chain; no alter command exists |
 | Exactly once for 7 years (P4-N15) | Watermarks and per-line exceptions (about 63 M watermarks, about 2 GB, est.) instead of 2×10¹⁴ line references; a 7-year reference index (about 7 TB per copy, est.) for everything else |
 | Exact, monotone split (P4-N8, P4-N9) | Webster with an exact integer algorithm in O(parties); amendments as differences of totals, so balances depend only on final totals |
 | Supplier earnings final (P4-N11) | Share-borne corrections and costs debit only `SH:*`; a supplier's own fault debits only its debt account, with its reason |
 | Payouts never instructed twice (P4-N12) | Lots and instruction references; a second execution is always recovered as a duplicate-payout debt, never an earnings reduction |
-| Reconciliation exact to the micro (P4-N14) | Consistent cuts across 128 partitions; in-flight terms per transaction; FX differences posted to Share |
+| Reconciliation exact to the micro (P4-N14) | One database timestamp gives a consistent cut across 128 partitions with no markers; three in-flight terms per transaction at the partner's amount; FX differences posted to Share; card-like providers without daily false alerts |
+| Every negative balance collected or written off by rule (P4-N13) | One 90-day clock per uncovered negative episode; write-offs conditional on their position, so never more than is owed |
 | Ledger write rate independent of reservation length (RFC-000 R15) | One movement per account and minute: about 1,700 movements/s for about 1 M lines/s (est.) |
 | Storage (RFC-000 A0R-11) | At most about 2.2 PB per copy over 7 years at the 10 B a line RFC-000 assumed; 0.2 to 0.7 PB expected with run-length encoding (est.) |
 
@@ -1189,8 +1487,11 @@ Figures marked "est." are estimates (§A11, §B10).
 | **Re-instructing a failed payout under the same lot identity without tracking lots** | A late confirmation of the first execution could not be told from a payment of new earnings; lots make the duplicate-payout debt exact |
 | **Payments computing the written-off repayment** | The written-off amount is derived in the buyer's ledger partition; computing it elsewhere races two top-ups. The ledger evaluates it at append (AI4-8) |
 | **A memorandum account for written-off amounts** | Works, but adds an off-balance class that reconciliation must exclude; deriving `W` from movement kinds in the same partition needs nothing new |
-| **Distributed SQL for the journal** (RFC-000 allows it as a store) | A good store, but the journal's unit of atomicity is already one partition's log entry, and the deduplication, cut and template rules are partition-local state machine logic; a consensus log per partition plus columnar segments matches the access paths (append, scan by reservation, cut aggregates) at lower cost |
-| **Reconciliation from live balance reads** | Balances spread over 128 partitions read at different instants never form a consistent cut; cuts at posting time do (RFC-000 §4.5) |
+| **A consensus log per ledger partition with `Cut(T)` markers and `Close(T)` heartbeats** (revision 1, on RFC-000 revision 3.2's custom platform) | Superseded by the coordinator's substrate decision (RFC-000 revision 4). On distributed SQL the closed timestamp already guarantees that nothing commits at or below `T`, across every partition and an in-flight transaction included, so one historical read at `T` is the cut: no marker per partition, no wait for the slowest partition's marker, no cut fence in the posting time. What the custom log did better (cheaper appends, no five-replica live tail) is recovered by sealing hourly and truncating |
+| **One SQL row per line, balances computed by `SUM` over the journal** | Natural in SQL, but 1 M rows/s and a 7-year scan for every balance; one row per movement with encrypted lines, and balance projections written in the posting transaction, keep the write rate at about 1,700 rows/s and every balance a row read |
+| **Reconciliation from live balance reads** | Balances spread over 128 partitions read at different instants never form a consistent cut; a read of every partition at one database timestamp does (RFC-000 §4.5) |
+| **Payments allocating a top-up to overdue invoices at posting** | Would put invoice state into the ledger's posting rule or payments; the allocation has no ledger effect beyond the balance, so receivables, which owns invoices and decides when one is overdue, makes it in its own order |
+| **Re-checking a write-off amount by a template at append** (M18 as `max(0, −Bal)` in revision 1) | Cannot exclude what invoices cover on a credit-limit account; a write-off conditional on the position its amount was computed at is exact and still race-free |
 | **A ledger with two-phase "pending transfers" for holds** (for example TigerBeetle's) | Prior art for fast double entry; but a hold is not a movement (glossary, POL-18), changes on every booking at admission's availability, and would put the ledger on the 200 ms path. Its ideas we keep: fixed-size integer amounts, idempotency by identifier, immutable append |
 | **Published ledger designs (Stripe's and Square's books, Modern Treasury)** | Prior art for immutable double entry, per-transaction idempotency keys, and reconciliation against external statements with in-transit accounts; this design follows them and adds what the requirements need beyond them: home partitions without hot rows, exact divisor-method splits, and a safeguarding check that never gates a movement |
 
@@ -1199,11 +1500,13 @@ Figures marked "est." are estimates (§A11, §B10).
 | # | Risk or issue | Mitigation or next step |
 |---|---|---|
 | R4-A1 | **Rating lag moves the hold window.** While rating is late (up to 7 min after a zone loss, about 1 h after a declared region disaster), `p_r` lags and the window covers fewer future minutes than `CW` | Headroom stays correct (the lagged minutes are inside funds held); after a disaster the future cover is shorter by at most the lag. Accepted; RFC-006 monitors `now − p_r` per account |
-| R4-A2 | **Non-determinism in the funds module** (a rule depending on map order, a version skew) | Outcomes recorded and checked by followers (§A4); replay tests on every rules version (§B13); F10 pins the version per position |
+| R4-A2 | **Non-determinism in the funds module** (a rule depending on map order, a version skew) | Outcomes recorded and checked by the hot standby (§A4); replay tests on every rules version (§B13); F10 pins the version per position |
 | R4-A3 | **Feed volume into account logs** (F2 at up to about 50,000 entries/s, est.) | Coalescing in rating; RFC-006 measures; the interval can lengthen to the `attribution_lag_max` budget |
-| R4-A4 | **Very large accounts.** An account with very many reservations makes F1 entries and one ledger partition hot | `account_rate_limit` bounds new bookings; F1 summaries are compact; RFC-000 R6's sub-partitioning applies if needed |
+| R4-A4 | **Very large accounts.** An account with very many reservations makes F1 entries and one ledger partition hot | `account_rate_limit` bounds new bookings; F1 summaries are compact; a movement is split per 5,000 lines (§B10); the database splits hot ranges by load; RFC-000 R6's sub-partitioning applies if needed |
 | R4-B1 | **Segment encoding unconfirmed** (2.2 PB per copy upper bound) | The R1 spike measures with a reservation-length distribution from RFC-003 |
-| R4-B2 | **Cuts wait for every partition.** One unavailable ledger partition delays reconciliation and payouts | Bounded by its RTO (5 min); `Close(T)` heartbeats; alerted |
+| R4-B2 | **Cuts need the closed timestamp past `T` and the MVCC history still there.** A range without quorum holds the closed timestamp back; a cut job delayed past the garbage-collection window cannot read `T` | The closed timestamp lags seconds in steady state; a range outage is bounded by the database's recovery (minutes); the cut job runs within minutes of `T` and RFC-006 sets the ledger tables' MVCC window to at least 25 h; a missed cut is re-derivable from sealed segments; alerted |
+| R4-B8 | **Reading the commit timestamp inside the batch transaction** (§A10) makes a pushed transaction retry | The account owner has one batch in flight and no other writer, so pushes are rare (reads by status readers are follower reads); measured by the R1 spike |
+| R4-B9 | **Card-like providers** leave payments in `Pnr` for days; a provider that never settles costs Share what it credited | Bounded by the `settlement_lag_max` alert (7 days); Share bears it like a reversal (POL-24) |
 | R4-B3 | **Partner and provider report formats and times are unknown** | Assumed by 06:00 UTC; the 12:00 deadline alert covers lateness; formats belong to the delivery contracts |
 | R4-B4 | **Payout providers without idempotency by reference** | Lots still make every second execution a duplicate-payout debt; listing condition for providers |
 | R4-B5 | **Safeguarding depends on Share's treasury** | A breach alerts within a day (POL-24); nothing is gated |
@@ -1212,34 +1515,57 @@ Figures marked "est." are estimates (§A11, §B10).
 
 ## Requirements issues
 
-None of these blocks the design; each states the reading this RFC adopts, for the
-requirements owner to confirm or amend.
+Revision 1's issues RQ4-1 … RQ4-9 were decided in `requirements-v1.6`
+([review 11](../reviews/11-requirements-amendments-from-detailed-rfcs.md)); each is
+resolved below with a pointer to where this revision applies the decision. New issues
+found in rebasing follow; none blocks the design, and each states the reading adopted, for
+the requirements owner to confirm or amend.
+
+**Resolved.**
+
+| # | Issue (revision 1) | Decision (v1.6) | Applied in |
+|---|---|---|---|
+| RQ4-1 | No one-at-a-time order exists with funds held for requests in flight | Coordinator: checks one at a time in arrival order, each counting the holds then in place; the RFC's wording for P4-S66 adopted; P2-S112 added (POL-25) | §A5.1 |
+| RQ4-2 | Hold at a reservation's end | Nothing held for later charges; unposted earlier charges and any fee stay held until posted (POL-15; P4-S11, P4-S61 amended) | §A6 (Draining) |
+| RQ4-3 | Write-off clock for a negative balance not caused by a reversal | 90 days after it arose (POL-21; P4-S107) | §B5, §B2 (M18); see RQ4-11 |
+| RQ4-4 | FX differences reported after the cut | In-flight terms counted per transaction at the partner's USD amount (POL-24; P4-S109) | §B6.1 |
+| RQ4-5 | Supplier debts in the safeguarding rule | The receivable is a supplier's net negative balance (POL-24) | §B6.2 |
+| RQ4-6 | Do top-ups pay a credit-limit account's invoices? | Yes: overdue invoices first, oldest first, recorded as invoice payments; the RFC's "no" not adopted (POL-15, POL-16; P4-S105) | §A3 (`RA`), §A7, §B5; see RQ4-10 |
+| RQ4-7 | Payments notified before the partner holds the funds | A third in-flight term, posted and not yet received, alerting after `settlement_lag_max` (7 days) (POL-24; P4-S106, P4-S54) | §B6.1, §B6.3, §B4.2; see RQ4-12 |
+| RQ4-8 | "After the usual low-balance warning" | Beyond the RFC's reading: the price notice states the hold and the top-up that would cover it; the warning comes before or with the suspension notice (POL-27; P4-S108) | §A4 (F11), §A7 |
+| RQ4-9 | Key spending with posting lag | No change; the RFC's reading is POL-25's | §A3 (key spending) |
+
+**New in revision 2.**
 
 | # | Issue | Reading adopted, and proposal |
 |---|---|---|
-| RQ4-1 | **"Some one-at-a-time order" cannot always exist with funds held for requests in flight** (P2-S70, P4-S66 second Then; POL-25). Request A's intake hold makes B's intake fail for insufficient funds; A then fails on capacity and releases. No serial order of whole decisions gives both outcomes: decided first, B would have been funded | The funds checks are made one at a time in intake order, each counting the holds of requests then in flight (§A5.1); the first Then of both scenarios holds strictly. Proposal: reword the second Then to "as if their funds checks were made one at a time, in the order received, each counting the holds of requests then in flight". RFC-002 may raise the same issue |
-| RQ4-2 | **Hold at a reservation's end** (P4-S11, P4-S61 "from the minute it ends no funds are held for it") against POL-18 ("charges accrued but not yet posted stay within funds held") | No funds are held for any minute from the end; charges for minutes before the end not yet posted, and a fee due, stay held until posted (Draining, §A6). Proposal: add "for its charges from then on" to both Thens |
-| RQ4-3 | **Write-off clock for a negative balance not caused by a reversal** (P4-S97, P4-S101: fee or price-change shortfall "written off under POL-21"; POL-21 counts 90 days "of the reversal") | 90 days after the balance became negative (for a reversal, the reversal) (§B5). Proposal: state it in POL-21 |
-| RQ4-4 | **FX differences reported after the cut** (P4-N14 (1), P4-S103) | The "received and not yet posted" and "executed and not yet confirmed" terms are counted per transaction as the partner's USD amount less what the ledger posted for it at the cut, FX difference included (§B6.1). Proposal: say so in POL-24 |
-| RQ4-5 | **"Supplier debts" as receivables in the safeguarding rule** (POL-24): a supplier owing a debt may still have a positive net balance | The receivable is each supplier's net negative balance, which is what makes the rule imply "funds cover every positive balance" (§B6.2; P4-S90 row 4 agrees). Proposal: "negative supplier balances (net of supplier debts)" |
-| RQ4-6 | **Do top-ups pay a credit-limit account's invoices?** (POL-15, POL-16 are silent) | No: only an invoice payment pays an invoice; a top-up raises the balance (and headroom) but leaves an overdue invoice overdue, so the account stays suspended (§B5). Proposal: decide, since a buyer topping up to resume will be surprised |
-| RQ4-7 | **Payments notified before the partner holds the funds.** P4-N14 has a term for payments the partner received and the ledger has not posted, but none for the reverse; a provider that notifies before settling to the partner (cards settle days later) makes every day show a difference | Assumed: the partner receives every payment by the time it is notified (X2's provider constraints do not say). Proposal: either require it of providers, or add the symmetric "posted, not yet received by the partner" term to POL-24 |
-| RQ4-8 | **"After the usual low-balance warning"** (POL-27) | Read as the order of notices: the warning per crossing is sent, then the suspension notice, possibly in the same entry (§A7); no warning is projected at the price announcement. Proposal: confirm, or require a projected warning `price_notice` ahead |
-| RQ4-9 | **"Charges accrued in the period", each minute once** (P4-S68, POL-25) with posting lag | Key spending counts charges posted in the period plus the current holds, which contain the accrued-but-unposted minutes, so each minute is counted once (§A3); while suspended, minutes beyond the hold count once posted. Proposal: confirm |
+| RQ4-10 | **Order of the written-off repayment and the overdue-first rule in one top-up.** POL-21 says a top-up repays a written-off amount; POL-15 (v1.6) says a top-up to an account with an overdue invoice pays its overdue invoices first. An account can have both (an invoice written off, another issued before the write-off still overdue) | The written-off amount is repaid first (the older debt, already Share's loss), then the overdue invoices oldest first, then the balance (§B2 M1, §B5, §A3 `RA`). Proposal: state the order in POL-15 or POL-21 |
+| RQ4-11 | **"Any other negative balance" on a credit-limit account.** A credit-limit account's balance is negative in normal use, covered by invoices (POL-15); POL-21's 90-day clock "from when it arose" would write off charges that an invoice will collect | The clock runs on the **uncovered** negative: the balance below what issued and not-yet-issued invoices cover, `N = max(0, −Bal − I)` (§B5); for a prepaid account it is the whole negative balance. Proposal: say in POL-21 that the clock applies to what no invoice covers |
+| RQ4-12 | **A payment posted, not yet received, then reversed before the partner receives it** (a card payment charged back before settlement). Neither movement will ever match a partner transaction, which POL-24's matching rule (3) treats as a difference | The payment and its reversal net to zero in `Pnr` and are matched to each other, listed in the run, no alert (§B6.3). Proposal: confirm in POL-24 |
 
 ## Architecture issues
 
-Each is a gap or ambiguity in RFC-000 met by this RFC without changing a component, an
-owner or a principle; each needs RFC-000's owner to confirm or amend.
+Revision 1's issues AI4-1 … AI4-9 are resolved by RFC-000 revision 4 ("Revision 4
+resolution"); each pointer is to where this revision follows it.
+
+**Resolved.**
+
+| # | Issue (revision 1) | RFC-000 revision 4 | Applied in |
+|---|---|---|---|
+| AI4-1 | A correction's source reference cannot be checked in one ledger partition | Checked by the receiving owner; derived references checked by the ledger (§2, §4.4, §8) | §B9, §B2 (M8, M9) |
+| AI4-2 | No contract carries KYB status | KYB travels on the identity status push (§2, §3, §8) | §A4 (F4) |
+| AI4-3 | Key status ownership | Key status as applied is a funds kind (F4); identity and access its writer; booking reads revocation (§2, §8) | §A2, §A4, §A10 (`key_status`, JR-1) |
+| AI4-4 | Settlement's supplier partition "(debts)" | Debt register is payout state; settlement's supplier partition aggregates the deviation only (§2, §7) | §B7.6, §B3.5 |
+| AI4-5 | Standing feed one-way | Standing enforcement acknowledgement, applied as F8 (§2, §3, §7, §8) | §A8 |
+| AI4-6 | No exact enforcer of `key_poll_limit` | The edge, with key-sharded counters, with a stated bound (§2, §6, §7) | §A5.4 (not this RFC's) |
+| AI4-7 | Charge-line feed lacks cost lines | Cost lines with payer, weights version and reason (§2, §8) | §B3.1 |
+| AI4-8 | Amounts computed at append | Adopted (§2) | §B2 (M1; M18 now conditional on position) |
+| AI4-9 | Per-line shares | Adopted (§2) | §B3.1 |
+
+The joint items with RFC-002 (JR-1 … JR-4) are resolved in §A10, "Interface with RFC-002".
+
+**New in revision 2.**
 
 | # | Issue | Resolution proposed here |
 |---|---|---|
-| AI4-1 | §4.4 checks an operator correction's or attribution's source reference "in the ledger partition of the movement's home", but one price correction fans out to many lines in many buyer partitions | Checked by the owner that receives it (catalogue, attribution; RFC-003) for principal and contents, 7 years; each movement it causes carries a derived reference checked by the ledger (§B9) |
-| AI4-2 | KYB status must reach the account owner (F5 refuses a credit limit on an unvetted account), but §8 has no contract carrying it | Carry it on the key-status push from identity and access (RFC-005) |
-| AI4-3 | §2 lists key status among the funds module's state, while §8's key-status push names RFC-002 as consumer | F4 is a funds kind (limits feed key headroom); the booking module reads revocation from it (§A4). RFC-002 to confirm |
-| AI4-4 | §2 gives settlement a supplier partition "(debts)"; debts are raised in buyer partitions (M9, homed by the causing buyer) or by payouts (M16), and netting and invoicing are payout rules (POL-22) | The debt register is payout state (§B7.6); settlement's supplier partition aggregates the deviation report (§B3.5) |
-| AI4-5 | §8's standing feed is one-way, but P4-S27 needs to know when enforcement happened | An enforcement acknowledgement from network operations, applied as F8 (§A8) |
-| AI4-6 | `key_poll_limit` has no exact enforcer: polls never reach the account leader (§4.6) and edge counters are advisory (D5) | Outside this RFC; for RFC-002 and RFC-005 (for example, polls of one key routed to one edge region) |
-| AI4-7 | §8's charge-line feed names "charges and amendments", but settlement also needs Share-borne lines (carried excess, path differences, Share-paid fees), each line's payer, weights version and reason | The input contract of §B3.1, for RFC-003 to provide |
-| AI4-8 | §2 makes the ledger "validate, deduplicate, append"; M1's repayment and M18's write-off amount are computed at append from the partition's state | Proposed as within the ledger's responsibility: deterministic, partition-local, needed to avoid races; no other writer is involved |
-| AI4-9 | §2 lists settlement's per-line state as "shares already posted per party" | Derived from the posted total for normal-mode lines; stored only for own-mode lines (§B3.1), a refinement of the same state |
+| AI4-10 | **Stale cut wording in RFC-000 §2.** §4.5 and §8 (revision 4) make every reconciliation and payout run read all ledger partitions at one database timestamp; §2 still says the ledger publishes "per-partition closed positions ('closed through T')", reconciliation runs are "each at one closed position per ledger partition" and payout runs "each at closed positions" | This RFC follows §4.5 and §8: one database timestamp per cut, recorded as a cut record (§B1.3). Proposal: align §2's Ledger, Payments and Payouts rows with §4.5 |
