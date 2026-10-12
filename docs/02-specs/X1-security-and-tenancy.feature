@@ -106,7 +106,7 @@ Feature: Security, tenancy and audit
       Then it is sent only to the endpoint "b1" registered
       And it carries nothing about "b2" or any other account
 
-  Rule: An agent key acts only for its account, until it is revoked
+  Rule: An agent key acts only for its account, and every credential stops working within 60 s of its revocation
 
     @X1-S05 @need-X1-N3 @POL-25
     Scenario: An agent key acts only for the account that issued it
@@ -124,6 +124,19 @@ Feature: Security, tenancy and audit
     Scenario: An operation by an agent key records the key
       When an agent key of "b1" books, changes or cancels a reservation
       Then the change records the key that made it, as well as the account
+
+    @X1-S41 @need-X1-N3
+    Scenario Outline: Every credential is refused within 60 s of its revocation
+      Given <credential> was revoked at 10:00:00, <how>
+      When it is used for any operation from 10:01:00
+      Then the operation is not accepted, and nothing changes, as for an unauthenticated request
+
+      Examples:
+        | credential                               | how                                                              |
+        | a session of user "u1" of account "b1"   | an account administrator of "b1" having removed "u1" from "b1"   |
+        | a session of user "u1" of account "b1"   | "u1" having ended it                                             |
+        | a session of user "v1" of supplier "s1"  | a supplier administrator of "s1" having removed "v1" from "s1"   |
+        | the credential of an exporter of "s1"    | a supplier administrator of "s1" having revoked it               |
 
   Rule: Only an account administrator manages agent keys and their limits
 
@@ -214,6 +227,21 @@ Feature: Security, tenancy and audit
       Given account "b1" has exactly one account administrator
       When that administrator removes its own administrator right
       Then the request is refused, stating that an account keeps at least one administrator, and nothing changes
+
+    @X1-S40 @need-X1-N9 @POL-32 @POL-25 @POL-33
+    Scenario Outline: An account none of whose administrators can act is recovered only by onboarding, and an existing administrator can object for recovery_hold
+      Given the only account administrator of "b1", "u1", has lost its means of authentication
+      And onboarding re-verified "b1"'s business and granted the administrator right to user "u2" of "b1" at 10:00, every user of "b1" being told at once (POL-32)
+      When <event>
+      Then <result>
+
+      Examples:
+        | event                                                                                              | result                                                                                                  |
+        | "u2" removes "u1" from "b1" at 11:00                                                               | it is refused, the recovery being within `recovery_hold` (POL-32: 24 h), and nothing changes            |
+        | "u2" issues an agent key, registers a webhook endpoint or gives consent to identify "b1" to a supplier at 11:00 | it is refused, the recovery being within `recovery_hold`, and nothing changes                 |
+        | "u2" adds a user to "b1" at 11:00                                                                  | it takes effect, recorded with "u2"                                                                     |
+        | "u1", having regained its authentication, objects through the marketplace at 20:00                 | the recovery is cancelled: "u2" no longer has the administrator right, every user of "b1" is told, and it is recorded |
+        | no administrator who held the right before objects by 10:00 the next day                          | the recovery is final, and "u2" may take every administrator action                                     |
 
     @X1-S21 @need-X1-N9 @POL-25
     Scenario: An account cannot have more than account_max_keys keys
@@ -428,11 +456,15 @@ Feature: Security, tenancy and audit
       Then the change records that principal, by its pseudonymous identifier, and the time
 
     @X1-S15 @need-X1-N8 @POL-19
-    Scenario: An audit record cannot be altered or removed
+    Scenario Outline: An audit record cannot be altered or removed, and an alteration below the system is detected and accepted by no reader
       Given an audit record of a change
-      When any principal, operators included, tries to alter or remove it
-      Then the attempt is refused and itself recorded
-      And the audit record is unchanged
+      When <who> tries to alter or remove it
+      Then <result>
+
+      Examples:
+        | who                                                                                         | result                                                                                                     |
+        | any principal, operators included, through the system                                       | the attempt is refused and itself recorded, and the audit record is unchanged                              |
+        | an administrator with administrative or physical access to the storage, below the system     | the alteration or removal is detected and recorded, and no reader accepts the altered record or the gap left as the audit record |
 
   Rule: Personal data can be erased without altering the audit or the books
 
@@ -455,6 +487,32 @@ Feature: Security, tenancy and audit
         | channel                                                                    |
         | through an account administrator of "b1"                                   |
         | by a documented request to support, made through the marketplace by "u1"  |
+
+    @X1-S42 @need-X1-N11 @need-X1-N7 @POL-19 @POL-32
+    Scenario Outline: An erasure is executed only on a recorded request from a channel open to its subject
+      Given <request>
+      When an operator in compliance acts on it (POL-32)
+      Then <result>
+
+      Examples:
+        | request                                                                                                                                                       | result                                                                                                                                                             |
+        | operator "o1" asks, through Share's workforce administration, that its own personal data be erased                                                            | the request is recorded, and the operator erases "o1"'s personal data, recorded with the request; within `erasure_max` (POL-19) of the request's record it can no longer be recovered from any copy |
+        | a person who is not a Share user, or someone acting for that person, sends a documented erasure request naming exporter "x1" of supplier "s1" and the days D to D + 3, with evidence of identity | once the operator verifies it, the payloads "x1" sent in those days that were rejected as not conforming to the record template are erased, recorded with the request, and can no longer be recovered from any copy within `erasure_max` of the request's record (POL-19) |
+        | the same documented erasure request, whose identity or authority the operator cannot verify                                                                   | it is refused and recorded, nothing is erased, and its sender is told                                                                                               |
+        | user "u2" of "b1" asks, by a documented request through the marketplace, that user "u1"'s personal data be erased                                            | it is refused and recorded, and nothing is erased: a user asks only for its own data (POL-19)                                                                        |
+        | an agent key of "b1" asks that a user's personal data be erased                                                                                               | it is refused and recorded, and nothing is erased                                                                                                                   |
+
+    @X1-S43 @need-X1-N11 @need-X1-N7 @POL-19 @POL-32
+    Scenario Outline: Compliance opens an erasure with no request only on a documented legal requirement, with a second compliance operator's approval
+      Given no erasure request names user "u1" of "b1"
+      When an operator in compliance opens an erasure of "u1"'s personal data <basis>
+      Then <result>
+
+      Examples:
+        | basis                                                                                                    | result                                                                                                                                                           |
+        | citing a documented legal requirement, with its legal reference, and a second compliance operator approves it | it is recorded as an erasure request with that legal reference, `erasure_max` (POL-19) running from that record, and one compliance operator may then execute it |
+        | citing a documented legal requirement, and no second compliance operator has approved it                | nothing is recorded as a request and nothing is erased, and it lapses after `approval_expiry` (POL-32)                                                            |
+        | citing no legal requirement                                                                              | it is refused and recorded, and nothing is erased                                                                                                                |
 
     @X1-S37 @need-X1-N11 @POL-19
     Scenario: Logs and records hold no personal data

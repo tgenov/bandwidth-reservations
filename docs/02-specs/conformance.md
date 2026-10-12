@@ -109,8 +109,10 @@ plan, not in the scenario.
 | P1-S65 | A part that meets different excesses at different minutes is cut by the largest of them | TBD | — | not assessed |
 | P1-S68 | An outage on a link of an open equivalent path leaves the offer open and firm, and its holder is told | TBD | — | not assessed |
 | P1-S71 | A reservation moved to an equivalent path keeps its original age there | TBD | — | not assessed |
+| P1-S79 | An outage still open when a reduction's notice ends removes nothing beyond what the reduction needs | TBD | — | not assessed |
 | P1-S69 | A permanent increase recorded by the link's supplier is sellable from the first minute boundary at or after its record | TBD | — | not assessed |
 | P1-S76 | A rise in sellable capacity recorded exactly on a minute boundary takes effect from that boundary | TBD | — | not assessed |
+| P1-S80 | A permanent increase recorded during an outage raises the announced capacity, not what is sold while the outage lasts | TBD | — | not assessed |
 | P1-S33 | The schedule as known at a past time includes reservations changed since | TBD | — | not assessed |
 | P2-S01 | A route whose every leg fits is confirmed on every leg | TBD | `test/routes.test.ts` › "a route across our links and the partner is confirmed; every leg becomes a fact" *(prior evidence, to be re-validated)* | not assessed |
 | P2-S02 | A route with a leg that does not fit is rejected, naming that leg, and holds nothing | TBD | `test/routes.test.ts` › "a leg that cannot fit rejects the route, names the link, and releases every hold" *(prior evidence, to be re-validated)* | not assessed |
@@ -188,6 +190,7 @@ plan, not in the scenario.
 | P2-S37 | A route over two partners with holds of different lengths is all or nothing | TBD | — | not assessed |
 | P2-S38 | A booking the account cannot fund is rejected, stating the payment needed | TBD | — | not assessed |
 | P2-S39 | A booking beyond an agent key's spending limit is rejected; key spending is counted over the period | TBD | — | not assessed |
+| P2-S117 | Key spending counts only the parts the key booked or added | TBD | — | not assessed |
 | P2-S40 | A booking beyond a limit on capacity in flight is rejected | TBD | — | not assessed |
 | P2-S54 | A new account can have capacity in flight up to account_inflight_floor | TBD | — | not assessed |
 | P2-S66 | Capacity in flight is counted once per request, at its reserved rate, whatever the number of legs | TBD | — | not assessed |
@@ -248,8 +251,9 @@ plan, not in the scenario.
 | P3-S64 | A notified price change of an open-ended reservation applies to every part, one added after the announcement included | TBD | — | not assessed |
 | P3-S11 | A partner cancellation fee is charged only if it was shown at booking | TBD | — | not assessed |
 | P3-S43 | A partner minimum term is charged as a cancellation fee on early cancellation | TBD | — | not assessed |
-| P3-S63 | A shorten whose new end falls inside a partner's minimum term incurs the shown fee, as a cancellation would | TBD | — | not assessed |
+| P3-S63 | A shorten to a later end incurs a shown fee only if its new end falls inside a partner's minimum term | TBD | — | not assessed |
 | P3-S44 | Who pays a shown cancellation fee depends on who ended the reservation early | TBD | — | not assessed |
+| P3-S74 | A booked window that ends inside a partner's minimum term incurs the fee shown on the offer | TBD | — | not assessed |
 | P3-S60 | A cancellation fee is a charge line of its own, charged at exactly its shown amount and once | TBD | — | not assessed |
 | P3-S12 | A minute is charged once however charging is repeated | TBD | — | not assessed |
 | P3-S13 | Charging that is interrupted or restarted charges every record not yet charged, once | TBD | — | not assessed |
@@ -378,6 +382,8 @@ plan, not in the scenario.
 | P4-S77 | Every cost Share bears is paid from Share's own account to the supplier concerned | TBD | — | not assessed |
 | P4-S89 | A cancellation fee charged to a buyer goes wholly to the partner that imposed it | TBD | — | not assessed |
 | P4-S110 | The difference Share bears on a dearer equivalent path is the path's charge rounded down once, less the buyer's charge | TBD | — | not assessed |
+| P4-S115 | A later correction of the buyer's price does not change the difference Share bore on a dearer path | TBD | — | not assessed |
+| P4-S116 | A cost Share has paid a supplier is final, except that supplier's own reduction when its exporter erred | TBD | — | not assessed |
 | P4-S43 | A supplier owed at least the minimum is paid at the weekly payout | TBD | — | not assessed |
 | P4-S44 | A balance below the minimum carries forward | TBD | — | not assessed |
 | P4-S45 | A payout is complete only when the transfer is confirmed | TBD | — | not assessed |
@@ -405,6 +411,7 @@ plan, not in the scenario.
 | P4-S93 | Paying every overdue invoice resumes the account, if the headroom rule also holds | TBD | — | not assessed |
 | P4-S105 | A top-up to an account with an overdue invoice pays that invoice first, and can resume the account | TBD | — | not assessed |
 | P4-S111 | A top-up repays a written-off amount first, then overdue invoices oldest first, then raises the balance | TBD | — | not assessed |
+| P4-S114 | The resume amount is the least top-up that resumes the account, itemised | TBD | — | not assessed |
 | P4-S54 | The daily reconciliation proves what must agree, and reports every difference | TBD | — | not assessed |
 | P4-S90 | Funds at the partner equal the signed balances, less payouts executed but not yet confirmed, plus payments received but not yet posted, and no alert is raised | TBD | — | not assessed |
 | P4-S91 | Share's own balance below the receivables it funds is an alert, even when the sums agree | TBD | — | not assessed |
@@ -424,6 +431,7 @@ plan, not in the scenario.
 | X1-S05 | An agent key acts only for the account that issued it | TBD | — | not assessed |
 | X1-S06 | A revoked agent key is refused within 60 s of its revocation | TBD | — | not assessed |
 | X1-S07 | An operation by an agent key records the key | TBD | — | not assessed |
+| X1-S41 | Every credential is refused within 60 s of its revocation | TBD | — | not assessed |
 | X1-S18 | An account administrator manages keys and their limits, users, administrator rights, webhook endpoints and consent | TBD | — | not assessed |
 | X1-S19 | An agent key cannot manage keys or limits, its own or another's | TBD | — | not assessed |
 | X1-S29 | Only an account administrator can consent to identify the account to a supplier | TBD | — | not assessed |
@@ -431,6 +439,7 @@ plan, not in the scenario.
 | X1-S20 | Every change to an agent key or its limits records who made it and when | TBD | — | not assessed |
 | X1-S33 | Only a supplier administrator manages the supplier's users, credentials and endpoints | TBD | — | not assessed |
 | X1-S38 | An account always keeps at least one account administrator | TBD | — | not assessed |
+| X1-S40 | An account none of whose administrators can act is recovered only by onboarding, and an existing administrator can object for recovery_hold | TBD | — | not assessed |
 | X1-S21 | An account cannot have more than account_max_keys keys | TBD | — | not assessed |
 | X1-S08 | The same idempotency key used by two accounts gives two independent requests | TBD | — | not assessed |
 | X1-S09 | An idempotency key reveals nothing about another account's request | TBD | — | not assessed |
@@ -449,12 +458,15 @@ plan, not in the scenario.
 | X1-S26 | A termination for fraud or a legal order takes effect only with a second compliance operator's approval | TBD | — | not assessed |
 | X1-S27 | Support reads, and acts on an account only at its documented request | TBD | — | not assessed |
 | X1-S14 | Every change to money or capacity records the principal and the time | TBD | — | not assessed |
-| X1-S15 | An audit record cannot be altered or removed | TBD | — | not assessed |
+| X1-S15 | An audit record cannot be altered or removed, and an alteration below the system is detected and accepted by no reader | TBD | — | not assessed |
 | X1-S34 | Erasing a person's personal data leaves every audit and financial record unaltered and attributable | TBD | — | not assessed |
 | X1-S39 | An erasure the data subject requests is executed by one compliance operator, and is complete in every copy within erasure_max | TBD | — | not assessed |
+| X1-S42 | An erasure is executed only on a recorded request from a channel open to its subject | TBD | — | not assessed |
+| X1-S43 | Compliance opens an erasure with no request only on a documented legal requirement, with a second compliance operator's approval | TBD | — | not assessed |
 | X1-S37 | Logs and records hold no personal data | TBD | — | not assessed |
 | X2-S01 | Availability per capability | TBD | — | not assessed |
 | X2-S16 | A minute is available only if at least 90% of its probes succeed | TBD | — | not assessed |
+| X2-S30 | A minute of admission or the wallet is unavailable when one account slot's measured probes all fail, or when it was not probed as required | TBD | — | not assessed |
 | X2-S18 | Each capability is probed by its own operation, against its own per-probe limit | TBD | — | not assessed |
 | X2-S20 | Probes run end to end as designated probe accounts, without business side effects | TBD | — | not assessed |
 | X2-S24 | Each probe account books on a credit limit set by finance, and is never invoiced | TBD | — | not assessed |
@@ -477,6 +489,8 @@ plan, not in the scenario.
 | X2-S26 | A declared region disaster counts from the loss the system recorded, not from its declaration | TBD | — | not assessed |
 | X2-S28 | A region loss that is never declared a disaster counts against every target | TBD | — | not assessed |
 | X2-S29 | A region with no recorded loss may be declared a disaster on probe evidence, counted from the first failing probe minute | TBD | — | not assessed |
+| X2-S31 | A declared disaster counts from the earlier of the recorded loss and a run of probe evidence leading up to it | TBD | — | not assessed |
+| X2-S32 | A minute in which admission was not probed as required is unavailable, but is not probe evidence for a disaster | TBD | — | not assessed |
 | X2-S09 | An acknowledged fact survives the loss of a node or a zone | TBD | — | not assessed |
 | X2-S12 | No acknowledged fact is lost on the loss of a region | TBD | — | not assessed |
 | X2-S14 | A fact is acknowledged only once it is durable in two regions | TBD | — | not assessed |

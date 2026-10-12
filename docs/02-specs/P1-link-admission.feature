@@ -405,7 +405,7 @@ Feature: Selling capacity on one link without overselling
 
     @P1-S63 @need-P1-N1 @need-P1-N8 @POL-07 @POL-26
     Scenario: A confirmation already being decided when an outage is recorded may complete, and its reservation is then affected
-      Given a pending booking request holds 2 Mbps on the link for [10:00, 11:00), and has begun committing (POL-26)
+      Given a pending booking request holds 2 Mbps on the link for [10:00, 11:00), and has begun committing: the transaction confirming it does not see the outage's displacement record (POL-07)
       When an unplanned outage reducing the link's capacity to 6 Mbps is recorded before the request's confirmation is decided
       And the request is then confirmed before its deadline, as reservation C
       Then C is flagged as affected (POL-07) at every minute of [10:00, 11:00), as A and B are there
@@ -422,7 +422,7 @@ Feature: Selling capacity on one link without overselling
 
       Examples:
         | sees                                 | result                                                                                                                                       |
-        | does not see the displacement record | the request had begun committing (POL-26), and may be confirmed before its deadline; it is then flagged as affected, and network operations alerted, as in P1-S63 |
+        | does not see the displacement record | the request had begun committing (POL-07), and may be confirmed before its deadline; it is then flagged as affected, and network operations alerted, as in P1-S63 |
         | sees the displacement record         | the request is decided against the reduced capacity, and is rejected for no fit                                                               |
 
     @P1-S72 @need-P1-N8 @POL-07 @POL-08
@@ -671,6 +671,16 @@ Feature: Selling capacity on one link without overselling
       When M's supplier announces a permanent reduction after which G and B no longer both fit on M
       Then G's Mbps are affected first, because each part of B keeps on M the age it had on the link (POL-07)
 
+    @P1-S79 @need-P1-N8 @need-P1-N1 @POL-07
+    Scenario: An outage still open when a reduction's notice ends removes nothing beyond what the reduction needs
+      Given no equivalent path exists for A or B
+      And the link's supplier announced a permanent reduction of its capacity to 6 Mbps on day D
+      And an unplanned outage reducing the link's capacity to 5 Mbps was recorded on day D + 29 and is still open
+      When `revocation_notice` (POL-07) after the announcement has passed
+      Then only 2 Mbps of B are removed, the reduction's need, so B is 2 Mbps and A is still 4 Mbps
+      And A and B are flagged as affected while the outage lasts, the 6 Mbps committed exceeding the 5 Mbps in force
+      And once the outage is restored, neither is affected, the 6 Mbps committed fitting the announced 6 Mbps
+
   Rule: Every rise in a link's sellable capacity takes effect from the first minute boundary at or after its record
 
     @P1-S69 @need-P1-N8 @need-X1-N10 @POL-07
@@ -691,6 +701,14 @@ Feature: Selling capacity on one link without overselling
         | a link of 12 Mbps whose capacity an unplanned outage has reduced to 10 Mbps             | the restoration of its capacity to 12 Mbps                     |
         | a link of 10 Mbps                                                                       | a permanent increase of its capacity to 12 Mbps, by its supplier |
         | a link of 12 Mbps on which its supplier booked planned maintenance taking 2 Mbps for [10:00, 11:00) | the supplier's cancellation of that maintenance booking |
+
+    @P1-S80 @need-P1-N8 @need-P1-N1 @POL-07
+    Scenario: A permanent increase recorded during an outage raises the announced capacity, not what is sold while the outage lasts
+      Given a link with a capacity of 10 Mbps, with 6 Mbps confirmed for [10:00, 11:00)
+      And an unplanned outage has reduced the link's capacity to 6 Mbps, and has not been restored
+      When the link's supplier records a permanent increase of its capacity to 15 Mbps at 09:30:20
+      Then from 09:31 a booking of 1 Mbps on the link for [10:00, 11:00) is still rejected, the capacity in force being 6 Mbps, the lower of 15 Mbps and the outage's 6 Mbps (POL-07)
+      And once the outage's restoration is recorded at 09:40:00, from 09:40 a booking of 9 Mbps on the link for [10:00, 11:00) is confirmed
 
   Rule: What was known to be reserved at any past time can be retrieved
 

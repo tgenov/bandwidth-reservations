@@ -278,18 +278,18 @@ Feature: Wallet, funds holds, ledger and supplier settlement
 
     @P4-S15 @need-P4-N4 @POL-18
     Scenario: The headline figure is available headroom, net of funds held and usage exposure
-      Given account "b1" has a ledger balance of 1.000000 USD, 0.288000 USD held, a usage exposure of 0.048250 USD and no credit limit
+      Given account "b1" has a ledger balance of 1.000000 USD, 0.288000 USD held, a usage exposure of 0.055750 USD and no credit limit
       When "b1" asks for its balance
-      Then the headline figure is 0.663750 USD of available headroom
+      Then the headline figure is 0.656250 USD of available headroom
 
     @P4-S16 @need-P4-N4 @POL-18 @POL-14
     Scenario: The itemised answer adds up to the headline
-      Given account "b1" has a ledger balance of 1.000000 USD, 0.288000 USD of funds held, unposted usage of 0.002000 USD, a lateness bound of 0.046250 USD and no credit limit
+      Given account "b1" has a ledger balance of 1.000000 USD, 0.288000 USD of funds held, unposted usage of 0.002000 USD, a lateness bound of 0.053750 USD and no credit limit
       And 0.000400 USD of its charges have accrued but are not yet posted
       When "b1" asks for its balance
-      Then the answer shows the ledger balance 1.000000 USD, funds held 0.288000 USD, and usage exposure 0.048250 USD as unposted usage 0.002000 USD and lateness bound 0.046250 USD
+      Then the answer shows the ledger balance 1.000000 USD, funds held 0.288000 USD, and usage exposure 0.055750 USD as unposted usage 0.002000 USD and lateness bound 0.053750 USD
       And it shows the 0.000400 USD accrued but not yet posted, for information, as within the funds held
-      And the headline is 0.663750 USD: the ledger balance less the funds held less the usage exposure
+      And the headline is 0.656250 USD: the ledger balance less the funds held less the usage exposure
 
     @P4-S17 @need-P4-N4
     Scenario: The ledger balance shown equals the ledger
@@ -704,6 +704,25 @@ Feature: Wallet, funds holds, ledger and supplier settlement
       Then the buyer is charged 4 micro-USD, 4.5 rounded down once (POL-11)
       And Share bears 4 micro-USD: the path's 8.1 micro-USD rounded down once to 8, less the buyer's 4 (POL-23)
 
+    @P4-S115 @need-P4-N11 @POL-23 @POL-07 @POL-11 @POL-32
+    Scenario: A later correction of the buyer's price does not change the difference Share bore on a dearer path
+      Given the minute of P4-S110 was charged, the buyer 4 micro-USD and Share bearing a difference of 4 micro-USD
+      When an operator in finance (POL-32) corrects the buyer's price for that minute down to 1.0 micro-USD per Mbps-minute, with cause "Share" (POL-23)
+      Then the buyer's charge for that minute is amended to 3 micro-USD, 3.0 rounded down once (POL-11)
+      And the difference Share bore stays 4 micro-USD: the path's 8 less the buyer's charge as booked, 4
+      And no supplier of the path is paid again
+
+    @P4-S116 @need-P4-N11 @POL-23 @POL-17 @POL-22 @POL-12
+    Scenario Outline: A cost Share has paid a supplier is final, except that supplier's own reduction when its exporter erred
+      Given Share paid suppliers A, B and C 3,000, 3,333 and 2,167 micro-USD for 1 GB of excess carried on "R1", as in P4-S56
+      When <exporter> submits a superseding record that lowers that excess to 0.5 GB, within `dispute_window` (POL-17)
+      Then <result>
+
+      Examples:
+        | exporter                                       | result                                                                                                       |
+        | the Share exporter that produced the record    | A, B and C keep what they were paid, and no movement is posted to any supplier (POL-23)                      |
+        | supplier A's exporter that produced the record | A owes its own reduction, 1,500 micro-USD, as a supplier debt (POL-22): its share of 5,000 micro-USD is 1,500 (POL-12); B and C keep what they were paid |
+
   Rule: Payouts are weekly, exact and made once
 
     Background:
@@ -907,11 +926,21 @@ Feature: Wallet, funds holds, ledger and supplier settlement
     @P4-S111 @need-P4-N5 @need-P4-N13 @need-P4-N17 @POL-15 @POL-21 @POL-24 @POL-16
     Scenario: A top-up repays a written-off amount first, then overdue invoices oldest first, then raises the balance
       Given account "e1" is suspended, owing a written-off amount of 1.000000 USD from an invoice written off 90 days after its due date (POL-15)
-      And invoice I2 of 0.500000 USD, issued to "e1" before that write-off, is overdue
+      And invoice I2 of 0.500000 USD, issued to "e1" before that write-off, is overdue, and "e1"'s ledger balance is -0.500000 USD, with no other charges
       When "e1" tops up 2.000000 USD
       Then 1.000000 USD of it repays the written-off amount, to Share's own account (POL-21)
-      And 0.500000 USD of it then pays I2, recorded as an invoice payment (POL-24)
-      And only the remaining 0.500000 USD raises "e1"'s ledger balance
+      And 0.500000 USD of it then pays I2, recorded as an invoice payment (POL-24), and the remaining 0.500000 USD raises its ledger balance to 0.500000 USD
+
+    @P4-S114 @need-P4-N5 @need-P4-N17 @POL-16 @POL-15 @POL-21 @POL-18
+    Scenario Outline: The resume amount is the least top-up that resumes the account, itemised
+      Given <account>
+      When "e1" is told the amount that would resume it
+      Then the resume amount is <amount> USD, itemised as <items>
+
+      Examples:
+        | account                                                                                                                                                                                         | amount   | items                                                                                                                  |
+        | credit-limit account "e1" is suspended as in P4-S92, with one overdue invoice of 1.000000 USD                                                                                                   | 1.000000 | the overdue invoice, 1.000000 USD, after whose payment headroom is 4.712000 USD and nothing more is needed (POL-16)    |
+        | account "e1" is suspended as in P4-S111 before its top-up, owing the written-off amount of 1.000000 USD and I2 of 0.500000 USD, with no credit limit since the write-off (POL-15), and no reservations or usage exposure | 2.500000 | the written-off amount, 1.000000 USD; I2, 0.500000 USD; and 1.000000 USD to reach `low_balance_warning` (POL-16)        |
 
   Rule: The books are reconciled with the money daily
 

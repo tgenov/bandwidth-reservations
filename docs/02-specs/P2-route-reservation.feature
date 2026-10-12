@@ -687,6 +687,18 @@ Feature: Booking, changing and ending route reservations, all or nothing
         | 0.072000 | 0.500000 | 0.360000 | 0.640000 | confirmed                                                         |
         | 0.500000 | 0.000000 | 0.788000 | 0.212000 | rejected, stating that the key's spending limit would be exceeded |
 
+    @P2-S117 @need-P2-N8 @POL-25 @POL-08
+    Scenario Outline: Key spending counts only the parts the key booked or added
+      Given agent key K of "b1" has a `key_spend_limit` of 1.000000 USD per `key_spend_period` (POL-25), and has accrued no charges in the current period
+      And <reservation>
+      When K's spending is computed
+      Then it is <spending> USD
+
+      Examples:
+        | reservation                                                                                                                                        | spending |
+        | K booked an open-ended reservation with 0.288000 USD held, and an account administrator of "b1" then increased it, with 0.144000 USD more held for the added part (POL-08) | 0.288000 |
+        | an account administrator of "b1" booked an open-ended reservation with 0.288000 USD held, and K then increased it, with 0.144000 USD more held for the added part (POL-08) | 0.144000 |
+
     @P2-S40 @need-P2-N8 @POL-25
     Scenario Outline: A booking beyond a limit on capacity in flight is rejected
       Given the Mbps in requests of the <holder> not yet decided is at its <limit> (POL-25)

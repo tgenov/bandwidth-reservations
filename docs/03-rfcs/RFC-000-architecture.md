@@ -2,11 +2,11 @@
 
 | | |
 |---|---|
-| Status | **Accepted, revision 4.1.** Revision 4.1 applies architecture errata from the revision-2 detailed RFCs (AI-R1-10 … AI-R1-12, B-AI-7, B-AI-8, AI3-10 … AI3-12, AI4-10, AI5-8 … AI5-11, AI6-1 … AI6-5) and two interface alignments (JR-1, KYB on F4), by the coordinator's decisions; see "Revision 4.1 errata" at the end. Revision 4 resolves the architecture issues raised by the six detailed RFCs (AI-R1-*, B-AI-*, AI3-*, AI4-*, AI5-*, AI-1 … AI-4) and RFC-006's risk RK10, and, by the coordinator's decision, moves the platform substrate from a custom multi-group Raft platform to a Postgres-compatible distributed SQL database (CockroachDB; YugabyteDB the alternative) with TypeScript/NestJS owners and Kafka; see "Revision 4 resolution" at the end. History: revision 3.2 (W-01, W-02 from the verification's confirmation); revision 3.1: revision 3 revised per the [second adversarial review](../reviews/08-rfc-000-review-2.md) (A0R-01 … A0R-14, R2-D1 … R2-D7), then corrected per its [verification](../reviews/10-rfc-000-verification.md) (V-01 … V-08), after revision 2 applied the [first](../reviews/06-rfc-000-review.md) (A0-01 … A0-21); see "Review resolution" |
-| Satisfies | All — structural. Allocates every need (P1-N1 … X2-N6, 66 in all) to an owning component and to the detailed RFC that specifies it; the scenarios themselves are satisfied by RFC-001 … RFC-006 |
+| Status | **Accepted, revision 4.2.** Revision 4.2 applies architecture errata from the revision-3 detailed RFCs and reviews 16 to 20 (AI-R5-1 … AI-R5-4, AI-17-1 … AI-17-6, A-1 … A-4, AI-19-1, AI-19-2, AI-R6-1 … AI-R6-4, B-AI-9, B-AI-10, AI3-13), by the coordinator's decisions, against `requirements-v1.7` and compatible with the `requirements-v1.8` amendments in progress; the logical design is unchanged, the latency budget, `δ_x` and `τ` are re-derived with batching waits; see "Revision 4.2 errata" at the end. Revision 4.1 applies architecture errata from the revision-2 detailed RFCs (AI-R1-10 … AI-R1-12, B-AI-7, B-AI-8, AI3-10 … AI3-12, AI4-10, AI5-8 … AI5-11, AI6-1 … AI6-5) and two interface alignments (JR-1, KYB on F4), by the coordinator's decisions; see "Revision 4.1 errata" at the end. Revision 4 resolves the architecture issues raised by the six detailed RFCs (AI-R1-*, B-AI-*, AI3-*, AI4-*, AI5-*, AI-1 … AI-4) and RFC-006's risk RK10, and, by the coordinator's decision, moves the platform substrate from a custom multi-group Raft platform to a Postgres-compatible distributed SQL database (CockroachDB; YugabyteDB the alternative) with TypeScript/NestJS owners and Kafka; see "Revision 4 resolution" at the end. History: revision 3.2 (W-01, W-02 from the verification's confirmation); revision 3.1: revision 3 revised per the [second adversarial review](../reviews/08-rfc-000-review-2.md) (A0R-01 … A0R-14, R2-D1 … R2-D7), then corrected per its [verification](../reviews/10-rfc-000-verification.md) (V-01 … V-08), after revision 2 applied the [first](../reviews/06-rfc-000-review.md) (A0-01 … A0-21); see "Review resolution" |
+| Satisfies | All — structural. Allocates every need (P1-N1 … X2-N6, 67 in all; X1-N11 allocated in revision 4.2) to an owning component and to the detailed RFC that specifies it; the scenarios themselves are satisfied by RFC-001 … RFC-006 |
 | Policies | POL-01 … POL-33 (every entry of the register; §7 names the component that applies each need, and §2 the policies each component serves) |
 | Prior decisions | History log D3, D12, D13, D21 (carried forward in Competition); the coordinator's substrate decision of revision 4 (distributed SQL, TypeScript/NestJS owners, Kafka; RFC-006 RK10) |
-| Builds on | The requirements at tag `requirements-v1.5` ([problem statements](../01-discovery/), [specs](../02-specs/), [policy register](../02-specs/policy-register.md), [glossary](../02-specs/glossary.md)), which include RQ-1 … RQ-6 ([review 07](../reviews/07-requirements-amendments-from-rfc-000-review.md)), and the decisions on RQ-7 … RQ-12 raised by the second review and this revision, which `requirements-v1.4` and `requirements-v1.5` record ([review 09](../reviews/09-requirements-amendments-from-rfc-000-review-2.md)): the confirm fence (RQ-7), reporting once releases are durable (RQ-8), P1-S54 (RQ-9), the status-read exception (RQ-10, RQ-12), payments in flight in reconciliation (RQ-11), and diverse fibre paths as a go-live condition (A0R-05). Revision 4 also builds on three **binding decisions of the `requirements-v1.6` amendments, in progress**: the funds, capacity-in-flight and key-limit checks of concurrent requests apply one at a time in arrival order (B-RQ-1); a confirmation in flight when a capacity reduction is recorded may complete and becomes an affected reservation, alerted (AI-R1-4, B-RQ-2); personal data never enters logs (pseudonymous identifiers in every log; an erasable personal-data store with crypto-shredding) |
+| Builds on | The requirements at tag `requirements-v1.5` ([problem statements](../01-discovery/), [specs](../02-specs/), [policy register](../02-specs/policy-register.md), [glossary](../02-specs/glossary.md)), which include RQ-1 … RQ-6 ([review 07](../reviews/07-requirements-amendments-from-rfc-000-review.md)), and the decisions on RQ-7 … RQ-12 raised by the second review and this revision, which `requirements-v1.4` and `requirements-v1.5` record ([review 09](../reviews/09-requirements-amendments-from-rfc-000-review-2.md)): the confirm fence (RQ-7), reporting once releases are durable (RQ-8), P1-S54 (RQ-9), the status-read exception (RQ-10, RQ-12), payments in flight in reconciliation (RQ-11), and diverse fibre paths as a go-live condition (A0R-05). Revision 4 also builds on three **binding decisions of the `requirements-v1.6` amendments, in progress**: the funds, capacity-in-flight and key-limit checks of concurrent requests apply one at a time in arrival order (B-RQ-1); a confirmation in flight when a capacity reduction is recorded may complete and becomes an affected reservation, alerted (AI-R1-4, B-RQ-2); personal data never enters logs (pseudonymous identifiers in every log; an erasable personal-data store with crypto-shredding). Revision 4.2 is checked against `requirements-v1.7` (which includes v1.6) and against the `requirements-v1.8` changes announced as in progress (lateness bound with the admission RTO; outage capacity levels; per-account-slot probe failure; many notices per delivery), none of which changes a component (Revision 4.2 errata) |
 | Supersedes | The structural parts of the pre-baseline drafts RFC-001 … RFC-004, which were written from a prototype |
 
 **Revision 4 in one paragraph.** The logical design is unchanged: one writer per account,
@@ -88,7 +88,7 @@ sites and a link or an account never has two writers, even across failures.
 
 | # | Principle | Why (requirement) |
 |---|---|---|
-| A1 | **Every piece of state has exactly one writer component.** Others read it, subscribe to it, or ask its owner to change it. **An owner's transaction may read another owner's rows, never write them**, and only where §8 names the read (revision 4.1: the link displacement read, AI-R1-11); single-writer ownership is unchanged. | POL-05 for link schedules; the same discipline makes the account, reservation, ledger and request invariants each provable in one place. A read inside a transaction lets the database order two owners' commits without making either a writer of the other's state. |
+| A1 | **Every piece of state has exactly one writer component.** Others read it, subscribe to it, or ask its owner to change it. **An owner's transaction may read another owner's rows, never write them**, and only where §8 names the read (revision 4.1: the link displacement read, AI-R1-11, the only one); single-writer ownership is unchanged. Every other input one owner needs of another's state is **served by its owner**, as a feed, stream, query or command named in §8, never by a SQL grant (revision 4.2, AI-R5-1). | POL-05 for link schedules; the same discipline makes the account, reservation, ledger and request invariants each provable in one place. A read inside a transaction lets the database order two owners' commits without making either a writer of the other's state. |
 | A2 | **Each owner is partitioned by its natural serial key** (link, account, partner link, exporter, ledger account) and each partition is a **single-writer state machine over its own append-only log**, fenced by the owner's term. In revision 4 the log is an append-only table in the distributed SQL database, the writer is the NestJS service instance holding the partition's **owner lease**, and the term is the lease's **epoch**: every write is one transaction conditional on that epoch (§5.2, §5.5). | "Decided as if one at a time" is stated per link (P1-N2), per account and key (P2-N8, P4-N3, POL-25) and per reservation (P2-N9). A single writer per partition gives that order directly, without locks or retries; the database never sees two writers contend for one partition. |
 | A3 | **Every log commits only through a quorum that spans two regions.** There is no one-region state on any path that answers a buyer. In revision 4 the quorum is the database's: five voting replicas of every range, 2 + 2 + 1, no region holding three. | X2-N4, POL-06: a fact is acknowledged only once durable in two regions. P4-S72: what a buyer was shown must survive a region loss. |
 | A4 | **Facts are append-only; current state is derived.** Corrections are new facts. | P1-N7, P1-N9 (known-at history), P3-N7, P3-N8, P4-N7, X1-N8. |
@@ -99,7 +99,7 @@ sites and a link or an account never has two writers, even across failures.
 | A9 | **Only a request's account owner ends its holds, and a release ends them for good.** A link owner or partner adapter releases a request's hold only on that owner's say-so (an outcome, an accepted yield). A release for an outcome is **request-scoped**: it ends every hold, waiter registration and grant the request has at that participant, whatever the attempt, and leaves a tombstone that refuses any later hold or grant for the request (A0R-03). | All or nothing (P2-N1): no participant can release a hold the decision still depends on, and no late or retried command can recreate one after the outcome. |
 | A10 | **An outcome is reported only once it is final everywhere a buyer could see it.** A confirmation is reported once its deciding entry, and a non-confirmed outcome once a **"releases durable"** entry in the same log recording that every Share-link release it needs is durable (A0R-02), is at the log's **report position** (§4.6): committed in the database and applied by every status replica holding a read lease. The edge's synchronous final answer, status replicas, the outcome feed and webhooks are all reports and all obey this gate (V-01, V-02). | POL-04 as amended by RQ-6 and RQ-8: capacity is free from the moment the outcome is reported. |
 
-| A11 | **Personal data never enters a log** (v1.6, binding). Owner logs, feeds and Kafka topics, the history archive, the audit store, application logs and traces carry only **pseudonymous identifiers** (account, user, key, supplier and contact identifiers that name no person). Names, contact details, KYB documents and any other personal data live only in the **personal-data store** of identity and access, encrypted per data subject; erasure destroys the subject's key (crypto-shredding), so every copy, backup and archive becomes unreadable without rewriting any log, within `erasure_max` (30 days) across all copies; no backup of the store outlives the key generation it was taken under (AI5-11, RQ6-1). An input that may carry personal data against its contract (a flow-record payload for a refused template) is put to the personal-data store, and the log keeps only its identity, digest and reason (AI3-12, RQ3-14). | Append-only, 7-year logs (A4, X2-N6) and erasure of personal data are reconciled only if the logs never hold it; X1-N2, X1-N8 (changes still attributable, to a pseudonymous principal). |
+| A11 | **Personal data never enters a log** (v1.6, binding). Owner logs, feeds and Kafka topics, the history archive, the audit store, application logs and traces carry only **pseudonymous identifiers** (account, user, key, supplier and contact identifiers that name no person). Names, contact details, KYB documents and any other personal data live only in the **personal-data store** of identity and access, encrypted per data subject; erasure destroys the subject's key (crypto-shredding), so every copy, backup and archive becomes unreadable without rewriting any log, within `erasure_max` (30 days) **of the erasure request** across all copies (v1.7); no backup of the store outlives the key generation it was taken under (AI5-11, RQ6-1). An input that may carry personal data against its contract (a flow-record payload for a refused template) is put to the personal-data store, and the log keeps only its identity, digest and reason (AI3-12, RQ3-14); such an item is put with an **expiry fixed at `put`**, at which it is unrecoverable in every copy, backups and escrow included (revision 4.2, AI3-13, AI-R5-3). | Append-only, 7-year logs (A4, X2-N6) and erasure of personal data are reconciled only if the logs never hold it; X1-N2, X1-N8 (changes still attributable, to a pseudonymous principal). |
 
 ### 2. Component decomposition
 
@@ -110,7 +110,7 @@ needs and policies it is the primary owner of; the full allocation is in §7.
 
 | Component | Single responsibility | State it owns (only writer) | Partition | Serves |
 |---|---|---|---|---|
-| **Link schedule owner** | Decide every capacity question on one Share link, and record every change to what the link has sold or can carry | Per link: capacity history (baseline, unplanned outages and restorations, planned maintenance bookings and their cancellations, permanent reductions and their notice, permanent increases; AI-R1-10); **displacement markers**, one row per hold a reduction displaces, written in the reduction's own transaction and read by the account owner's confirm transaction (AI-R1-11); confirmed reservation legs and their parts, and every leg change (`end_leg`, `reduce_parts`), each carrying the account owner's decision time (AI-R1-1, AI-R1-7); capacity holds, each carrying its account, request identity, deadline `D`, **commit fence `D_c`** and `request_age` (AI-R1-9, B-AI-3); Share's own holds for firm equivalent-path offers (**offer holds**, taken, accepted, moved and released through the link hold port, AI-R1-2), at full rate from the offer to the reservation's end, counted as committed for new sales while the offer is open (POL-07, RQ-4); the link's waiter queue ordered by the priority rule, with waiter registrations, waiting marks (`mark_waiting`), waiting notices, yields and **displacement notices** (`DISPLACED`: a held or waiting request that no longer fits after a capacity reduction, AI-R1-3) as **log entries**; granting skips a waiter past its commit fence `D_c`; **request tombstones** (one per request released or refused on the link, kept until its `D` + `release_grace`, the release carrying `D`, AI-R1-8; any hold or grant for a tombstoned request, or for one past its `D`, is refused); the link's bitemporal change log. **Affected flags** per reservation and minute are *derived* state, a deterministic projection of the log (A4), not entries: the cuts that change them are entries (AI-R1-6) | One partition per link; a hot link has a group to itself | P1-N1 … P1-N9, POL-05, POL-07, POL-09, POL-10, POL-31 |
+| **Link schedule owner** | Decide every capacity question on one Share link, and record every change to what the link has sold or can carry | Per link: capacity history (baseline, unplanned outages and restorations, planned maintenance bookings and their cancellations, permanent reductions and their notice, permanent increases; AI-R1-10); **displacement markers**, one row per hold a reduction displaces, written in the reduction's own transaction and read by the account owner's confirm transaction (AI-R1-11); confirmed reservation legs and their parts, and every leg change (`end_leg`, `reduce_parts`), each carrying the account owner's decision time (AI-R1-1, AI-R1-7); capacity holds, each carrying its account, request identity, deadline `D`, **commit fence `D_c`**, `request_age`, **`wait`, kind, receipt minute and policy version** (AI-R1-9, B-AI-3; revision 4.2, AI-17-1: a request with `wait` = false that is blocked only by capacity in flight is refused here, with a tombstone, and never registered as a waiter); every reduction's **affected set and cuts**, each cut a **target rate** per (link, reduction, reservation) from `T_eff` (revision 4.2, AI-17-3); Share's own holds for firm equivalent-path offers (**offer holds**, taken, accepted, moved and released through the link hold port, AI-R1-2), at full rate from the offer to the reservation's end, counted as committed for new sales while the offer is open (POL-07, RQ-4); the link's waiter queue ordered by the priority rule, with waiter registrations, waiting marks (`mark_waiting`), waiting notices, yields and **displacement notices** (`DISPLACED`: a held or waiting request that no longer fits after a capacity reduction, AI-R1-3) as **log entries**; granting skips a waiter past its commit fence `D_c`; **request tombstones** (one per request released or refused on the link, kept until its `D` + `release_grace`, the release carrying `D`, AI-R1-8; any hold or grant for a tombstoned request, or for one past its `D`, is refused); the link's bitemporal change log. **Affected flags** per reservation and minute are *derived* state, a deterministic projection of the log (A4), not entries: the cuts that change them are entries (AI-R1-6) | One partition per link; a hot link has a group to itself | P1-N1 … P1-N9, POL-05, POL-07, POL-09, POL-10, POL-31 |
 | **Account owner** | Decide every booking request and every change of one account, and keep everything that account-level admission depends on, **in one serial order on one two-region log** | Per account. *Booking module* (RFC-002): booking requests (idempotency key, fingerprint, principal, `D`, `request_age`, `wait`, progress per leg, waiting, withdrawing and takeover marks, the **deciding entry** with its reason, and for a non-confirmed outcome its **"releases durable"** record, built from the release acknowledgements of every Share leg in the intake); reservations as route-level units (legs, parts, locked prices, partner terms shown at booking, lifecycle and end cause, partner-leg affected status, equivalent-path offers); per-reservation change queue. *Funds and standing module* (RFC-004 Part A): funds holds and credit holds, taken **one at a time in arrival order** with capacity in flight and key limits, so a request refused because a concurrent request's hold is in place is rejected (v1.6, B-RQ-1); capacity in flight per key and account; key spending per `key_spend_period`; booking-rate counters per key and account, **in the owner's memory**, rebuilt by a new owner from the last second's intake entries, so exact except for one second after an owner change, when a key or account can be admitted up to twice its limit (the retries its predecessor answered from state are not in the log; D5, B-AI-4); **key status and KYB status as applied here** (a funds kind, F4: limits feed key headroom, KYB gates credit limits; the booking module reads revocation from it; D6, AI4-2, AI4-3); headroom inputs as applied feed entries (ledger balance through a ledger position; unposted usage through a rating position **and the ledger position X it was computed against, applied only once the applied ledger position has reached X**, AI3-3); credit limit as applied; standing, its cause, grace start and resume amount, and network operations' **enforcement acknowledgements** (F8, AI4-5); low-balance warning state | By account (idempotency keys, limits and headroom are all per account) | P2-N1 … P2-N11, P4-N3 … P4-N6, P4-N17 (limit and standing side), POL-03, POL-04, POL-08, POL-15, POL-16, POL-18, POL-25, POL-26, POL-29 |
 | **Partner adapters** | Speak one partner's API safely, and **stand in for a schedule owner for Share's own position at each partner link**: idempotent hold (with an absolute expiry set to `D`), confirm, final booking, release and cancel; classify answers (held, definite refusal, transient, unknown); order Share's own waiters by the priority rule; reconcile | Per partner link: the partner's classification under POL-26 (offers holds only if they last at least `route_deadline_max` + `commit_margin` **and** accept an expiry set by Share; otherwise without holds, P2-S102); Share's outstanding holds and bookings at the partner, each with its request, `D` and age; the waiter queue of Share requests refused because of Share's own position (POL-02), by `priority_rule`, each waiter with its `D` and commit fence; request tombstones as on a link owner; call journal with idempotency keys and the time each partner confirm was sent (the request's "begin committing" time, POL-26); reconciliation results and mismatches | By partner link, on a two-region log | P2-N7, part of P2-N4, POL-02 (partner refusals), POL-26 (partner holds), POL-28 |
 
@@ -161,7 +161,7 @@ RFC-006 states the per-minute budget arithmetic on the 5 s figure.
 |---|---|---|---|---|
 | **Ledger** | Be the only writer of money movements: validate (sums to zero per currency, every amount tagged), deduplicate by source reference (for a movement caused by an operator correction or attribution, a **derived reference** from the receiving owner's checked source reference, AI4-1), compute the amounts that depend on the partition's own state at append (M1's repayment, M18's write-off amount; deterministic and partition-local, AI4-8), append, never alter; serve **cuts at one database timestamp** (§4.5) | The journal of movements; source-reference deduplication (7 years) as watermarks per structured reference plus exception sets, with principal and content digest; per-account balances as derived projections. No closed position of its own: the database's closed timestamp covers every partition at once, and a cut is a read of every partition at one database timestamp below it, recorded by the run that takes it (AI4-10) | Journal partitioned by the movement's **home**, a function of its source reference alone, so a redelivery always lands where the original did: (1) the buyer, if the movement touches a buyer (charges, amendments, fees, top-ups, invoice payments, reversals, write-offs, corrections Share bears for a buyer); (2) otherwise the **buyer whose request, reservation or traffic caused it**, where there is one (carried excess paid by Share, the dearer-path difference, a partner cancellation fee Share bears, the FX difference on a buyer's top-up, a supplier debt raised by an amendment); the buyer's own balance is not touched, so it stays wholly in its partition; (3) otherwise the supplier, if it touches exactly one (payouts, supplier debts and their payments, duplicate-payout debts); (4) otherwise one of N **Share sub-partitions** by a hash of the source reference (FX differences on payouts, Share's own deposits and withdrawals). A movement never touches two buyers. Supplier and Share balances are aggregates over partitions at a cut (one database timestamp), so no partition is a hot row (A0R-09) | P4-N7, P4-N15, P4-N16 (movements), POL-11, POL-20, POL-29 |
 | **Settlement** | Turn each charge, cost line or amendment into one movement split among its route's parties; pay the costs Share bears; raise supplier debts in the buyer partition that causes them (M9) | Per charge line: the posted total, from which normal-mode shares per party are derived; shares per party stored only for own-mode lines (AI4-9); the posting acknowledgement passed back to rating (AI3-3); deviation from exact proportions per party per payout period, aggregated per supplier | By buyer account (charges); by supplier (the deviation report aggregate only, AI4-4) | P4-N8, P4-N9, P4-N11, POL-12, POL-23 |
-| **Payments, receivables and reconciliation** | Everything that moves money between Share and the outside on the buyer side, and the daily proof that the books match the money | Payment events as received (authenticated, 2-region durable before the provider is acknowledged); the **binding of each provider transaction reference to its account**, fixed by the first authenticated **and well-formed** event, which every later event for that reference is checked against (a malformed event is recorded and rejected without creating a binding, P4-S05; V-05); top-up conversions; pending orphan reversals (72 h); invoices, invoice payments as applied to invoices, and write-offs; daily reconciliation runs, each reading every ledger partition at one database timestamp (a cut, recorded with the run, §4.5; AI4-10), and their differences, including incoming payments received by the partner and not yet posted (RQ-11); an **investigation stream**, partitioned by provider, recording every notification whose authenticity is not proven, which never creates a binding (X1-S10, AI5-5) | Per kind of state (V-04): payment events, their reference bindings and pending orphan reversals by **(provider, transaction reference)**, so every event for one provider transaction, its reversal included, is in one partition (A0R-04); invoices, invoice payments as applied and write-offs **by account**, fed idempotently by the payment's reference (the overdue and paid feeds go to that account's owner); reconciliation runs **by day** | P4-N1, P4-N2, P4-N13, P4-N14, P4-N17 (invoices), POL-15, POL-20, POL-21, POL-24 |
+| **Payments, receivables and reconciliation** | Everything that moves money between Share and the outside on the buyer side, and the daily proof that the books match the money | Payment events as received (authenticated, 2-region durable before the provider is acknowledged); the **binding of each provider transaction reference to its account**, fixed by the first authenticated **and well-formed** event, which every later event for that reference is checked against (a malformed event is recorded and rejected without creating a binding, P4-S05; V-05); top-up conversions; pending orphan reversals (72 h); invoices, invoice payments as applied to invoices, and write-offs; daily reconciliation runs, each reading every ledger partition at one database timestamp (a cut, recorded with the run, §4.5; AI4-10), and their differences, including incoming payments received by the partner and not yet posted (RQ-11); an **investigation stream**, partitioned by provider, recording every notification whose authenticity is not proven, which never creates a binding (X1-S10, AI5-5) | Per kind of state (V-04): payment events, their reference bindings and pending orphan reversals by **(provider, transaction reference)**, so every event for one provider transaction, its reversal included, is in one partition (A0R-04); invoices, invoice payments as applied and write-offs **by account**, fed idempotently by the payment's reference (the **invoice-status feed**, overdue, paid, written off and credit limit removed, goes to that account's owner, each event carrying the buyer partition's ledger position, §8; revision 4.2, A-1); reconciliation runs **by day** | P4-N1, P4-N2, P4-N13, P4-N14, P4-N17 (invoices), POL-15, POL-20, POL-21, POL-24 |
 | **Payouts** | Pay suppliers weekly, once, net supplier debts and recover what a provider executes twice | Payout runs (each at a cut at one database timestamp, recorded with the run; AI4-10), instructions (with their references), **transfer confirmations and failures** (authenticated by RFC-005's verifier, AI5-2; routed by the instruction reference, with the provider's reference recorded, and deduplicated here; payouts is their only writer, V-04), the **supplier-debt register** (debts raised in buyer partitions, M9, or by payouts, M16; netting and invoicing are payout rules, POL-22; AI4-4), escalations, residues carried | By supplier | P4-N12, POL-22 |
 | **Reporting and statements** | Serve every account its statement and every supplier its view, from the owners' feeds | Read models only (no facts of its own): statements, supplier schedules with opaque reservation references, deviation reports | By account | P4-N10, the supplier view of X1-N2 and POL-33 |
 
@@ -170,13 +170,13 @@ RFC-006 states the per-minute budget arithmetic on the 5 s figure.
 | Component | Single responsibility | State it owns | Serves |
 |---|---|---|---|
 | **Edge gateway** | Terminate every external call: authenticate, resolve the principal, shed gross abuse with advisory rate counters, **enforce `key_poll_limit` exactly**, forward once to the owner partition's lease holder, answer within `ack_budget` | Advisory booking-rate counters (soft state; the exact booking limits are enforced by the account owner, D5); **exact poll counters, sharded by key** onto poll-limiter instances in the leader region, every poll of one key routed to its shard (AI4-6, AI5-1). Counters are soft state: for one `key_poll_limit` window after a shard moves, a key can be answered up to twice its limit (the bound) | X1-N1; P2-S67 |
-| **Identity and access** | Principals, agent keys and their limits, roles, consent to identify an account to a named supplier, webhook endpoints, the personal-data store, and the authorisation decision for every operation | Accounts' users and administrators (pseudonymous identifiers only in its log, A11); agent keys, their limits and revocations, and KYB status as recorded by onboarding, all pushed to the account owner on the **identity status push**, which the funds module applies (D6, AI4-2, AI4-3); operator roles; supplier-consent records (POL-33); **webhook endpoint registrations and their signing secrets**, as administrator-managed credentials, which the notifier reads (AI5-4); refused attempts at its own key and consent commands, in its own log (AI5-6); the **personal-data store**: every item of personal data, encrypted under a per-subject key held in Kenyan HSMs, erased by destroying the key (A11) | X1-N1 … X1-N4, X1-N9, X1-N10, POL-25, POL-32, POL-33 |
+| **Identity and access** | Principals, agent keys and their limits, roles, consent to identify an account to a named supplier, webhook endpoints, the personal-data store, and the authorisation decision for every operation | Accounts' users and administrators (pseudonymous identifiers only in its log, A11); agent keys, their limits and revocations, and KYB status as recorded by onboarding, all pushed to the account owner on the **identity status push**, which the funds module applies (D6, AI4-2, AI4-3), and served on demand by **catch-up** per account slot (revision 4.2, AI-R5-4); credentials served to edges on the **edge stream**; operator roles and credentials, served to every verifier of operator envelopes and read grants by the **operator check**; supplier visibility served by **`visibility()`** (revision 4.2, AI-R5-1; §8); supplier-consent records (POL-33); **webhook endpoint registrations and their signing secrets**, as administrator-managed credentials, which the notifier reads (AI5-4); refused attempts at its own key and consent commands, in its own log (AI5-6); the **personal-data store**: every item of personal data, encrypted under a per-subject key held in Kenyan HSMs, erased by destroying the key (A11), and items put with an expiry (payload buckets) wrapped under an expiry key held only in the HSMs, never escrowed or backed up, destroyed at the expiry (AI3-13); **erasure requests**, taken from the user through the edge, and **recovery objections** (revision 4.2, AI-R5-1) | X1-N1 … X1-N4, X1-N9, X1-N10, POL-25, POL-32, POL-33 |
 | **Operator console and approvals** | The only way operators act: every action names its role and reason, four-eyes actions wait for a second approval by another operator of the same role (compliance, commercial or network operations, POL-32 v1.6; AI5-10), then the action is sent to the component that owns the state; buyers' **documented requests** arrive from the edge with the buyer's principal context (AI5-9) | Operator action requests, documented requests, pending approvals and their outcomes, on a two-region log; refused attempts at privileged actions made through the console (refusals of identity and access's own commands are recorded there, AI5-6) | X1-N7, POL-30, POL-32 |
 | **Audit** | Keep the immutable record of every change X1-N8 names (money, capacity, links or keys; every grant or removal of an operator role or administrator right; every consent given or withdrawn; every change of a price, weight, partner term or other policy setting; every webhook endpoint registered or changed; AI5-10), every operator action and every refused privileged attempt, for the retention period | The audit store, built from audit fields every owner writes in its own log (pseudonymous principal, time, role, reason), indexing the refusals recorded by the console and by identity and access alike | X1-N8, POL-19 |
 | **History** | Answer "as known at T" questions and keep every owner's log for 7 years | Archived owner-log segments in object storage replicated in two regions, and their bitemporal indexes (read models; owners stay the writers of the facts) | P1-N9 (storage), P4-N16 (rebuild), X2-N6, POL-19 |
 | **Notifier** | Deliver every outbound notice: signed buyer webhooks retried for `webhook_retry`, affected-reservation notices within `affected_notice_time`, suspension and low-balance notices, supplier notices, operational alerts | Delivery attempts and their status; it consumes Kafka topics and reads endpoints and signing secrets from identity and access (AI5-4); contact details are resolved from the personal-data store at send time and never stored here (A11) | P2-N2 (webhooks), part of P1-N8, P4-N5, X1-N6 (signing with keys from identity and access) |
-| **Probes** | Measure availability from outside each serving region as the designated probe account on designated probe links and exporters | Probe results per capability and minute | X2-N1 |
-| **Placement and time** (platform) | Map every partition to an owner slot and every slot to its owner lease (a slot row naming its holder session and epoch, valid while that session is live, §5.2; AI6-1); keep the database leaseholders **and** the owner-lease holders of **every** group (admission, ingestion, ledger, payments, rating and the rest) in one Kenyan region while it is healthy and move them together, region-wide, when it is not (AI-3); reconfigure the database's replica placement to 2 + 2 automatically after a sustained region loss (AI-2); move partitions with an epoch; publish closed positions and report positions (§4.6); provide the clock bound `ε`, the database's maximum clock offset | The placement table (slot → owner kind, preferred region, epoch) and the owner-lease tables (owner sessions and slot rows, §5.2), in the database at 2 + 2 + 1; the database's zone configurations (voter constraints, lease preferences); leader-placement policy and its triggers | Single writer across failures (POL-05), deadlines (POL-26), status reads (POL-04) |
+| **Probes** | Measure availability from outside each serving region as the designated **probe accounts, one per account slot** (X2-S27; revision 4.2, B-AI-10), on designated probe links and exporters, so every account slot is probed every minute in each serving region | Probe results per capability, account slot and minute | X2-N1 |
+| **Placement and time** (platform) | Map every partition to an owner slot and every slot to its owner lease (a slot row naming its holder session and epoch, valid while that session is live, §5.2; AI6-1); own the **account slot map** (account → slot, overrides included), the single source of truth that the account owner, the edge and probes read, and refuse any re-slotting that would leave an account slot without its probe account (revision 4.2, B-AI-10); keep the database leaseholders **and** the owner-lease holders of **every** group (admission, ingestion, ledger, payments, rating and the rest) in one Kenyan region while it is healthy and move them together, region-wide, when it is not (AI-3); reconfigure the database's replica placement to 2 + 2 automatically after a sustained region loss (AI-2); move partitions with an epoch; publish closed positions and report positions (§4.6); provide the clock bound `ε`, the database's maximum clock offset | The placement table (slot → owner kind, preferred region, epoch) and the owner-lease tables (owner sessions and slot rows, §5.2), in the database at 2 + 2 + 1; the database's zone configurations (voter constraints, lease preferences); leader-placement policy and its triggers | Single writer across failures (POL-05), deadlines (POL-26), status reads (POL-04) |
 | **Status replicas** (platform) | Answer status reads and headroom reads in each serving region off the owner's write path | Soft state only: per account slot, the recently decided requests pushed by the owner lease holder, under a read lease; anything older is read from the database by bounded-staleness follower reads. One status-reader instance per Kenyan facility, each reading through the database replicas in its own facility: the three Kenyan voting replicas other than the leaseholder's, plus one **non-voting replica** per Kenyan facility for the account tables (AI-4, §4.6) | P2-N2, POL-04 |
 
 **Merges and splits, and why.**
@@ -293,7 +293,11 @@ flowchart LR
   ST --> LE
   PAY --> PR
   PR --> LE
-  PR --> AO
+  PR -.-> AO
+  AO --> IAM
+  LO --> IAM
+  NO --> IAM
+  MI --> IAM
   PO --> LE
   PO --> PAY
   LE -.-> AO
@@ -332,17 +336,33 @@ status replicas, reporting → identity (consent at view time) and identity → 
 (endpoints and signing secrets) (AI5-7). Revision 4.1 adds edge → console, the intake of
 buyers' documented requests (AI5-9), and the link displacement read, which is a read
 inside the account owner's confirm transaction rather than a flow (A1, AI-R1-11).
+Revision 4.2 names the **owner-served replacements for cross-owner reads** (AI-R5-1), so
+no owner reads identity's tables or the console's by SQL: the identity **edge stream**
+(GW → IAM, replacing the edge cache "refreshed by push"); **catch-up** (AO → IAM, pulled by
+the account owner when its push is silent); **`visibility()`** (RP → IAM, NO → IAM, and the
+provisioning feed); the **operator check** (every owner and reader of operator envelopes
+and read grants → IAM; AO → IAM and LO → IAM stand for all of them); **target summaries**
+(console → owner, served by the owner); **read grants** carried by the console's reads to
+reporting, status replicas, the link owner, catalogue, the audit query and the
+personal-data store, each reader appending its own audit record; the edge → identity
+**erasure-request intake** and **recovery objection** (GW → IAM; the console only reads
+the queue through `open_requests`); and metering ingestion's **`put_payload`** (MI → IAM).
+It also makes the receivables → account owner flow an **invoice-status feed** (PR ⇢ AO,
+A-1) and adds the console's **credit-limit command** (CON → AO).
 
 | Interaction | Mode | Why |
 |---|---|---|
-| Edge → identity and access | Synchronous, from a local cache refreshed by push; cache entries for agent keys live at most 30 s | Authentication must be on every call (X1-N1) but cannot cost a remote call within 200 ms. A revocation reaches every edge within 60 s for new requests (X1-N3). |
+| Edge → identity and access | Synchronous, from a local replica fed by identity's **edge stream** (signed credential records in commit order, a signed heartbeat every second; revision 4.2, AI-R5-1); the edge refuses a slot's credentials once its heartbeats stop for 31 s | Authentication must be on every call (X1-N1) but cannot cost a remote call within 200 ms. A revocation reaches every edge within 60 s for new requests (X1-N3). |
+| Edge → identity and access (erasure request, recovery objection) | Synchronous command from the user's own session; identity verifies the access token itself and records the request at its own commit time | The erasure clock starts only at a time identity recorded (v1.7, POL-19); the console never records a request, it reads the queue (`open_requests`) (AI-R5-1). |
+| Owners and readers → identity and access (operator check); console → owner (target summary) | Synchronous query or command, at the present timestamp in identity's operator partition | Every owner and reader verifies role, credential, single use and cancellation of each operator assertion from identity itself, not from console state or a SQL read (AI-R5-1). |
+| Reporting, notifier, provisioning feed → identity and access (`visibility()`) | Synchronous query per view, consistent read at the present timestamp, never cached across views | POL-33: consent is checked at view time, by its owner (AI-R5-1). |
 | Edge → account owner leader | Synchronous, one forward; the edge answers `pending` if no final answer is ready in time for `ack_budget` | POL-04. The workflow runs at the account leader, so the edge makes one hop, not four (A0-05). |
 | Edge → operator console (documented requests) | Synchronous; the console's intake authorises the request with the buyer's principal context and records it on its own log | POL-32 (v1.6): a documented request is made through the marketplace by a buyer principal and must reach the console's log; no other channel can enter one (AI5-9, RFC-005). |
-| Account owner → link owners | Synchronous on the booking path (hold, with `D` and the commit fence `D_c`; `mark_waiting`); asynchronous after the decision (convert, with reservation, part and decision time; request-scoped release, with `D`; leg changes `end_leg` and `reduce_parts` and the offer-hold commands, each with the decision time); each release and leg change is acknowledged once durable | The answer within `ack_budget` needs the hold; conversions can lag because the hold keeps counting; a non-confirmed outcome is reported only once every Share leg has acknowledged its release (A10); known-at history needs the decision time of every leg change (AI-R1-7). |
-| Link owner or partner adapter → account owner (waiting notice, capacity released to a waiter, yield requested, **displaced**, affected reservation, revocation due, expire requested, release acknowledged) | Asynchronous notification or command, idempotent by (link, epoch, sequence) | The participant observes; the account owner decides (A9). A yield or a displacement takes effect only once the account owner accepts it in its own order (`displacement_accept` beside yield acceptance), so a hold is never released under a request that is already committing; a request already decided confirmed when the reduction reaches it becomes an affected reservation, and the link alerts (v1.6, AI-R1-4). The notice is not what orders a confirm against a reduction: the confirm transaction's read of the link's displacement markers is (AI-R1-11, §3 below). |
+| Account owner → link owners | Synchronous on the booking path (hold, with `D`, the commit fence `D_c`, `wait`, kind, receipt minute and policy version, AI-17-1; `mark_waiting`); asynchronous after the decision (convert, with reservation, part and decision time; request-scoped release, with `D`; leg changes `end_leg` and `reduce_parts` and the offer-hold commands, each with the decision time); each release and leg change is acknowledged once durable | The answer within `ack_budget` needs the hold; conversions can lag because the hold keeps counting; a non-confirmed outcome is reported only once every Share leg has acknowledged its release (A10); known-at history needs the decision time of every leg change (AI-R1-7). |
+| Link owner or partner adapter → account owner (waiting notice, capacity released to a waiter, yield requested, **displaced**, affected reservation, revocation due, expire requested, release acknowledged) | Asynchronous notification or command. Point-to-point notifications are **idempotent state messages** deduplicated by their identity (request, attempt, kind), with no high-water rule, and the account owner reconciles every request still waiting with a `query` on a timer (revision 4.2, AI-17-2); commands carry the sender's (generation, epoch) for fencing (§5.2) | The participant observes; the account owner decides (A9). A yield or a displacement takes effect only once the account owner accepts it in its own order (`displacement_accept` beside yield acceptance), so a hold is never released under a request that is already committing; a request already decided confirmed when the reduction reaches it becomes an affected reservation, and the link alerts (v1.6, AI-R1-4). The notice is not what orders a confirm against a reduction: the confirm transaction's read of the link's displacement markers is (AI-R1-11, §3 below). |
 | Account owner → partner adapter → partner | Asynchronous to the buyer (the buyer gets `pending`), synchronous within the request's own workflow | Partner calls are slow and unreliable (P2 C7); only the request's deadline bounds them (POL-26). |
-| Identity and access → account owner (identity status push: key revoked, key limits, KYB status) | Asynchronous push, applied as an entry within 60 s of the administrator's action | Gives P2-S72 and P2-S103 one order (D6); F5 refuses a credit limit on an account whose applied KYB status is not vetted (AI4-2). |
-| Ledger → account owner (balance through position); rating → account owner (unposted usage through a rating position, with the ledger position X it was computed against); payments → account owner (invoice overdue, invoices paid); account owner → rating (usage applied, through which position) | Asynchronous feeds, applied as log entries | Headroom is computed from inputs at recorded positions, so every shown figure is reproducible (P4-S72, A0-21). An unposted-usage figure is applied only once the applied ledger position has reached its X, so a line is never out of both the unposted usage and the balance (headroom never overstated; a line in both understates it, which is safe) (AI3-3). |
+| Identity and access → account owner (identity status push: key revoked, key limits, KYB status) | Asynchronous push (Kafka, with the changefeed's resolved timestamps), applied as an entry within 60 s of the administrator's action; when the push has brought no fresh resolved timestamp for 20 s, or on a new owner lease before deciding, the account owner **pulls catch-up** for its account slot from identity by gRPC (a consistent read), applied in one entry; it **confirms only within 45 s of its identity freshness** (revision 4.2, AI-R5-4) | Gives P2-S72 and P2-S103 one order (D6); F5 refuses a credit limit on an account whose applied KYB status is not vetted (AI4-2). A Kafka outage cannot let a revoked key's undecided request be confirmed: either catch-up brings the revocation within 60 s, or no request of the slot is confirmed after 45 s (X1-N3). |
+| Ledger → account owner (balance through position); rating → account owner (unposted usage through a rating position, with the ledger position X it was computed against); receivables → account owner (**invoice-status feed**: overdue, paid, written off, credit limit removed, each with the buyer partition's ledger position receivables had applied; A-1); operator console → account owner (**credit-limit command**, finance envelope); account owner → rating (usage applied, through which position) | Asynchronous feeds, applied as log entries; the credit-limit command synchronous | Headroom is computed from inputs at recorded positions, so every shown figure is reproducible (P4-S72, A0-21). An unposted-usage figure is applied only once the applied ledger position has reached its X, so a line is never out of both the unposted usage and the balance (headroom never overstated; a line in both understates it, which is safe) (AI3-3). An invoice-status event is likewise applied only once the applied ledger position has reached the position it carries, so a standing or credit change is never applied ahead of the movements it was computed from (A-1). |
 | Account owner → rating, history (reservation lifecycle); link owner → rating, notifier, history (capacity and affected flags) | Asynchronous feeds | Rating has 2 min per minute; affected notices have 60 s (POL-07); history and statements have minutes. |
 | Rating → settlement → ledger, and back | Asynchronous feed; posting is a synchronous call to the ledger from settlement, idempotent by source reference; settlement returns a **posting acknowledgement** per line (with the ledger position) to rating | A posting must be acknowledged durable before rating marks a line posted (AI3-3). |
 | Payment notification → payments → ledger → account owner | Synchronous acknowledgement to the provider after 2-region durability; posting and headroom update asynchronous | X2-S14; top-up to credited headroom within 10 s at p99 (X2-N3). |
@@ -353,9 +373,10 @@ inside the account owner's confirm transaction rather than a flow (A1, AI-R1-11)
 
 Route over Share links L1, L2 and partner link P (a partner with holds under POL-26),
 default deadline 30 s, so `commit_margin` = 10 s applies. `D` is the deadline; `τ` is the
-confirm fence (§4.3), about 260 ms with the revision-4 estimates (the database's 100 ms
-maximum clock offset plus the configured `δ_x`), up to about 300 ms if the measured
-p99.9 raises it (AI6-3).
+confirm fence (§4.3), about 420 ms with the revision-4.2 estimates (the database's 100 ms
+maximum clock offset plus the configured `δ_x`, which now includes one batching wait at
+the account slot and one at the link slot), at most about 450 ms before the lever of §4.3
+is applied (AI6-3; revision 4.2, AI-17-5).
 
 ```mermaid
 sequenceDiagram
@@ -370,15 +391,15 @@ sequenceDiagram
   participant No as Notifier
 
   Bu->>Ed: book route L1, L2, P (idempotency key, rate, window, deadline)
-  Ed->>Ed: authenticate from cache, advisory rate check
+  Ed->>Ed: authenticate from the edge replica, advisory rate check
   Ed->>Ao: forward once to the account leader
   Ao->>Ao: exact rate limits, dedupe by key and fingerprint, validate, fix D and age, check headroom, key headroom, in-flight, standing
   Ao->>Ao: entry 1, intake + funds hold, durable in two regions
   par capacity holds
-    Ao->>L1: hold (account, request, rate, window, D, D_c, age)
+    Ao->>L1: hold (account, request, rate, window, D, D_c, age, wait, kind, receipt minute, policy version)
     L1-->>Ao: held, durable in two regions
   and
-    Ao->>L2: hold (account, request, rate, window, D, D_c, age)
+    Ao->>L2: hold (account, request, rate, window, D, D_c, age, wait, kind, receipt minute, policy version)
     L2-->>Ao: held, durable in two regions
   and
     Ao->>PA: hold at partner, expires_at D
@@ -419,8 +440,8 @@ for a tombstoned request, or one arriving when its own clock is past `D − comm
 less the partner-skew budget (R17). A partner booking it nonetheless finds for a
 tombstoned request is cancelled at once at Share's cost (POL-28; V-03). The journaled send time is the request's "begin committing" time, which is therefore
 never later than `D − commit_margin` (POL-26, P2-S109). The partner confirm thus has
-`commit_margin − τ` (about 9.7 s, for `τ` from 260 to 300 ms) before the confirm fence
-(RQ-7, R2-D1, AI6-3).
+`commit_margin − τ` (about 9.6 s, for `τ` from 420 to 450 ms) before the confirm fence
+(RQ-7, R2-D1, AI6-3, AI-17-5).
 
 #### The deadline path
 
@@ -478,23 +499,30 @@ What changes on the other paths (each specified in RFC-002):
 - **A capacity reduction** (outage, maintenance, permanent reduction) recorded on a link
   where a request holds or waits and no longer fits: the link owner writes a
   **displacement marker** for each displaced hold in the reduction's own transaction,
-  sends `DISPLACED` and keeps the hold (A9). The account owner, in its own order, ends the
-  request *rejected* if it **has not begun committing** and no longer fits on committed
-  capacity (if it still fits, the leg becomes a waiter), and answers `displacement_accept`
-  or the request-scoped release; a request that had begun committing (a partner confirm
-  journaled, or its confirm in flight) goes on to its outcome, which answers the notice
-  (`convert` or the release; erratum, B-AI-7). A waiter that no longer fits is refused with a tombstone. If the account owner
-  had already decided the request confirmed, or it had begun committing before the record,
-  the confirmation stands and becomes a confirmed reservation flagged **affected** at those
+  sends `DISPLACED` and keeps the hold (A9). For POL-07 a request **has begun committing
+  only if its confirm transaction committed without seeing the marker** (v1.7, P1-S78;
+  revision 4.2, B-AI-9): a partner confirm already sent or journaled does not count. The
+  account owner, in its own order, ends an undecided request *rejected* if it no longer
+  fits on committed capacity (if it still fits, the leg becomes a waiter), and answers
+  `displacement_accept` or the request-scoped release; a partner booking it had made is
+  cancelled at once at Share's cost (POL-28). A request whose confirm transaction was in
+  flight when the notice arrived goes on to that transaction's result, which answers the
+  notice: `convert` if it committed without seeing the marker, otherwise the displacement
+  handling above (B-AI-7 as narrowed by B-AI-9). A waiter that no longer fits is refused
+  with a tombstone. If the account owner had already decided the request confirmed, the
+  confirmation stands and becomes a confirmed reservation flagged **affected** at those
   minutes, notified within `affected_notice_time`, and the link raises an operational alert
   (v1.6, binding; AI-R1-4, B-RQ-2). **The notice interval is closed by a read** (AI-R1-11,
   B-RQ-9): the account owner's serialisable confirm transaction makes one point read per
   Share leg of that link's displacement markers (A1: a read of another owner's rows, never
   a write). The database orders the two transactions: if the reduction committed first,
-  the confirm sees the marker and the request is handled as displaced (unless it had begun
-  committing earlier, through a partner confirm journaled before the marker's timestamp);
+  the confirm sees the marker and the request is handled as displaced, with no exception;
   if the confirm committed first, it began committing before the record. Cost: about 1 to
-  2 ms per confirm (est.), no extra commit.
+  2 ms per confirm (est.), no extra commit. Confirmed reservations that no longer fit are
+  cut by **target rates** (the link's cut for each reservation in the reduction's affected
+  set, "on link L, from `T_eff`, at most r Mbps"), which the account owner composes by
+  `min` over its links and reductions; their minutes from `T_eff` stay open for rating
+  until the link's final step for the reduction is applied (§4.5; revision 4.2, AI-17-3).
 - **A partner without holds** (including one whose holds are too short or cannot take an
   expiry set by Share, POL-26, P2-S102) is booked last, after every other leg is held,
   after the funds hold and after Share's checks, at most one per route (POL-28). If
@@ -557,12 +585,53 @@ every partition of the slot, each partition reading its own head row (which keep
 sequence contiguous and its entry timestamps monotone, §5.5); entries that arrive while
 one is committing go into the next. So there is still at most one transaction in flight
 per partition, and the per-partition guarantees are unchanged, at about a quarter of the
-transaction rate per-partition batches would cost for metering and rating (RFC-003). A
-slot whose partitions are idle pays nothing; a **busy slot** (the hottest links, each on a
-slot of its own, an account near `account_rate_limit`) adds up to one commit of batching
-wait, about 15 ms at p50 and 30 ms at p99 (est.). Revision 3.2's Raft
-pipelining (a group commit every 5 ms) avoided most of it; this is part of what the
-substrate costs (Competition).
+transaction rate per-partition batches would cost for metering and rating (RFC-003).
+Revision 3.2's Raft pipelining (a group commit every 5 ms) avoided most of the batching
+wait; this is part of what the substrate costs (Competition).
+
+**Batching waits are budgeted, per owner step and per topology state** (revision 4.2,
+AI-17-5, A-2, AI-R6-4). Revision 4.1 said "a slot whose partitions are idle pays nothing".
+At the design load no admission slot is idle: an entry finds its slot's batch lane busy
+with probability about the lane's **occupancy** ρ (transactions a second × mean commit
+time) and then waits the remainder of the commit in flight, at most one commit. So every
+account entry and every link step carries a batching wait `W`, budgeted at p99 below.
+
+- **Occupancy target.** Slot counts are set so that a shared slot's lane is at most about
+  0.15 occupied in steady state at the design load. The account owner's entries are about
+  110,000/s (intake and deciding entries, marks and "releases durable", about 58,000/s;
+  applied unposted usage, up to about 50,000/s; applied ledger positions, about 2,700/s;
+  est., RFC-002 and RFC-004), so this needs about **16,384 account slots** (about 6
+  accounts and 7 entries a second per slot, ρ ≈ 0.11, est.) instead of 1,024; shared link
+  slots carry about 45,000 entries/s, so about **4,096 shared link slots** (ρ ≈ 0.2, est.)
+  instead of 512. Slots are logical: owner leases are renewed per process, not per slot
+  (§5.2), read-lease heartbeats are per process, and report-position markers are bounded
+  by the outcome rate, not the slot count. **Marker-only transactions do not take the
+  lane**: they write only the slot's marker row and read the epoch, so they run beside a
+  batch (B-AI-8). Coalescing the applied unposted usage to the `attribution_lag_max`
+  budget (RFC-004) would roughly halve the account entries and the slot count; RFC-006
+  sets the counts from the spike.
+- **The account-slot lever.** First **more slots**, as above. If the spike's account step
+  p99, batching wait included, at the design load exceeds 50 ms, the fallback is a
+  **second in-flight batch per account slot**, carrying only partitions that are not in the
+  batch in flight, so there is still at most one transaction in flight per partition and
+  no per-partition guarantee changes. With it an entry waits only when both lanes are busy
+  or its own account is in the batch in flight. The dedicated slots of the hottest links
+  keep R19's lever (a second in-flight batch with runtime-assigned sequences, RFC-006).
+
+| Topology state | Commit p99 | Account wait `W_a` (one lane; with the second lane) | Shared link wait `W_l` | Hottest link (dedicated slot, always busy) |
+|---|---|---|---|---|
+| Steady state (and one facility lost in R1) | 30 ms | 20 ms; 5 ms | 20 ms | 30 ms |
+| One Nairobi–Mombasa path cut, or one facility lost in R2 | 35 ms | 25 ms; 5 ms | 25 ms | 35 ms |
+| R2 lost (commits through R3, lanes about 0.5 occupied) | 70 ms | 65 ms; 35 ms | 65 ms | 70 ms |
+| R1 lost (owners in R2, commits through R3) | 75 ms | 70 ms; 40 ms | 70 ms | 75 ms |
+
+How `W` is estimated (est., to be measured, R1): the p99 wait is the commit remainder that
+only 1% of arrivals exceed, P(busy) × P(remainder > `W`) = 0.01. At ρ of about 0.1 to 0.2
+that is about two thirds of the commit p99; at ρ of 0.5 or more (every degraded state,
+whose commits are about three and a half times longer, so the same slots are that much more
+occupied) it is about one commit. With two lanes, "busy" means both lanes, about ρ²; the
+degraded states keep a large part of the wait because their ρ is high. Adding `W` to the
+commit p99 overstates the p99 of their sum, like the rest of the budget.
 
 **Leader placement** (AI-3). The database leaseholders **and** the owner-lease holders of
 **every** group, admission, ingestion, ledger, payments, rating and the rest, are kept in
@@ -581,31 +650,36 @@ stagger by owner class, so thousands of owner leases are not taken at once; and 
 expected time to move every leaseholder and owner lease, which must fit within
 admission's 1 min RTO. The R1 spike tests it.
 
-**Single-link booking, steady state, p99 (estimates; the sum of p99s, so conservative).**
+**Single-link booking, steady state, p99 (estimates; the sum of p99s, so conservative;
+revision 4.2 adds the batching waits).**
 
 | Step | Durability | p99 |
 |---|---|---|
-| Edge: TLS on a persistent connection, authentication from cache, advisory limits, routing | none | 10 ms |
+| Edge: TLS on a persistent connection, authentication from the edge replica, advisory limits, routing | none | 10 ms |
 | Hops in one region (gRPC between NestJS services): edge → account owner → link owner → account owner → edge | — | 6 ms |
+| Batching wait at the account slot for entry 1 (`W_a`) | — | 20 ms |
 | Entry 1 at the account owner: exact rate limits, dedupe, headroom, key headroom, in-flight, standing (in memory, in arrival order); intake + funds hold, one transaction | two regions | 30 ms |
+| Batching wait at the link slot (`W_l`, a shared link slot) | — | 20 ms |
 | Capacity check (in-memory peak query) and hold at the link owner, one transaction | two regions | 30 ms |
+| Batching wait at the account slot for entry 2 (`W_a`) | — | 20 ms |
 | Entry 2 at the account owner: confirm if undecided (fence checked against the transaction's commit timestamp; one in-region point read of the link's displacement marker, about 1 to 2 ms, AI-R1-11), binding the funds | two regions | 30 ms |
 | Report position reaches entry 2: the committed batch is pushed to every status replica holding a read lease and each acknowledges applying it (V-01, V-02); the edge answers final only then | — | 10 ms |
-| **Total, edge in R1** | | **about 115 ms**, against 200 ms |
+| **Total, edge in R1** | | **about 176 ms**, against 200 ms (about 146 ms with the second account lane) |
 
 | Variant | Estimate (p99) |
 |---|---|
-| Edge in R2 (a Mombasa buyer, or the R2 probe), owners in R1: one extra R2 ↔ R1 round trip | about 125 ms |
-| Probe overhead (D2: within 10 ms of the region, persistent TLS) | + up to 10 ms, so about 125 to 135 ms measured |
-| A busy account or link partition on the path (batching wait, above) | + up to 30 ms each, so about 145 ms on the hottest link |
-| Drift in steady state (an account and a link owner, or an owner and its leaseholder, in different regions, before placement corrects it): + 10 ms per crossing | at worst about 150 ms |
-| One facility lost in R1 or R2 | about 115 to 135 ms |
-| Single-link **rejection** on committed capacity: the link's refusal entry carries the request's tombstone, so the ending entry also records the release as durable and no further entry is needed | about 115 ms, as a confirmation |
-| Single-link request ended not confirmed after its hold (suspension, revocation, withdrawal): ending entry, request-scoped release at the link (hop + commit), "releases durable" entry, report position | about 106 + 5 + 30 + 30 + 10, so about 180 ms |
-| Route booking, time to `pending` (edge, hop, entry 1, response) | about 45 ms steady; about 90 ms after a region loss |
-| Route ended not confirmed, from its ending entry to the report: release at each held link (hop + commit, in parallel), "releases durable" entry, report position | about 75 ms steady; about 165 ms after a region loss; within `status_staleness` (1 s) |
-| **R2 lost**, R1 serving: three commits at about 70 ms + 16 ms, plus the report position (status replicas in R1 only, once R2's read leases have expired, about 5 ms) | **about 230 ms** (p50 about 175 ms) |
-| **R1 lost**, R2 serving: three commits at about 75 ms + 16 ms, plus the report position (about 5 ms) | **about 245 ms** (p50 about 190 ms) |
+| Edge in R2 (a Mombasa buyer, or the R2 probe), owners in R1: one extra R2 ↔ R1 round trip | about 186 ms (156 ms with the second account lane) |
+| Probe overhead (D2: within 10 ms of the region, persistent TLS) | + up to 10 ms, so about 186 to **196 ms measured** (166 ms with the second account lane) |
+| The hottest link (dedicated slot, always busy: `W_l` 30 ms) | + 10 ms: about 186 ms from R1, 196 ms from R2. Probes never book it, and X2-S15 counts links with no capacity in flight |
+| An account near `account_rate_limit` (its own entries fill the lane; the wait is its own) | + up to 10 ms per account entry over `W_a` |
+| Drift in steady state (an account and a link owner, or an owner and its leaseholder, in different regions, before placement corrects it): + 10 ms per crossing | up to about 216 ms from R2 while it lasts (minutes; placement corrects it) |
+| One facility lost in R1; one facility lost in R2 or one Nairobi–Mombasa path cut | about 176 ms; about 205 ms (est.: 3 × (35 + 25) + 26), about 166 ms with the second account lane |
+| Single-link **rejection** on committed capacity: the link's refusal entry carries the request's tombstone, so the ending entry also records the release as durable and no further entry is needed | about 176 ms, as a confirmation |
+| Single-link request ended not confirmed after its hold (suspension, revocation, withdrawal): ending entry, request-scoped release at the link (hop, `W_l`, commit), "releases durable" entry (`W_a`, commit), report position | about 166 + 5 + 20 + 30 + 20 + 30 + 10, so about 280 ms; the edge answers `pending` within `ack_budget` and the outcome follows (these requests are a small share) |
+| Route booking, time to `pending` (edge, hop, `W_a`, entry 1, response) | about 65 ms steady; about 160 ms after a region loss |
+| Route ended not confirmed, from its ending entry to the report: release at each held link (hop, `W_l`, commit, in parallel), "releases durable" entry (`W_a`, commit), report position | about 115 ms steady; about 305 ms after a region loss; within `status_staleness` (1 s) |
+| **R2 lost**, R1 serving: three commits at about 70 ms, three waits at about 65 ms, + 16 ms, plus the report position (status replicas in R1 only, once R2's read leases have expired, about 5 ms) | **about 425 ms** (p50 about 200 ms) |
+| **R1 lost**, R2 serving: three commits at about 75 ms, three waits at about 70 ms, + 16 ms, plus the report position (about 5 ms) | **about 455 ms** (p50 about 210 ms) |
 
 The **report-position delay** is one push of the committed batch to the leased status
 replicas and their acknowledgement: about 10 ms steady (the farthest replica is in R2),
@@ -617,18 +691,28 @@ price of "a reported outcome stays reported" (POL-04, P2-S10, P2-S108) when the 
 answer is a report. `pending` is not a report and is not delayed. A slow replica delays a
 report by at most its lease.
 
-In steady state the budget leaves about 85 ms of margin (about 10 ms less than revision
-3.2, the cost of the database's per-transaction overhead), and about 55 ms on the hottest
-link. After a region loss a single-link booking's **final** answer misses 200 ms at p99;
+**X2-S15 at the design load** (revision 4.2). With the batching waits, a single-link final
+answer is about 176 ms at p99 from R1 and about 186 ms from R2, about 196 ms as the R2
+probe measures it: within 200 ms, by a sum of p99s that overstates the p99 of the sum,
+but with only about 4 ms of margin at the R2 probe (revision 4.1 claimed about 85 ms; it
+had left the waits out). With the second account lane the figures are about 146, 156 and
+166 ms. X2-S15 is a monthly p99 per serving region, so the transient rows (drift, a
+facility lost in R2, a path cut) move it only in proportion to their share of the month.
+The thin margin is recorded as **R23**: the spike's exit criterion is the account step's
+p99, batching wait included, at the design load (at most 50 ms), and the second account
+lane is turned on before go-live if it is not met.
+
+After a region loss a single-link booking's **final** answer misses 200 ms at p99;
 the **acknowledgement** still fits, because the edge answers `pending` once entry 1 is
-durable (about 90 ms) and the outcome follows by poll or webhook. POL-06 (RQ-3) suspends
-the latency targets for the declared disaster; RPO 0 is kept. Reconfiguring to 2 + 2
-(§5.1) restores fault tolerance during the disaster but not latency. Two mitigations are
-open for RFC-006: a two-write fast path for single-link bookings in the degraded state
-(about 10 + 6 + 2 × 70 + 5 = 160 ms at p99; Competition, R13), which on this substrate
-brings a degraded single-link final answer **under** 200 ms, and is therefore also the
-lever for the double Nairobi–Mombasa cut (§5.1); and a replacement site for the lost
-region, which ends the disaster as POL-06 defines it.
+durable (about 160 ms with the wait) and the outcome follows by poll or webhook. POL-06
+(RQ-3) suspends the latency targets for the declared disaster; RPO 0 is kept.
+Reconfiguring to 2 + 2 (§5.1) restores fault tolerance during the disaster but not
+latency. Two mitigations are open for RFC-006: a two-write fast path for single-link
+bookings in the degraded state (about 10 + 6 + 2 × 70 + 5 = 160 ms at p99 without
+batching waits, about 290 ms with them, about 260 ms with the second account lane;
+Competition, R13), which on this substrate no longer brings a degraded single-link final
+answer under 200 ms by itself; and a replacement site for the lost region, which ends the
+disaster as POL-06 defines it.
 
 ### 4. Consistency model
 
@@ -668,7 +752,7 @@ request's hold stays rejected (v1.6, §4.1).
 | Statements, supplier views, history, audit store | Minutes | Reporting RTO is 30 min; none of them is a writer of facts. |
 | Standing at network operations | `standing_notice_time` (10 s) | POL-06 splits the 60 s enforcement target. |
 | Affected-reservation notices | `affected_notice_time` (60 s) | POL-07. |
-| Agent-key revocation at the edge (new requests) and at the account owner (undecided requests) | 60 s | X1-N3, POL-25, D6. |
+| Agent-key revocation at the edge (new requests) and at the account owner (undecided requests) | 60 s; the edge refuses a slot's credentials 31 s after its edge-stream heartbeats stop; the account owner applies the push, or pulls catch-up after 20 s of silence, and confirms nothing beyond 45 s of identity freshness (AI-R5-4) | X1-N3, POL-25, D6. |
 
 #### 4.3 Deadlines, expiry and the decision point
 
@@ -685,21 +769,24 @@ request's hold stays rejected (v1.6, §4.1).
 - **The confirm fence** (A0R-01, RQ-7, R2-D1). One fence for every request: a confirm
   entry carries its commit timestamp, and the transaction appends it only if that
   timestamp is earlier than `D − τ`, with **`τ = max(ack_budget, ε + δ_x)`**, configured
-  from the worst-case values: with `ε` = 100 ms and `δ_x` = 160 ms (below), **about
-  260 ms** (revision 3.2: 200 ms, with its own 40 ms clock bound). The requirements
+  from the worst-case values: with `ε` = 100 ms and `δ_x_cfg` = 320 ms (below), **about
+  420 ms** (revision 4.1: about 260 ms, before the batching waits were budgeted; revision
+  3.2: 200 ms, with its own 40 ms clock bound). The requirements
   (POL-26 as amended by RQ-7) count a confirmation only if its entry is timestamped before
   `D`, and require a request to **begin committing** no later than `D − commit_margin` with a
   partner leg and `D − ack_budget` without one. **`δ_x` is configured at p99.9** (`δ_x_cfg`, AI6-3):
-  `τ = max(ack_budget, ε + δ_x_cfg)` starts at about 260 ms and may be raised to about
-  300 ms if the measured p99.9 in the worst state exceeds 160 ms; the partner confirm window
-  `commit_margin − τ` is then about 9.7 s (9.74 s at 260 ms, 9.70 s at 300 ms), and
-  `route_deadline_min` (1 s) remains valid, leaving at least about 700 ms before the fence.
+  `τ = max(ack_budget, ε + δ_x_cfg)` starts at about 420 ms and may be raised to a **cap of
+  about 450 ms** if the measured p99.9 in the worst state exceeds 320 ms; beyond the cap the
+  lever below is applied instead of raising `τ` further (revision 4.2, AI-17-5). The
+  partner confirm window `commit_margin − τ` is then about 9.6 s (9.58 s at 420 ms, 9.55 s
+  at 450 ms), and `route_deadline_min` (1 s) remains valid, leaving at least about 550 ms
+  before the fence.
   The design meets both: without a partner
   leg, committing is proposing the confirm entry, which the fence puts before
   `D − τ` ≤ `D − ack_budget`; with a partner leg, committing begins when the partner confirm
   is sent, which the partner adapter journals with its time, no later than
   `D − commit_margin`, and the confirm entry then still has `commit_margin − τ` (about
-  9.7 s) for the partner's answer (P2-S109, P2-S110). The fence is stricter than the requirement by `τ` so
+  9.6 s) for the partner's answer (P2-S109, P2-S110). The fence is stricter than the requirement by `τ` so
   that, under one owner, a confirm accepted by the guard always precedes the expiry entry
   in the log, and the expiry still has time to release every Share-link hold by `D`. The
   **decision point** of a request (POL-04) is its deciding entry, and its time is that
@@ -713,11 +800,26 @@ request's hold stays rejected (v1.6, §4.1).
   database's by more than 50 ms gives up its owner leases; R4). R3's database nodes take
   **Kenyan time**, by NTP from Kenyan time servers, not the provider's smeared time, because
   they are inside the database's clock domain (AI6-5). `δ_x` covers everything that must be durable by `D` for
-  P2-S93: the expiry's commit, the notice to the link owner and the release's commit
-  there, at p99 about 30 + 5 + 30 ≈ 65 ms steady and, in the worst degraded state (R1
-  lost, owners in R2, both commits through R3), 75 + 10 + 75 ≈ 160 ms (est., p99). RFC-006
-  configures `δ_x` at **p99.9** (`δ_x_cfg`, one value for every topology state, the worst),
-  since P2-S93 needs every release durable by `D` (a tail requirement, AI-1, AI6-3). Any participant may also ask for the
+  P2-S93, **batching waits included** (revision 4.2, AI-17-5): the expiry entry's wait for
+  its account slot's lane (`W_a`), the expiry's commit, the notice to the link owner, the
+  release's wait for its link slot's lane (`W_l`) and the release's commit. Per topology
+  state, at p99 (est., §3's wait table):
+
+  | Topology state | `W_a` + expiry commit + hop + `W_l` + release commit | `δ_x` (p99) |
+  |---|---|---|
+  | Steady state | 20 + 30 + 5 + 20 + 30 (hottest link: `W_l` 30) | about 105 ms (115 ms) |
+  | One path cut, or one facility lost in R2 | 25 + 35 + 5 + 25 + 35 | about 125 ms |
+  | R2 lost (R1 serving, commits through R3) | 65 + 70 + 5 + 65 + 70 | about 275 ms |
+  | R1 lost (owners in R2, commits through R3) | 70 + 75 + 10 + 70 + 75 (hottest link: `W_l` 75) | about 300 ms (305 ms) |
+
+  RFC-006 configures `δ_x` at **p99.9** (`δ_x_cfg`, one value for every topology state, the
+  worst), since P2-S93 needs every release durable by `D` (a tail requirement, AI-1,
+  AI6-3): about 320 ms initially (est.), so `τ` ≈ 420 ms. **The lever before the cap**: if
+  the measured p99.9 would take `τ` past about 450 ms, the deadline entries (expiry entries
+  at the account owner, releases at the link owner) ride the second in-flight batch of
+  their slot (§3) whenever their partition is not in the batch in flight; that removes
+  `W_a` and the shared-slot `W_l` from `δ_x` (about 160 ms worst, 235 ms on the hottest
+  link, est.), and `τ` falls back to about 335 ms. Any participant may also ask for the
   same entry (idempotent), and a link owner or partner adapter that has seen no outcome by
   `D` does so.
 - **What is monitored** (AI-1). `τ = max(ack_budget, ε + δ_x)` holds for the configured
@@ -755,7 +857,7 @@ request's hold stays rejected (v1.6, §4.1).
   before any hold was sent), the ending entry records it itself. A non-confirmed outcome is
   **reported** (status reads, the outcome feed, webhooks) only once that entry is at the
   report position (§4.6), so no buyer or competitor sees an outcome while capacity is still
-  held for it (POL-04, P2-S14). Normally that is about 75 ms after the decision (est.),
+  held for it (POL-04, P2-S14). Normally that is about 115 ms after the decision (est., batching waits included),
   well within `status_staleness`. While a link's schedule owner fails over, its release
   becomes durable once the link's owner lease is held again, within seconds and at most
   `release_grace` after the decision, and the outcome is reported then (P2-S107); nobody can book
@@ -811,7 +913,8 @@ request's hold stays rejected (v1.6, §4.1).
 | Reconciliation run | The day reconciled | The run's partition, by day (V-04) | 7 years |
 | Operator price correction; finance attribution of quarantined traffic | Its source reference | **The owner that receives it** (catalogue for a correction, attribution and quarantine for an attribution), for principal and contents; one correction fans out to many lines in many buyer partitions, so each movement it causes carries a **derived reference** (source reference, line), which the ledger checks in the movement's home (AI4-1) | 7 years |
 | Other money-moving inputs (payout instruction, escalation resolution, write-off posting, Share-borne cost, supplier debt, movement of Share's own funds) | Its source reference, generated inside Share and unique by construction | Ledger partition of the movement's home, atomically with the movement; a redelivery with different contents moves nothing and is reported; a different principal is refused | 7 years |
-| Feed events between components | (producer partition, epoch, sequence); the sequence is contiguous per partition, so a consumer detects a gap and waits for it | Each consumer's own state; the duplicates that the owner's direct publish and the changefeed relay produce for every event are dropped here (§5.5) | Until consumed and checkpointed |
+| Feed events between components | (producer partition, stream, **stream sequence**), with the writer's (generation, epoch). Each **feed stream** has its own sequence, contiguous per partition and stream and kept in the partition's head row, so it continues across owner changes and moves, and a consumer that sees a gap knows an event of that stream is missing and waits for it; the log sequence is not a feed sequence, because most entries emit no event on a given stream (revision 4.2, AI-17-2, AI-R6-3) | Each consumer's own state; the duplicates that the owner's direct publish and the changefeed relay produce for every event are dropped here (§5.5) | Until consumed and checkpointed |
+| Point-to-point notifications (waiting notice, capacity released, yield requested, `DISPLACED`, release acknowledged, expire requested) | (request, attempt, kind): each is an **idempotent state message**, not a stream event; no high-water rule applies, so a notification that arrives late by the Kafka relay is still applied if it is new; the receiver reconciles every request still waiting with a `query` on a timer (revision 4.2, AI-17-2) | The receiving owner, in the same log entry as the effect | Life of the request, plus 24 h |
 
 #### 4.5 Ordering
 
@@ -826,7 +929,7 @@ request's hold stays rejected (v1.6, §4.1).
 | One charge line | Amendments in sequence; each is the new total rounded once less what was posted, so the result does not depend on arrival order | P3-N3, P3-N8, P4-N9 |
 | One account's standing feed | Sequence numbers; a consumer applies the latest | P4-N6 |
 | Across ledger partitions | Closed positions only: "closed through T" means no entry with a posting time at or before T will be appended. In revision 4 the posting time is the entry's commit timestamp, and **the database's closed timestamp** gives the guarantee for every partition at once: no transaction can commit at or below it, an in-flight one included (it is pushed above it and re-checks its conditions). Reconciliation for day D and each payout run read every partition **at one database timestamp T** below the closed timestamp (a historical read), a consistent cut by construction; each run records its T. **Posting time is monotone across owner changes** (A0R-10), because commit timestamps are monotone within a partition (§4.3) | P4-N14, POL-22, POL-24 |
-| One account's reservation lifecycle feed | Sequence per account; an **effective-time closure**: the feed's closed time is the changefeed's resolved timestamp for the account ranges, published only once no transaction can still commit at or below it; every entry's effective time is at or after its commit timestamp, so no later entry affects a minute before a published closed time, across owner changes and for a late-known confirmation (RQ-5) alike (AI3-2) | P3-N1, P3-N8 (rating's minute closure) |
+| One account's reservation lifecycle feed | Sequence per account; an **effective-time closure**: the feed's closed time is the changefeed's resolved timestamp for the account ranges, published only once no transaction can still commit at or below it; every entry's effective time is at or after its commit timestamp, so no later entry affects a minute before a published closed time, across owner changes and for a late-known confirmation (RQ-5) alike (AI3-2). Revision 4.2 (A-3, AI-17-3): (1) **a cause whose effective minute is known in advance is recorded before that minute**, when it becomes known (revocation due at its notice end, a move at the offer's move time, a price change on its event); an owner that reaches one late (it was unavailable) uses the next minute boundary after the entry's timestamp, and records and alerts the delay; no entry carries an effective minute before its timestamp, except (2). (2) A POL-07 cut is decided by the link at or after `T_eff` and is effective at `T_eff`: the link's entry at `T_eff` fixes the reduction's **affected set** and publishes it on the schedule feed; for a reservation in an **open reduction's affected set**, the closure rating applies does not pass `T_eff` until the link's **final step** for that reduction is applied in the reservation's lifecycle (its target rate, or no cut). Rating takes each reservation's closure as the least of the lifecycle feed's closed time, the schedule-feed closed time of each of its links, and `T_eff` of every open reduction whose affected set contains it. **A cut is a target rate** per (link, reduction, reservation), composed by `min` | P3-N1, P3-N8 (rating's minute closure), POL-07 |
 | Globally | **None needed.** No requirement orders events across links, accounts or exporters, so there is no global sequencer | — |
 
 #### 4.6 Status reads and headroom reads
@@ -849,14 +952,20 @@ request's hold stays rejected (v1.6, §4.1).
   applying it (the owner pushes each committed batch to the leased replicas). Status
   replicas hold read leases from the owner, renewed on heartbeats (W-01). A lease lasts at
   most `read_lease` ≈ 400 ms (est.), chosen so that the worst decision-to-report path
-  (about 165 ms, §3) plus one lease plus ε (100 ms) fits within `status_staleness` (1 s), with margin.
+  (about 305 ms with batching waits, §3) plus one lease plus ε (100 ms), about 805 ms, fits
+  within `status_staleness` (1 s), with margin.
   The replica times its lease from when it *sent* the request, and treats it as expired ε
   before the owner does, so clock skew cannot let a replica answer from an expired lease.
   The owner does not renew the lease of a replica that is behind the report position it is
-  trying to reach. Read leases are granted only within the owner's own **owner lease**, so a
-  new owner, which cannot know its predecessor's read leases, starts reporting only after
-  the old owner lease (and with it every read lease it granted) has expired, which it does
-  anyway, since it can take the owner lease only then. An outcome is **reported**, by the
+  trying to reach. **A read lease is granted or renewed only if it ends, by the holder's
+  clock, before the holder's own owner-lease view ends** (now + `read_lease` ≤ the end of
+  the holder's lease, both on its monotonic clock). A holder that hands its slot off stops
+  granting at the handoff transaction. **After any acquisition, by expiry or by handoff,
+  the new holder reports nothing (and does not advance the report position) until
+  `read_lease` + ε (about 500 ms) after its acquisition commit**, so every read lease its
+  predecessor granted has ended, without any timing argument about the predecessor's
+  expiry (revision 4.2, AI-R6-2). This adds about 0.5 s to reporting after an owner change,
+  never to commits. An outcome is **reported**, by the
   edge's synchronous final answer, a replica, the outcome feed or the notifier, only once
   its deciding entry, and for a non-confirmed outcome its "releases durable" entry, is at or
   below the report position. So every replica that may answer `pending` from its lease
@@ -864,7 +973,7 @@ request's hold stays rejected (v1.6, §4.1).
   the database finds it: a reported outcome can always be found again (P2-S10, P2-S108).
   The outcome feed carries the report position as **markers per account slot** (slot,
   epoch, report position), carried by the next batch transaction of any partition in the
-  slot or, if none is due, by a **marker-only transaction** within about 20 ms (est.), so an
+  slot or, if none is due, by a **marker-only transaction** within about 20 ms (est.), which runs beside the slot's batch rather than in its lane (revision 4.2, §3), so an
   idle account's outcome never waits for its own next entry; the outcome topic is keyed by
   slot, so a marker follows every outcome it covers. The notifier delivers an outcome only
   at or below a marker (B-AI-8).
@@ -924,7 +1033,7 @@ flowchart LR
     R2b["Facility B: DB voter + non-voter, standby owners, status reader, Kafka brokers, edge"]
   end
   subgraph R3["R3 GCP africa-south1, Johannesburg (voter only)"]
-    R3a["One DB voting replica per range, zones spread; a standing non-voter for the admission tables; a second voter during a sustained region loss (2 + 2); ciphertext payloads only; Kenyan time by NTP; Kafka controller"]
+    R3a["One DB voting replica per range, zones spread; a standing non-voter for the admission tables; a second voter during a sustained region loss (2 + 2); ciphertext application columns only; Kenyan time by NTP; Kafka controller"]
   end
   R1 ---|"path A, about 10 ms RTT, est."| R2
   R1 ---|"path B, diverse from A"| R2
@@ -963,11 +1072,16 @@ recorded in RFC-006 (A0R-05, R2-D2); the cut analysis below depends on it.
   lease only transiently (the database prefers Kenyan replicas, and with both Kenyan
   regions down there is no majority to lead). Ingestion keeps five voters (RFC-006 decided
   it; Competition).
-- **Encryption, so R3 votes on ciphertext** (AI5-3). Owners encrypt every entry's payload
-  columns before the write, with data keys wrapped by keys held only in Kenyan HSMs; the
-  database stores, replicates and votes on ciphertext; only the columns needed for keys,
-  sequence, epoch and timestamps are in clear, and they carry pseudonymous identifiers only
-  (A11). The database's own encryption at rest is on for every store as well, but it is not
+- **Encryption, so R3 votes on ciphertext** (AI5-3; scope stated in revision 4.2,
+  AI-R5-2). Owners seal **every application column** of every table (log rows, head and
+  projection rows, outbox rows), not only log payloads, before the write, with data keys by
+  purpose (log, audit column, feed) wrapped by keys held only in Kenyan HSMs; the database
+  stores, replicates and votes on ciphertext. Only pseudonymous keys and the ordering and
+  fencing columns (partition, sequence, generation, epoch, timestamps) are in clear, they
+  carry pseudonymous identifiers only (A11), and no clear column relates two tenants. The
+  database's own system ranges are replicated to R3 as well, so job definitions (changefeeds,
+  schedules) are kept free of secrets, and value-bearing diagnostics (statement bundles,
+  traces with values) are disabled. The database's own encryption at rest is on for every store as well, but it is not
   what protects R3: R3's database process holds its store key, never a payload key. Kafka
   payloads are encrypted the same way, and Kafka keeps no broker in R3 (only one KRaft
   controller, which holds metadata). RFC-006 adds sealed-segment Merkle roots in the
@@ -1021,8 +1135,14 @@ recorded in RFC-006 (A0R-05, R2-D2); the cut analysis below depends on it.
   is a committed row in the database, so a Kafka loss is repaired by replaying the
   changefeed from the consumers' last resolved timestamp, never by losing a fact (§5.5).
 - **Probes** (D2) run from colocation sites within about 10 ms of each serving region,
-  outside Share's facilities, over persistent TLS connections, as the designated probe
-  account, which books on a credit limit set by finance (D3, POL-06). The 200 ms limit is
+  outside Share's facilities, over persistent TLS connections, as the designated **probe
+  accounts, one per account slot** (X2-S27; revision 4.2, B-AI-10), each booking on a
+  credit limit set by finance (D3, POL-06), so every account slot is probed every minute in
+  each serving region (v1.8 in progress: at least twice a minute, from at least two
+  locations; at about 16,384 account slots, about 550 probe bookings a second per region,
+  about 1,100 in all, est., about 4% of the design load, on the designated probe links). Placement provisions them
+  from the account slot map (§8) and refuses a re-slotting that would leave a slot without
+  one. The 200 ms limit is
   measured end to end from the probe.
 
 | Failure | What happens | Effect on acknowledged facts | Effect on latency (single-link, p99, est.) |
@@ -1052,10 +1172,15 @@ recorded in RFC-006 (A0R-05, R2-D2); the cut analysis below depends on it.
   names a session whose expiry is in the future by the database's clock. A lease is taken
   by a transaction that succeeds only if the holder session named by the slot row has
   expired by the transaction's timestamp (or the slot is handed off), and it increments the
-  epoch. Renewal writes only the session row, one per process rather than one per slot
-  (about 5,000 slots would otherwise cost about 10,000 two-region writes a second), so
-  renewals never conflict with the epoch reads below; slot rows change only on
-  acquisition and handoff. RFC-006 §4.2 specifies the tables.
+  epoch. **An acquisition of a slot whose holder session has expired also revokes that
+  session** (a write to its row, `revoked`), and a renewal succeeds only on a session that
+  is not revoked; so the acquisition conflicts with any renewal in flight, and no renewal
+  can be serialised after it and extend a deposed holder's view (revision 4.2, AI-R6-1). A
+  renewal that meets a revocation fails, and the process gives up every lease of that
+  session. Renewal writes only the session row, one per process rather than one per slot
+  (thousands of slots would otherwise cost thousands of two-region writes a second), so
+  renewals still never conflict with batch transactions; slot rows change only on
+  acquisition and handoff, and acquisitions are rare. RFC-006 §4.2 specifies the tables.
 - **Every write is conditional on the epoch.** Each batch transaction (one per slot,
   §3) reads the slot's epoch and the head row (last sequence) of each partition it appends
   to, and appends entries only if the epoch is the holder's own; the database's serialisable isolation orders a deposed holder's
@@ -1069,21 +1194,38 @@ recorded in RFC-006 (A0R-05, R2-D2); the cut analysis below depends on it.
   can take the lease only after expiry by the database's clock. So two holders do not act
   at once even before fencing is needed. Safety does not depend on this timing (A8): the
   conditional write does. Outbound commands a deposed holder sends anyway are fenced by
-  their receivers: each carries (partition, epoch, sequence), and every participant
-  ignores a command older than what it has applied, and a partner adapter refuses a
+  their receivers: each carries (partition, generation, epoch), and every participant
+  refuses a command whose (generation, epoch) is lower than the highest it has recorded for
+  the partition (below), and a partner adapter refuses a
   confirm with a lower epoch than the highest it has journaled for the request (V-03).
 - **An owner's memory is a cache of its log.** A holder decides from in-memory state (the
   link's peak profile, the account's limits) that it rebuilt from its log on taking the
   lease and updates only from its own committed batches; after any failed transaction it
   reloads from the log before deciding again.
 - Every command to an owner carries the slot epoch it was routed with; a command routed
-  with a stale epoch is refused and re-routed. Every notification from an owner carries
-  (partition, epoch, sequence); consumers ignore anything older than what they applied.
+  with a stale epoch is refused and re-routed. Every command and notification from an
+  owner carries its partition's **(generation, epoch)**: the **generation** is per
+  partition and incremented by each move of the partition to another slot, the epoch is
+  the slot's; writers are ordered by **(generation, epoch, sequence)**, so a moved
+  partition's new writer, on a slot with a lower epoch, is never taken for a stale one
+  (revision 4.2, AI-R6-3). A receiver refuses a **command** carrying a (generation, epoch)
+  lower than the highest it has recorded for that partition. **Feed events** are applied
+  in their stream's contiguous sequence (§4.4); **point-to-point notifications** are
+  idempotent state messages deduplicated by identity, with no high-water rule (AI-17-2).
+- **A deposed owner paused inside an open transaction cannot block its successor**
+  (revision 4.2, AI-17-4). Owner sessions run with an idle-in-transaction timeout and a
+  transaction timeout below the owner-lease margin, so a paused holder's open transaction
+  is aborted by the database; and a new holder's takeover reads (catch-up at the present
+  timestamp) run as **high-priority** transactions, which push a pending batch of the
+  deposed holder rather than wait behind it, so that batch's commit then fails. RFC-006
+  adds both to the runtime conventions.
 - Moving a partition to another slot (rebalancing a hot link to a dedicated slot and owner
   instance) is a handoff through the placement table with an epoch increment: the old
   holder appends a final *moved* entry and refuses further commands. The database splits
   and moves ranges under the owners by itself (load-based splitting), which changes no
-  owner and no epoch.
+  owner and no epoch. A move increments the partition's **generation** (AI-R6-3), carried
+  in every log row, header and command from then on; the partition's head row (keyed by
+  partition, not by slot) and its stream sequences continue, so a move needs no delete.
 - The same mechanism fences every owner partition (link, account, partner link, exporter,
   ledger, and every other owner), so no state has two writers at any moment.
 
@@ -1094,7 +1236,7 @@ recorded in RFC-006 (A0R-05, R2-D2); the cut analysis below depends on it.
 | Every owner's log (an append-only table in the database, with its outbox rows): confirmed reservations, schedule changes, capacity holds, request tombstones, waiter entries, requests and their marks, decisions and "releases durable" entries, funds and credit holds, key spending, capacity in flight, standing, credit limits, invoices, partner holds and bookings, payout instructions and confirmations, pending approvals | Two regions | Itself; nothing is rebuilt |
 | Ledger movements, payment events, accepted flow records | Two regions (X2-N4) | Itself |
 | Sealed log segments older than the live tail | Object storage replicated in two regions (A0-16) | Itself |
-| The personal-data store (identity and access) | Two regions, encrypted per data subject; its backups each tagged with the key generation they were taken under and **never kept beyond that generation** (AI5-11, RQ6-1) | Itself; erasure destroys the subject's key, which makes every copy, backup and archive of the data unreadable, across all copies within `erasure_max` (30 days) (A11) |
+| The personal-data store (identity and access) | Two regions, encrypted per data subject; its backups each tagged with the key generation they were taken under and **never kept beyond that generation** (AI5-11, RQ6-1); items put with an expiry wrapped under an **expiry key** held only in the Kenyan HSMs, never escrowed and never in a backup (AI3-13) | Itself; erasure destroys the subject's key, which makes every copy, backup and archive of the data unreadable, across all copies within `erasure_max` (30 days) **of the request** (A11, v1.7); at an item's expiry its expiry key is destroyed, so it is unrecoverable in every copy, backups and escrow included, at once |
 | Kafka topics | Two Kenyan regions (`min.insync.replicas` 3 of 4 facilities; AI6-2) | Transport only: replayed from the database's changefeed if lost (§5.5) |
 | Advisory edge counters, exact poll counters, status-replica memory, caches, read models | None or local | Reset or rebuilt from feeds and follower reads |
 
@@ -1112,8 +1254,8 @@ are removed (A0-02).
 | Payouts | Payouts, ledger | 99.9% | 15 min | 1 h | Instructions are facts; a restarted run resumes by reference and never re-instructs |
 | Reporting and statements | Reporting, history | 99.9% | 30 min | 1 h | Read models rebuilt from feeds and history |
 
-Probes (X2-N1) run as the designated probe account on probe links and probe exporters in
-every serving region, through the real path; every consumer that would rate, settle,
+Probes (X2-N1) run as the designated probe accounts, one per account slot, on probe links
+and probe exporters in every serving region, through the real path; every consumer that would rate, settle,
 report to suppliers or report quarantine checks the probe designation from the catalogue
 and identity and access, and excludes it (POL-06).
 
@@ -1147,7 +1289,7 @@ services**, with **Kafka** (Apache Kafka, KRaft mode; AI6-2) for feeds. The data
 
 | # | Why it still holds on this substrate |
 |---|---|
-| A1 | One writer per piece of state is an application rule enforced by owner leases and epoch-conditional writes; the database's grants give each owner's role write access to its own tables only, and select on another owner's tables only where §8 names a read (the link displacement read, AI-R1-11). |
+| A1 | One writer per piece of state is an application rule enforced by owner leases and epoch-conditional writes; the database's grants give each owner's role write access to its own tables only, and select on another owner's tables only where §8 names a read (the link displacement read, AI-R1-11, the only one); every other cross-owner input is a feed, stream, query or command served by its owner (AI-R5-1). |
 | A2 | Partitions are unchanged; each has one lease holder; the epoch is the term (§5.2). |
 | A3 | Every range has 2 + 2 + 1 voters and the database acknowledges a commit only from a majority, which always spans two regions; no owner acknowledges anything before its transaction commits. |
 | A4 | Log tables are insert-only; projections and memory are derived, rebuilt from the log; the only delete is the truncation role's, below audit's verified watermark, of rows already sealed (AI5-8). |
@@ -1184,7 +1326,26 @@ services**, with **Kafka** (Apache Kafka, KRaft mode; AI6-2) for feeds. The data
   the two: the confirm either sees the marker (the reduction is earlier) or commits before
   it (the request had begun committing first); a reduction whose marker write meets a
   confirm that already read its key is pushed to a later timestamp and re-decided. Neither
-  owner writes the other's rows.
+  owner writes the other's rows. A confirm that sees the marker is handled as displaced
+  with **no exception**: a partner confirm sent or journaled before the marker does not
+  make the request begun (v1.7, P1-S78; revision 4.2, B-AI-9); the partner booking is then
+  cancelled at once at Share's cost (POL-28).
+- *A deposed owner is paused inside an open batch transaction* (AI-17-4). The
+  idle-in-transaction and transaction timeouts abort it below the lease margin; meanwhile
+  the successor's high-priority catch-up read pushes the pending transaction, whose commit
+  then fails at its fixed timestamp. Takeover stays within seconds.
+- *A renewal is in flight across its session's expiry while a standby acquires the slot*
+  (AI-R6-1). The acquisition writes the expired session's row (revoked); the renewal either
+  committed before (and the acquisition sees an unexpired session and fails) or conflicts
+  and fails. A deposed process never believes its lease runs past its successor's
+  acquisition.
+- *A slot is handed off, or taken on expiry, while read leases are live* (AI-R6-2). Every
+  read lease ends inside its granter's owner lease, and the new holder reports nothing
+  until `read_lease` + ε after its acquisition, so no replica answers `pending` from an old
+  lease after the new holder reports.
+- *A partition is moved to another slot* (AI-R6-3). Its generation is incremented in the
+  move; receivers order its writers by (generation, epoch, sequence), and its stream
+  sequences continue, so nothing it sends after the move is taken as stale.
 - *The partner adapter's journal and the resume query.* Both are entries in the adapter's
   partition, conditional on its own epoch, recording the account owner's epoch; the
   refusal rules of V-03 are unchanged.
@@ -1197,8 +1358,10 @@ services**, with **Kafka** (Apache Kafka, KRaft mode; AI6-2) for feeds. The data
   (§4.4).
 
 **What the substrate costs** (the trade, recorded in Competition): about 5 ms more per
-commit and one transaction in flight per slot (§3); a clock bound of 100 ms instead of
-about 40 ms, so the confirm fence is about 260 ms before `D` instead of 200 ms (§4.3); a
+commit and one transaction in flight per slot, whose batching waits are now budgeted
+(about 60 ms on a single-link booking at p99 in steady state, §3); a clock bound of 100 ms
+instead of about 40 ms, which with those waits puts the confirm fence about 420 ms before
+`D` instead of 200 ms (§4.3); a
 status read during a range-lease move waits seconds instead of reading a majority (§4.6);
 leases and timing (election priorities, lease durations, closed-timestamp cadence) are the
 database's, tuned by configuration rather than designed; and a commercial licence for the
@@ -1246,6 +1409,16 @@ specify a Go partition host on `etcd-io/raft`). It must be revised to:
     Kafka with `min.insync.replicas` 3 (AI6-2); `δ_x_cfg` at p99.9 (AI6-3); the standing
     R3 non-voter for admission tables (AI6-4); Kenyan time in R3 (AI6-5); the truncation
     role (AI5-8); per-slot report-position markers (B-AI-8).
+11. Revision 4.2: acquisitions revoke the expired holder session (AI-R6-1); read leases
+    end inside the granter's lease, and a new holder waits `read_lease` + ε before
+    reporting (AI-R6-2); per-partition generations (AI-R6-3); per-stream sequences and
+    idempotent state notifications (AI-17-2); idle-in-transaction and transaction
+    timeouts, high-priority takeover reads (AI-17-4); slot counts by the occupancy target,
+    marker-only transactions outside the lane, the second in-flight batch per account slot
+    as the fallback, and `δ_x_cfg` with batching waits (AI-17-5, AI-R6-4); the account slot
+    map and one probe account per account slot (B-AI-10); secret-free system ranges and no
+    value-bearing diagnostics (AI-R5-2); expiry keys for the personal-data store, never in
+    a backup (AI3-13).
 
 ### 6. Partitioning and sizing for the design load
 
@@ -1254,11 +1427,11 @@ stated; RFC-006 replaces them with measurements.
 
 | Load | Partitioning | Sizing note |
 |---|---|---|
-| 25,000 booking requests/s | Account owners by account; link owners by link | `account_rate_limit` (200/s) bounds any account partition. Each request writes 2 entries to its account log (intake, deciding entry), with or without a partner leg (the committing mark is dropped, A0R-14), plus waiting marks, plus a share of a batched "releases durable" entry when it ends not confirmed after taking a hold. Report-position markers per account slot add marker-only transactions where no batch is due, about 10,000 transactions/s (est., RFC-002; B-AI-8); each confirm makes one point read per Share leg of the link's displacement markers (AI-R1-11) |
+| 25,000 booking requests/s | Account owners by account; link owners by link | `account_rate_limit` (200/s) bounds any account partition. Each request writes 2 entries to its account log (intake, deciding entry), with or without a partner leg (the committing mark is dropped, A0R-14), plus waiting marks, plus a share of a batched "releases durable" entry when it ends not confirmed after taking a hold. Report-position markers per account slot add marker-only transactions where no batch is due, about 10,000 transactions/s (est., RFC-002; B-AI-8), bounded by the outcome rate and outside the batch lane; each confirm makes one point read per Share leg of the link's displacement markers (AI-R1-11). With the applied unposted usage and ledger positions, the account owner takes about 110,000 entries/s, so about **16,384 account slots** and about **4,096 shared link slots** keep each lane about 0.1 to 0.2 occupied (est., §3; revision 4.2, AI-17-5, AI-R6-4) |
 | 2,500 requests/s on the hottest link | That link's slot alone, on its own owner instance and its own ranges (split by the database's load-based splitting); one batch transaction in flight | At least 2 link-log entries per request (hold, then convert or release; a refusal is one entry that also records the tombstone), plus waiter and yield entries: at least 5,000 entries/s, about 75 to 150 per batch transaction at 15 to 30 ms a commit (est.), a few hundred kB per batch, well within one range's write rate. A hold lives from its own commit to the conversion, about 75 ms, so about 190 holds are in flight at once. Tombstones live until `D` + `release_grace`: at most about 750 releases and refusals a second (30% of 2,500/s, est.) × (60 s + 60 s) ≈ 90,000 small entries in memory on the hottest link, a few MB (R2-D5). A request on that link sees capacity in flight, and may get `pending` instead of a final answer, only when the link's free capacity is below those holds' Mbps; RFC-001 measures the share (A0-19) |
 | Status polls | Served by the status replicas, from pushed state and follower reads (§4.6) | Requests that end `pending` (routes, about 5,000/s, plus contended single-link ones) polled about once a second for a few seconds: about 25,000 to 70,000 polls/s; sized for 100,000/s, about 25,000/s per Kenyan facility, most answered from memory. `key_poll_limit` bounds any one key, enforced exactly at the edge (§2). Polls never touch the owner's write path or the leaseholders |
 | 260,000 records/s (600,000/s peak) | Ingestion by exporter; attribution and rating by account | Records accepted in batches; one two-region transaction per batch (the batch compressed in one row, its identity ranges in the same transaction), then handed to attribution through Kafka. At about 60 MB/s raw at peak, about 20 MB/s compressed (est.), the live tail of a day is a few TB per copy in the database before it is sealed. 7 years at about 100 B a record is about 5.7 PB of raw records; sealed segments are kept twice (two regions), not five times (A0-16) |
-| Reservation charge lines | Rating, settlement and ledger by buyer account | 70% of 25,000/s fit, so about 17,500 confirmed/s; with an **assumed** mean reservation of 1 h, about 63 M reservations are active and about **1 M reservation lines/s** are rated (more than the flow-record peak). Settlement posts **one movement per account and minute** carrying all that account's lines, each line keeping its own source reference: at an assumed 100,000 active buyer accounts, about 1,700 movements/s. Deduplication by watermark per reservation (§4.4), about 63 M live watermarks rather than 2×10¹⁴ references (A0-08) |
+| Reservation charge lines | Rating, settlement and ledger by buyer account | 70% of 25,000/s fit, so about 17,500 confirmed/s; with an **assumed** mean reservation of 1 h, about 63 M reservations are active and about **1 M reservation lines/s** are rated (more than the flow-record peak). Rating emits two batch streams per account (revision 4.2, AI-19-1): **reservation batches** (the reservation lines of one minute, not gated by unposted usage), which settlement posts as **one movement per account and minute**, each line keeping its own source reference: at an assumed 100,000 active buyer accounts, about 1,700 movements/s; and **usage batches** (usage lines, amendments, fees and cost lines), each at most the ledger's movement limit and posted whole in one movement. Deduplication by watermark per reservation (§4.4), about 63 M live watermarks rather than 2×10¹⁴ references (A0-08) |
 | 1,000 payment notifications/s | Payments by (provider, transaction reference) (A0R-04) | Spreads evenly by construction; locality by account is not needed by any operation. Reference bindings are kept for 7 years, about 2×10¹¹ (est.), as the source-reference index |
 | Ledger journal storage, 7 years (A0R-11) | Sealed segments per ledger partition | About 1 M lines/s for 7 years is about 2.2×10¹⁴ lines: about 22 PB per copy at 100 B a line (est.), four times the raw flow records. The design keeps per-party totals in each movement and the lines in **sealed columnar segments** ordered by reservation and minute (reservation, minute and amount, delta-encoded; about 10 B a line, so about 2.2 PB per copy, 4.4 PB in two regions, est.), which still answer P4-N16 (trace and rebuild) and P3-N9 (reproduce a charge) by reservation and minute. Only the live tail is on five voters. RFC-004 confirms the encoding and the access paths |
 
@@ -1323,7 +1496,7 @@ account owner (§2).
 | P4-N17 Credit only to vetted accounts | Account owner (funds: credit limit and credit holds, KYB status as applied), payments and receivables (invoices), identity and access (finance role, KYB status on the identity status push) | RFC-004; also RFC-005 |
 | X1-N1 Authenticated principal | Edge gateway, identity and access | RFC-005 |
 | X1-N2 Accounts isolated | Identity and access (webhook endpoints and signing secrets; the personal-data store); every owner (tenant scoping, pseudonymous identifiers only, A11; payload encryption, so R3 holds ciphertext); reporting (supplier view); notifier (delivers to endpoints read from identity) | RFC-005 |
-| X1-N3 Agent keys in scope; revocation | Identity and access, edge gateway, account owner (applies revocation; undecided requests fail) | RFC-005; also RFC-002 |
+| X1-N3 Agent keys in scope; revocation | Identity and access (edge stream, identity status push, catch-up), edge gateway, account owner (applies revocation; undecided requests fail; confirms only within identity freshness, AI-R5-4) | RFC-005; also RFC-002, RFC-004 (F4) |
 | X1-N4 Idempotency keys scoped to the account | Account owner (booking) | RFC-005; also RFC-002 |
 | X1-N5 Only authentic payment notifications | Payments, receivables and reconciliation (notifications and the payment partner's reports; unproven ones in the investigation stream); payouts (transfer confirmations) | RFC-005 (authenticity of every money-moving input); also RFC-004 |
 | X1-N6 Webhooks verifiable | Notifier, identity and access (signing keys) | RFC-005 |
@@ -1331,14 +1504,15 @@ account owner (§2).
 | X1-N8 Every change attributable | Audit (including refused privileged attempts, from the console and from identity and access); every owner's log (pseudonymous principals) | RFC-005; also RFC-006 (retention) |
 | X1-N9 Only an administrator manages keys | Identity and access | RFC-005 |
 | X1-N10 Only the link's supplier changes what it sells | Identity and access, link schedule owner | RFC-005; also RFC-001 |
-| X2-N1 Availability per capability | Probes; every capability's topology, including the go-live fibre condition (§5.1) | RFC-006 |
+| X1-N11 Personal data erased without breaking the audit | Identity and access (the personal-data store: put, get, erase on a recorded request by compliance, expiry; erasure-request intake from the edge; every copy unreadable within `erasure_max` of the request); every owner, feed, archive and audit store (pseudonymous identifiers only, A11); RFC-006 (backups never outliving their key generation; expiry keys never backed up) | RFC-005; also RFC-003 (payload buckets with expiry), RFC-006 (backups, retention) |
+| X2-N1 Availability per capability | Probes (one probe account per account slot, from placement's account slot map, B-AI-10); every capability's topology, including the go-live fibre condition (§5.1) | RFC-006; also RFC-002 (reads the slot map) |
 | X2-N2 Design load | Every owner's partitioning and sizing (§6) | RFC-006; also RFC-001 … RFC-004 |
 | X2-N3 Latency per operation | Admission path (account owner, link owners); rating (hot standbys); payments | RFC-006 (budgets, RTT matrix); also RFC-001, RFC-002, RFC-003, RFC-004 |
 | X2-N4 No loss of recorded facts | The database's 2 + 2 + 1 ranges and the transactional outbox (§5), including the automatic 2 + 2 reconfiguration after a sustained region loss | RFC-006 |
 | X2-N5 Recovery time | Every owner (owner-lease takeover); placement (region-wide failover of leaseholders and owner leases for every group: triggers, stagger, time to move every lease) | RFC-006 |
 | X2-N6 Retention | History, ledger, metering ingestion | RFC-006 |
 
-**Coverage:** 9 (P1) + 11 (P2) + 13 (P3) + 17 (P4) + 10 (X1) + 6 (X2) = 66 needs, every one
+**Coverage:** 9 (P1) + 11 (P2) + 13 (P3) + 17 (P4) + 11 (X1) + 6 (X2) = 67 needs, every one
 allocated to at least one owning component and exactly one primary detailed RFC.
 
 **The RFC split.** One detailed RFC per problem is kept, because each problem's needs fall
@@ -1376,50 +1550,59 @@ schemas and wire formats.
 
 | Contract | Kind | Owner (defines it) | Consumers |
 |---|---|---|---|
-| Link hold port: **hold** (account, request, rate, window, `D`, commit fence `D_c`, age; AI-R1-9, B-AI-3); **convert** (reservation, part, decision time); **request-scoped release** (with `D`, which bounds its tombstone, AI-R1-8) and its acknowledgement once durable; **leg changes** `end_leg` (reservation, leg, effective minute) and `reduce_parts` (reservation, leg, parts, effective minute, newest part first), each with change id and decision time, acknowledged once durable and idempotent by change id (AI-R1-1, B-AI-1); **offer holds** `offer_hold`, `offer_accept`, `offer_move_at`, `offer_release`, each with the decision time (AI-R1-2, AI-R1-7); query hold. Port invariants (A0R-03): a release ends every hold, waiter registration and grant of the request, whatever the attempt; a tombstone kept until `D` + `release_grace` refuses any later hold or grant for the request; no hold or grant is made past `D`, and a waiter past `D_c` is skipped when granting; a refusal records a tombstone and counts as the release acknowledgement | Synchronous command | RFC-001 | RFC-002 |
-| Link waiting port: register waiter; **`mark_waiting`** (the account owner's mark that the request waits, sent to every link where it holds capacity); waiting notice (with the deadline of the request ahead); capacity released; yield request; **`DISPLACED`** (a held or waiting request no longer fits after a capacity reduction; the link keeps the hold until the account owner answers) (AI-R1-3, B-AI-2) | Command and notification | RFC-001 | RFC-002 |
-| Outcome and expiry port: outcome notice to participants; expire-if-undecided request, **answered with the committed outcome, confirmed (with its decision timestamp) or not**; yield acceptance or refusal; **`displacement_accept`** or the request-scoped release in answer to `DISPLACED`, or, for a request that had begun committing, its outcome (`convert` or the release) once decided (B-AI-7); a request already decided confirmed stays confirmed and is flagged affected, and the link alerts (v1.6; AI-R1-4) | Command and notification | RFC-002 | RFC-001, partner adapters |
+| Link hold port: **hold** (account, request, rate, window, `D`, commit fence `D_c`, age, **`wait`, kind, receipt minute, policy version**; AI-R1-9, B-AI-3, AI-17-1: the link decides `wait` = false itself, refusing with a tombstone a request blocked only by capacity in flight, and judges validity against the receipt minute, not `request_age`); **convert** (reservation, part, decision time); **request-scoped release** (with `D`, which bounds its tombstone, AI-R1-8) and its acknowledgement once durable; **leg changes** `end_leg` (reservation, leg, effective minute) and `reduce_parts` (reservation, leg, parts, effective minute, newest part first), each with change id and decision time, acknowledged once durable and idempotent by change id (AI-R1-1, B-AI-1); **offer holds** `offer_hold`, `offer_accept`, `offer_move_at`, `offer_release`, each with the decision time (AI-R1-2, AI-R1-7); query hold. Port invariants (A0R-03): a release ends every hold, waiter registration and grant of the request, whatever the attempt; a tombstone kept until `D` + `release_grace` refuses any later hold or grant for the request; no hold or grant is made past `D`, and a waiter past `D_c` is skipped when granting; a refusal records a tombstone and counts as the release acknowledgement | Synchronous command | RFC-001 | RFC-002 |
+| Link waiting port: register waiter; **`mark_waiting`** (the account owner's mark that the request waits, sent to every link where it holds capacity); waiting notice (with the deadline of the request ahead); capacity released; yield request; **`DISPLACED`** (a held or waiting request no longer fits after a capacity reduction; the link keeps the hold until the account owner answers) (AI-R1-3, B-AI-2); **query** of a request's state at the link. Notifications are idempotent **state messages**, deduplicated by (request, attempt, kind), with no high-water rule; the account owner reconciles every request still waiting by `query` on a timer (AI-17-2) | Command and notification | RFC-001 | RFC-002 |
+| Outcome and expiry port: outcome notice to participants; expire-if-undecided request, **answered with the committed outcome, confirmed (with its decision timestamp) or not**; yield acceptance or refusal; **`displacement_accept`** or the request-scoped release in answer to `DISPLACED`, or, for a request whose confirm transaction was in flight, that transaction's result once decided: `convert` if it committed without seeing the marker, otherwise the displacement handling (B-AI-7, narrowed by B-AI-9: a partner confirm sent or journaled does not make a request begun); a request already decided confirmed stays confirmed and is flagged affected, and the link alerts (v1.6; AI-R1-4) | Command and notification | RFC-002 | RFC-001, partner adapters |
 | Link availability query: peak and free-capacity profile for counter-offers | Synchronous query | RFC-001 | RFC-002 |
 | **Link displacement read**: a point read of the link's displacement marker for (link, request) inside the account owner's serialisable confirm transaction, one per Share leg; present: the hold was displaced by a reduction committed earlier (with its record timestamp); absent: none before the confirm's timestamp. Read-only; the link owner is the only writer of the markers, written in the reduction's own transaction (A1; AI-R1-11, B-RQ-9) | Read of the owner's rows inside the consumer's transaction | RFC-001 | RFC-002 |
-| Link supply commands: unplanned outage and restoration, maintenance booking, **maintenance cancellation (`cancel_maintenance`)**, permanent reduction, **permanent increase (`record_increase`)** (AI-R1-10) | Synchronous command | RFC-001 | Supplier API and operator console (RFC-005) |
-| Link schedule feed: schedule changes, capacity history, affected flags (a projection of the log) | Asynchronous feed (Kafka) | RFC-001 | RFC-002 (affected reservations, revocations due), RFC-003, RFC-006 (history, notifier) |
+| Link supply commands: unplanned outage and restoration, maintenance booking, **maintenance cancellation (`cancel_maintenance`)**, permanent reduction, **permanent increase (`record_increase`)** (AI-R1-10); compatible with v1.8 in progress: an outage records a capacity level, and the capacity in force is the least of the announced capacity and every open outage's level | Synchronous command | RFC-001 | Supplier API and operator console (RFC-005) |
+| Link schedule feed: schedule changes, capacity history, affected flags (a projection of the log); each reduction's **affected set**, fixed by the link's entry at `T_eff`, and its **final step**; its own contiguous per-link `feed_seq` and closed time (AI-17-2, AI-17-3) | Asynchronous feed (Kafka) | RFC-001 | RFC-002 (affected reservations, revocations due), RFC-003, RFC-006 (history, notifier) |
 | Booking API: book, change, cancel, withdraw, status | External API | RFC-002 | Buyers through RFC-005's edge |
 | **Documented-request intake** (part of the booking API's surface): a buyer principal's documented request (POL-32, v1.6), carried edge → operator console with the buyer's principal context and recorded on the console's log (AI5-9) | External API | RFC-005 | Buyers through RFC-005's edge; operator console |
 | Request outcome feed, with report-position markers **per account slot** (slot, epoch, report position), carried by any batch in the slot or a marker-only transaction; the topic **keyed by slot**; the notifier delivers only at or below a marker (B-AI-8) | Asynchronous feed (Kafka) | RFC-002 | RFC-006 (notifier, alerting), operator console |
-| Reservation lifecycle feed: parts, locked prices, legs, effective minutes, end cause, fees shown at booking, **POL-28 residue events** (a partner booking cancelled at Share's cost because its request was withdrawn or failed, AI3-4); with its **effective-time closure** (the changefeed's resolved timestamp; no later entry affects a minute before it, AI3-2) | Asynchronous feed (Kafka) | RFC-002 | RFC-003 (rating; the catalogue's locked-price read model, AI3-7), RFC-006 (history), reporting |
-| Reservation command port: revoke or reduce (from RFC-001), release after grace (internal to the account owner, rule from RFC-004), terminate (from the operator console), offer and move to an equivalent path (RQ-4), whose holds on links go through the link hold port's offer commands | Synchronous command | RFC-002 | RFC-001, RFC-005 |
+| Reservation lifecycle feed: parts, locked prices, legs, effective minutes, end cause, fees shown at booking, **POL-28 residue events** (a partner booking cancelled at Share's cost because its request was withdrawn or failed, AI3-4); **moves carry the path's catalogue route ID and shown price**, from which rating labels the reservation's lines with that route and its weights version (AI-19-2); **cuts** as applied target rates, each naming its (link, reduction); with its **effective-time closure** (the changefeed's resolved timestamp; no later entry affects a minute before it, AI3-2), under §4.5's rules: causes known in advance recorded before their effective minute (A-3), and a reservation in an open reduction's affected set held open from `T_eff` until the link's final step is applied (AI-17-3) | Asynchronous feed (Kafka) | RFC-002 | RFC-003 (rating; the catalogue's locked-price read model, AI3-7), RFC-006 (history), reporting |
+| Reservation command port: **cut target** (from RFC-001): "on link L, from `T_eff`, reservation X at most r Mbps" (r = 0 revokes), idempotent by (link, reduction, reservation), composed by the account owner by `min` over every link and reduction of the reservation (AI-17-3), release after grace (internal to the account owner, rule from RFC-004), terminate (from the operator console), offer and move to an equivalent path (RQ-4), whose holds on links go through the link hold port's offer commands | Synchronous command | RFC-002 | RFC-001, RFC-005 |
 | Partner port: classify (POL-26 test), hold with `expires_at = D`, confirm (journaled with its send time), book final, release, cancel, resume query (an adapter log entry recording the account owner's owner-lease epoch). Port invariants (V-03), beside the link hold port's: a confirm or final booking is refused, journaled as refused and never sent for a tombstoned request, when the adapter's clock is past `D − commit_margin` less the partner-skew budget, or when it carries an account-owner epoch lower than the highest recorded for the request; a partner booking found for a tombstoned request is cancelled at once at Share's cost. RFC-002 budgets partner clock skew inside `commit_margin` and states the reconcile-then-cancel path for a confirm the partner answers "unknown" after its own `D` (A0R-08) | Adapter interface, per partner | RFC-002 | Partner adapters |
 | Partner reconciliation feed: mismatches and actions; a Share reservation the partner lacks is recorded as affected on its partner leg by the account owner | Asynchronous feed (Kafka) | RFC-002 | Operator console, notifier |
-| Equivalent-path source | External input | Routing (out of scope) | RFC-002 (the link receives offer holds and needs no path, AI-R1-5) |
+| Equivalent-path source: every offered path is a **catalogue route with split weights** (AI-19-2) | External input | Routing (out of scope) | RFC-002 (the link receives offer holds and needs no path, AI-R1-5); RFC-003 (the catalogue registers the route and weights before it is offered) |
 | Funds-and-standing module: hold sizing, headroom, key headroom, in-flight, rate limits, standing transitions, resume amount; checks of concurrent requests one at a time in arrival order (v1.6) | In-process deterministic module | RFC-004 (Part A) | RFC-002 (the account owner) |
 | Headroom and balance query (at a recorded position) | Synchronous query, served by status replicas | RFC-004 | Edge (buyer API), probes |
 | Standing feed and query | Asynchronous feed (Kafka) and query | RFC-004 (semantics), emitted by the account owner | Network operations |
 | **Standing enforcement acknowledgement**: account, standing sequence, enforced at; applied as an entry (F8) | Asynchronous feed (Kafka) | RFC-004 (semantics; AI4-5) | Account owner, from network operations |
-| **Identity status push**: key revocations and limit changes, and **KYB status**; applied by the account owner's funds module as an entry within 60 s; the booking module reads revocation from it (AI4-2, AI4-3) | Asynchronous feed (Kafka), applied as an entry | RFC-005 | RFC-004 Part A (applies), RFC-002 (reads) |
+| **Identity status push and catch-up**: key revocations and limit changes, and **KYB status**, keyed by account, with the changefeed's resolved timestamps; applied by the account owner's funds module as an entry within 60 s; the booking module reads revocation from it (AI4-2, AI4-3). **Catch-up** `catch_up(account slot, since) → (events, read timestamp)`, a gRPC query answered by identity with a consistent read, pulled by a new owner-lease holder before deciding and by any holder whose identity freshness is 20 s old, applied in one entry; the account owner **confirms only within 45 s of its identity freshness** (AI-R5-4) | Asynchronous feed (Kafka), applied as an entry; catch-up a synchronous query | RFC-005 | RFC-004 Part A (applies), RFC-002 (reads, and gates confirms on freshness) |
 | Flow-record ingestion protocol | External protocol | RFC-003 | Exporters |
 | **Metering hand-off**: accepted record batches, by exporter, from ingestion to attribution | Asynchronous feed (Kafka, from the outbox) | RFC-003 | Attribution and quarantine |
 | Attribution keys from provisioning, including the **observation point → link mapping** (AI3-8) | External input | Provisioning (Problem 5) | RFC-003 |
 | Catalogue: products, account-product terms (including **`usage_rate_cap`**, AI3-6), prices and corrections, weights, partner terms, probe designations | Query and feed | RFC-003 (link registry: RFC-001) | RFC-001, RFC-002, RFC-004, RFC-006, network operations (the edge's policing reads `usage_rate_cap`) |
 | Unposted-usage feed (through a rating position, each figure carrying the ledger position X it was computed against, and the in-flight charge-line batch with its usage reduction, AI3-10; applied only once the applied ledger position has reached X, AI3-3) | Asynchronous feed (Kafka) | RFC-003 | RFC-002 (applied in the account owner's log), RFC-004 (semantics) |
 | **Usage-applied acknowledgement**: through which rating position the account owner has applied unposted usage | Asynchronous feed (Kafka) | RFC-002 (emitted by the account owner; AI3-3) | RFC-003 |
-| Charge-line feed: charges, **cost lines** (carried excess, dearer path, Share-borne fees) and amendments, each with source reference, payer, weights version and reason (AI3-5, AI4-7) | Asynchronous feed (Kafka) | RFC-003 | RFC-004 (settlement) |
+| Charge-line feed: charges, **cost lines** (carried excess, dearer path, Share-borne fees) and amendments, each with source reference, payer, weights version and reason (AI3-5, AI4-7), in two batch streams (AI-19-1): **reservation batches** (reservation lines of one minute, not gated by the unposted-usage figure) and **usage batches** (the lines that enter unposted usage, with amendments, fees and cost lines), each usage batch **at most the movement limit and posted in one movement**, one in flight per account | Asynchronous feed (Kafka) | RFC-003 | RFC-004 (settlement) |
 | **Posting acknowledgement**: per line, posted (with the ledger position) or excluded and why; rating marks a line posted only on it (AI3-3) | Asynchronous feed (Kafka) | RFC-004 (settlement) | RFC-003 |
 | **Quarantine report feed** (quarantined traffic per supplier and link, P3-S26) and **breach report feed** (lateness and attribution-lag breaches) | Asynchronous feed (Kafka) | RFC-003 (AI3-5) | Operator console, notifier, reporting, RFC-006 (alerting) |
 | **Evidence query**: accepted records by reservation, link and minute (P3-N11, P3-S39) | Query | RFC-003 (semantics; AI3-5), served by RFC-006's history | Operations, support, finance |
-| Ledger posting port (one movement per account and minute, many lines, each line balanced and deduplicated on its own; posting time monotone, §4.5; derived references for corrections, AI4-1) | Synchronous command | RFC-004 | Settlement, payments, payouts (all within RFC-004) |
-| Ledger movement feed (per movement, **the charge-line batch it posted and whether it posted it whole**, for the account owner's exact pairing of unposted usage, AI3-10) and cuts (the database's closed timestamp; runs read every partition at one timestamp, AI4-10) | Asynchronous feed (Kafka) | RFC-004 | Account owner, reporting, reconciliation, payouts, RFC-006 (history, audit) |
+| Ledger posting port (a reservation batch as one movement per account and minute; a usage batch as one movement, whole; many lines, each line balanced and deduplicated on its own; posting time monotone, §4.5; derived references for corrections, AI4-1; AI-19-1) | Synchronous command | RFC-004 | Settlement, payments, payouts (all within RFC-004) |
+| Ledger movement feed (per movement, **the charge-line batch it posted and whether it posted it whole**, for the account owner's exact pairing of unposted usage, AI3-10; "whole" and the usage reduction are defined over usage batches only, AI-19-1) and cuts (the database's closed timestamp; runs read every partition at one timestamp, AI4-10) | Asynchronous feed (Kafka) | RFC-004 | Account owner, reporting, reconciliation, payouts, RFC-006 (history, audit) |
+| **Invoice-status feed** (A-1): per account, invoice overdue, paid, written off, and credit limit removed, each event carrying the **buyer partition's ledger position** receivables had applied; applied by the account owner (F5, F6) only once its applied ledger position has reached it, as the unposted-usage figure is gated on X (AI3-3) | Asynchronous feed (Kafka), applied as an entry | RFC-004 (receivables) | RFC-002 (the account owner applies), RFC-004 Part A (rules) |
+| **Credit-limit command** (A-1): set or remove an account's credit limit, by a finance operator under the operator envelope; refused while the applied KYB status is not vetted (AI4-2); idempotent by `action_id` | Synchronous command | RFC-004 Part A (semantics) | Operator console (RFC-005) → account owner (RFC-002) |
 | Payment notification ingress (routed by provider and transaction reference); unproven notifications recorded in the investigation stream (AI5-5) | External API | RFC-004 (authenticity: RFC-005) | Payment providers |
 | Payout instruction and **transfer confirmation**; payment partner's reports | External API | RFC-004 (**authenticity: RFC-005**, by the same verifier as payment notifications, AI5-2) | Payout providers, payment partner |
 | Principal and authorisation context (pseudonymous principals) | Library and feed | RFC-005 | Every component |
-| **Personal-data store**: put, get by pseudonymous identifier, erase (key destruction, reaching every copy within `erasure_max`, 30 days; no backup outlives its key generation, AI5-11); the only place personal data lives (A11) | Synchronous query and command | RFC-005 | Identity and access, notifier (contact details at send time), console (support views), reporting (statements at view time), metering ingestion (payloads of data sets rejected "no template", AI3-12) |
+| **Identity edge stream** (AI-R5-1): `edge_stream(identity slot, from position)`, a gRPC server stream of identity-signed credential records (agent and supplier keys, sessions, device-certificate serials, endpoint → tenant, policy version) in commit order, with a signed heartbeat every second sent only after every record up to its head; the edge refuses a slot's credentials once heartbeats stop for 31 s | Stream | RFC-005 | Edge gateway |
+| **Supplier visibility** `visibility(supplier, accounts, reservations) → (reveal or hide per reservation, registry timestamp)` (AI-R5-1): a consistent read at the present timestamp by identity, per view, never cached across views; a caller hides every identity if it fails | Synchronous query | RFC-005 | Reporting, notifier, provisioning feed |
+| **Operator check** (AI-R5-1): `operator_check(action or grant identifier, digest, signers) → role, credential status, person, unused, cancelled` per signer, answered by identity at the present timestamp in its operator partition, consuming each assertion once; `cancel(action, digest, requester assertion)` serialised with it | Synchronous command | RFC-005 | Every owner and reader that accepts operator envelopes or read grants; operator console |
+| **Target summary** (AI-R5-1): an owner's signed summary of one target, so the operator's signing client shows what is signed | Synchronous query | RFC-005 (semantics), served by every owner that accepts operator actions | Operator console (signing client) |
+| **Read grant** (AI-R5-1): an operator read carried with a signed grant (read type, target, role, reason, `not_after`); the reader checks it with the operator check and appends its own audit record before answering | Command wrapper | RFC-005 | Reporting, status replicas, link owner, catalogue, audit query, personal-data store |
+| **Erasure-request intake and recovery objection** (AI-R5-1): `record_erasure_request` and `object_to_recovery`, from the user's own session through the edge to identity, which verifies the access token itself and records the request at its own commit (the erasure clock's start, v1.7); idempotent by (subject, idempotency key); the console only reads the queue (`open_requests`) | Synchronous command (edge → identity); query (console) | RFC-005 | Edge gateway; operator console (read only) |
+| **Personal-data store**, the only place personal data lives (A11), with four operations kept apart (AI-R5-3, AI3-13): **put** (identity; the console; metering ingestion's `put_payload` of data sets rejected "no template", AI3-12, into a payload bucket per exporter and hour), idempotent by item identifier, acknowledged only once durable; **get** by pseudonymous identifier and purpose (identity; notifier, contact details at send time; console with a read grant, support views and "flow-record dispute"; reporting, statements at view time), every get audited, an erased or expired item "not found"; **erase** (identity only, on a compliance envelope citing an open erasure request for the same subject; key destruction, every copy unreadable within `erasure_max`, 30 days, of the request; no backup outlives its key generation, AI5-11); **expire** (an expiry fixed at put, per bucket: at it the item is **unrecoverable in every copy, backups and escrow included**, by destroying an expiry key held only in the Kenyan HSMs, never escrowed or backed up; a payload is unrecoverable at most `dispute_window` + 7 days after receipt) | Synchronous query and command | RFC-005 | Identity and access, notifier, console, reporting, metering ingestion (each for the operations above) |
 | **Webhook endpoints and signing secrets**: registrations per account, managed by administrators (AI5-4) | Query and feed | RFC-005 | RFC-006 (notifier) |
 | Operator action envelope: role, reason, approver | Command wrapper | RFC-005 | Every owner that accepts operator actions |
 | Audit record | Field set in every owner's log (pseudonymous principal); feed | RFC-005 | RFC-006 (retention) |
-| Signed webhook | Outbound protocol, delivered from a Kafka topic | RFC-005 (signing), RFC-006 (delivery) | Buyers |
-| Payload encryption: owner-side envelope encryption of every entry's payload with keys held in Kenyan HSMs, so R3 (and any database or Kafka node) holds ciphertext (AI5-3) | Library | RFC-005 | Every owner, RFC-006 (history) |
-| Substrate conventions: database topology and zone configurations, log-table schema (insert-only; the truncation role, AI5-8), owner leases (session rows plus slot epochs, AI6-1), slot batch transactions (AI3-11) and epoch-conditional writes, hot standbys for link slots (AI-R1-12), the standing R3 non-voter for admission tables (AI6-4), leader placement for every group and region-wide failover, the automatic 2 + 2 reconfiguration, closed and report positions, read leases and status replicas, the transactional outbox, changefeeds and Kafka topics; the clock bound `ε` (the database's maximum clock offset, R3 on Kenyan time, AI6-5), `δ_x_cfg` at p99.9 (AI6-3) and the monitored quantities (measured `ε` and `δ_x` at p99.9 against configured values, late releases counted, AI-1) | Platform contract | RFC-006 | Every owner |
+| Signed webhook: one delivery may carry many notices, each with its own event identity, deduplicated per event by the receiver; a notice is told when its delivery is first attempted (compatible with v1.8 in progress) | Outbound protocol, delivered from a Kafka topic | RFC-005 (signing), RFC-006 (delivery) | Buyers |
+| Column encryption: owner-side envelope encryption of **every application column** except pseudonymous keys and the ordering and fencing columns, with keys by purpose (log, audit column, feed) held in Kenyan HSMs, so R3 (and any database or Kafka node) holds ciphertext; secret-free job definitions and no value-bearing diagnostics in the database's system ranges (AI5-3, AI-R5-2) | Library | RFC-005 | Every owner, RFC-006 (history, runtime, database configuration) |
+| Substrate conventions: database topology and zone configurations, log-table schema (insert-only; the truncation role, AI5-8), owner leases (session rows plus slot epochs, AI6-1), slot batch transactions (AI3-11) and epoch-conditional writes, hot standbys for link slots (AI-R1-12), the standing R3 non-voter for admission tables (AI6-4), leader placement for every group and region-wide failover, the automatic 2 + 2 reconfiguration, closed and report positions, read leases and status replicas, the transactional outbox, changefeeds and Kafka topics; the clock bound `ε` (the database's maximum clock offset, R3 on Kenyan time, AI6-5), `δ_x_cfg` at p99.9 (AI6-3) and the monitored quantities (measured `ε` and `δ_x` at p99.9 against configured values, late releases counted, AI-1); revision 4.2: acquisitions revoke the expired holder session (AI-R6-1); read leases end inside the granter's lease and a new holder waits `read_lease` + ε before reporting (AI-R6-2); per-partition generations, writers ordered by (generation, epoch, sequence), head rows keyed by partition (AI-R6-3); per-stream contiguous sequences (AI-17-2); idle-in-transaction and transaction timeouts below the lease margin, high-priority takeover reads (AI-17-4); slot counts by the occupancy target, marker-only transactions outside the lane, the second in-flight batch per account slot as the fallback lever, `δ_x_cfg` with batching waits (AI-17-5, AI-R6-4) | Platform contract | RFC-006 | Every owner |
+| **Account slot map** (B-AI-10): account → account slot, overrides included, with its version; the single source of truth; placement provisions **one probe account per account slot** from it and refuses any re-slotting that would leave a slot without its probe account; the account owner, the edge's routing and probes read it, none keeps a mapping of its own | Query and feed | RFC-006 (placement) | RFC-002 (account owner), RFC-005 (edge routing), RFC-006 (probes) |
 | History query: as known at T | Query | RFC-006 (storage); semantics in RFC-001, RFC-002, RFC-004 | Operations, support, finance |
-| Probe designation and exclusion | Flag in catalogue and identity | RFC-006 | RFC-003, RFC-004, reporting |
+| Probe designation and exclusion: probe accounts (one per account slot, B-AI-10), probe links, probe exporters | Flag in catalogue and identity | RFC-006 | RFC-002, RFC-003, RFC-004, reporting |
 | Operational alert feed | Asynchronous feed (Kafka) | RFC-006 | Every owner raises alerts through it |
 
 ## Benefits
@@ -1431,9 +1614,9 @@ Figures marked "est." are estimates (§3, §6), to be replaced by measurement (R
 | Never oversell (P1-N1, POL-05) | One writer per link, by construction: the link owner is the holder of the link slot's owner lease, and every write is conditional on its epoch. Every booking on the link goes through it. Only the request's account owner ends a hold, after a committed outcome, so no hold is released under a confirmed reservation, whatever the replication delay. |
 | One decision per request (POL-04) | The first deciding entry in one account log; suspension, revocation, withdrawal and the deadline are all ordered against it. |
 | Concurrent decisions equal some one-at-a-time order (P1-N2, P2-N8, P2-N9, POL-25) | Serial order per link and per account (one log each); holds until the decision give serialisability across them. |
-| `ack_budget` 200 ms at p99 (POL-04, X2-N3) | Only admission components on the path; three two-region database transactions for a single-link booking, each about 30 ms (est.) on the Nairobi–Mombasa pair: about 115 ms at p99 from R1 including the report position, about 125 to 150 ms from R2, on the hottest link or with drift (est.). After a region loss, `pending` within about 90 ms (est.); final answers then about 230 to 245 ms (est.), while the latency targets are suspended (RQ-3), and about 160 ms with the two-write path RFC-006 evaluates. |
-| Deadline (POL-26, P2-N3) | Expiry is a conditional log entry appended before `D`; Share-link holds are released by `D` normally and within `release_grace` if the decision record or the link's schedule is unavailable; a confirmation is never decided after `D − τ` (about 260 ms before `D`, est., up to about 300 ms if the measured p99.9 of `δ_x` raises it, AI6-3), stricter than RQ-7's "before `D`"; partner routes begin committing by `D − commit_margin` and keep about 9.7 s for the partner confirm; partner holds carry expiry `D`; holds carry the commit fence, so no capacity is granted to a waiter that can no longer commit. |
-| Capacity free once the outcome is reported (POL-04, RQ-6, RQ-8) | Request-scoped releases with tombstones, so no late command recreates a hold; a non-confirmed outcome is reported only after a "releases durable" entry, about 75 ms after the decision (est.), within `release_grace` while a link fails over. |
+| `ack_budget` 200 ms at p99 (POL-04, X2-N3) | Only admission components on the path; three two-region database transactions for a single-link booking, each about 30 ms (est.) on the Nairobi–Mombasa pair, plus one budgeted batching wait per owner step (revision 4.2): about 176 ms at p99 from R1 including the report position, about 186 ms from R2 and about 196 ms as the R2 probe measures it (est.), so X2-S15 holds with a thin margin (R23); about 146 to 166 ms with the second account lane. After a region loss, `pending` within about 160 ms (est.); final answers then about 425 to 455 ms (est.), while the latency targets are suspended (RQ-3). |
+| Deadline (POL-26, P2-N3) | Expiry is a conditional log entry appended before `D`; Share-link holds are released by `D` normally and within `release_grace` if the decision record or the link's schedule is unavailable; a confirmation is never decided after `D − τ` (about 420 ms before `D`, est., batching waits included, capped at about 450 ms by the lever of §4.3; AI6-3, AI-17-5), stricter than RQ-7's "before `D`"; partner routes begin committing by `D − commit_margin` and keep about 9.6 s for the partner confirm; partner holds carry expiry `D`; holds carry the commit fence, so no capacity is granted to a waiter that can no longer commit. |
+| Capacity free once the outcome is reported (POL-04, RQ-6, RQ-8) | Request-scoped releases with tombstones, so no late command recreates a hold; a non-confirmed outcome is reported only after a "releases durable" entry, about 115 ms after the decision (est.), within `release_grace` while a link fails over. |
 | Status reads never wrong, never `pending` after a reported outcome (POL-04, RQ-10) | Every report, the edge's synchronous answer included, gated on the report position, which waits for every leased status replica; the four-step replica rule (§4.6), whose fallback reads the database at the present timestamp. |
 | All or nothing with partners (P2-N1, P2-N7, POL-28) | Account log as decision log; everything Share decides is checked just before the partner confirm; any partner booking left without a confirmation is cancelled at once at Share's cost; at most one final-only partner, booked last. |
 | Fair contention, partners included (P2-N4, POL-02) | Waiter queues by `priority_rule` at every link owner and at every partner adapter; yields accepted by the account owner only while the request is waiting. |
@@ -1444,7 +1627,7 @@ Figures marked "est." are estimates (§3, §6), to be replaced by measurement (R
 | Design load (X2-N2) | Partitioned by natural keys with no global sequencer; the hottest link is the one irreducible serial point (at least 5,000 entries/s, est.), an in-memory state machine whose entries are batched into one database transaction at a time. Charge lines (about 1 M/s, est.) are posted as one movement per account and minute. |
 | Charge and attribution timeliness, exactly once (X2-N3, P3-N2, P3-N10) | Rating consumes owner feeds; hot standbys take over in about 5 s (est.), inside `attribution_lag_max`; postings are idempotent by source reference and acknowledged back to rating; unposted usage and the balance are applied at consistent positions. |
 | Immutability and audit (P4-N7, X1-N8, POL-19) | Insert-only log tables everywhere; audit fields written in the same entry as the change. |
-| Personal data erasable without rewriting history (v1.6, X1-N2) | No log, topic or archive holds personal data (A11); the personal-data store is crypto-shredded per subject; R3 and every database and Kafka node hold only ciphertext payloads. |
+| Personal data erasable without rewriting history (v1.6, X1-N2) | No log, topic or archive holds personal data (A11); the personal-data store is crypto-shredded per subject; R3 and every database and Kafka node hold only ciphertext application columns (AI-R5-2); payloads put with an expiry are unrecoverable everywhere at it (AI3-13). |
 | A platform the team can build and run (RFC-006 RK10) | No consensus code of Share's own: an off-the-shelf distributed SQL database and Kafka under TypeScript/NestJS owners, one language with the rest of Share's stack. |
 | Past headroom rebuilt as shown (P4-N16, P4-S72) | Every input to headroom is an entry in the account log; every answer carries its position. |
 | Reconciliation (P4-N14, POL-24) | Each movement is zero-sum within one partition; posting time (the commit timestamp) is monotone across owner changes; every run reads all partitions at one database timestamp below the closed timestamp and counts incoming payments received by the partner but not yet posted (RQ-11). |
@@ -1455,7 +1638,7 @@ Figures marked "est." are estimates (§3, §6), to be replaced by measurement (R
 
 | Alternative | Why it loses |
 |---|---|
-| **A custom multi-group Raft platform** (revision 3.2 and RFC-006's draft: `etcd-io/raft` embedded in a Go partition host, about 5,000 groups, with four extensions: non-campaigning R3 voters, leadership and read leases, report position and lease-status query, the own-term-entry guard) | **Rejected in revision 4** (coordinator's decision, RFC-006 RK10). It is the design this RFC's logic was first written on, and it is technically sound, but it does not fit Share: a company of **11 to 50 people** would have to build, prove (TLA+, fault injection) and operate at 99.99% a consensus platform hosting every owner, with its own write-ahead log, snapshots, membership changes, lease timing, placement and on-call, and staff a platform team of at least four before go-live; it puts **Go** under owners in a **TypeScript** stack, so two runtimes, two toolchains and two hiring profiles; and its **operating burden** (5,000 groups, coalesced heartbeats, staggered elections, a custom archive path) is all Share's. A distributed SQL database gives the same quorum, placement, leases and closed timestamps as a product. **What is given up** is fine-grained control of leases and timing: the report position was one heartbeat round on Raft positions; the clock bound was a 40 ms platform figure rather than the database's 100 ms maximum offset (the fence moves from about 200 to about 260 ms before `D`); R3 voters could be forbidden to lead rather than merely not preferred; election priorities and group-commit pipelining were tuned per owner class rather than configured; replica rule 3 could read a majority's committed positions rather than wait for a range lease; per-commit overhead was about 5 ms lower. None of these changes a guarantee; each costs latency or margin, stated in §3, §4.3 and §4.6 |
+| **A custom multi-group Raft platform** (revision 3.2 and RFC-006's draft: `etcd-io/raft` embedded in a Go partition host, about 5,000 groups, with four extensions: non-campaigning R3 voters, leadership and read leases, report position and lease-status query, the own-term-entry guard) | **Rejected in revision 4** (coordinator's decision, RFC-006 RK10). It is the design this RFC's logic was first written on, and it is technically sound, but it does not fit Share: a company of **11 to 50 people** would have to build, prove (TLA+, fault injection) and operate at 99.99% a consensus platform hosting every owner, with its own write-ahead log, snapshots, membership changes, lease timing, placement and on-call, and staff a platform team of at least four before go-live; it puts **Go** under owners in a **TypeScript** stack, so two runtimes, two toolchains and two hiring profiles; and its **operating burden** (5,000 groups, coalesced heartbeats, staggered elections, a custom archive path) is all Share's. A distributed SQL database gives the same quorum, placement, leases and closed timestamps as a product. **What is given up** is fine-grained control of leases and timing: the report position was one heartbeat round on Raft positions; the clock bound was a 40 ms platform figure rather than the database's 100 ms maximum offset (the fence moves from about 200 to about 260 ms before `D`, about 420 ms once the batching waits are budgeted (revision 4.2)); R3 voters could be forbidden to lead rather than merely not preferred; election priorities and group-commit pipelining were tuned per owner class rather than configured; replica rule 3 could read a majority's committed positions rather than wait for a range lease; per-commit overhead was about 5 ms lower. None of these changes a guarantee; each costs latency or margin, stated in §3, §4.3 and §4.6 |
 | **Build Raft in TypeScript** | No production-grade multi-group Raft exists for Node.js; writing one is a multi-year correctness risk, worse than the rejected Go platform |
 | **One database transaction for everything**: a distributed SQL database used as the *coordination mechanism*, with serialisable transactions spanning the link schedules, the funds hold and the ledger, written by any process | Revision 4 uses a distributed SQL database, but as the *substrate* under single writers: each partition has one owner, its log is append-only, and no transaction writes two owners' partitions (a transaction may read another owner's rows where §8 names the read, A1, AI-R1-11), so the database never arbitrates contention between writers. Used as the coordinator instead, it loses as before: partner legs cannot join it (P2 C6); on a hot link at 2,500 requests/s, serialisable transactions from many writers conflict and retry, and the prototype found that optimistic or serialisable concurrency "wrecks the tail latency" under contention (history D3); it makes Share's own account a hot row on every charge, and ties admission's availability to the ledger's. |
 | **Redpanda as the transport** (allowed by revision 4) | Raft per partition needs a majority of replicas; with no broker in R3 (AI5-3) a Kenyan region loss leaves 2 of 4 and stops every partition until an operator forces a reconfiguration. Kafka's in-sync-replica model continues on the surviving region (AI6-2) |
@@ -1494,7 +1677,7 @@ Figures marked "est." are estimates (§3, §6), to be replaced by measurement (R
 | R1 | **The latency budget is an estimate.** The Nairobi–Mombasa and Kenya–Johannesburg round-trip times, two-region database transactions at p99 under load, the database's per-transaction overhead, batching on the hottest link and the edge's overhead are not measured. | Before RFC-001, RFC-002 and RFC-004 are approved, a spike runs the database at 2 + 2 + 1 (2 Nairobi, 2 Mombasa, 1 `africa-south1`) under NestJS account and link owners on the single-link path, in steady state and with each region cut off. It measures each Kenyan region's RTT to R3 (which fixes the leader region, R2-D7), commit p99 and p99.9, `δ_x`, the report-position delay, changefeed and Kafka latency, owner-lease and range-lease takeover, and a region-wide failover of every lease (R16). RFC-006 sets the measurement. |
 | R2 | **Facilities as zones.** The design assumes at least two independent Share facilities in each of Nairobi and Mombasa. If a metro has only one, a facility loss is a region loss (a declared disaster) and more frequent. Nairobi and Mombasa share a country, a grid operator and some fibre routes, so a correlated loss of both is more likely than for distant cloud regions; it is outside X2-N4 (two-region loss) but would stop admission. | Confirm the facility inventory with Share's platform team; RFC-006 records it. After a sustained region loss, ranges are reconfigured to 2 + 2 automatically (§5.1), so one further fault is tolerated without a replacement site. |
 | R3 | **One geography only.** A single-link booking where the account and the link have their owners in different geographies would cross a long round trip and miss X2-S15. | Start with one geography (Kenya plus Johannesburg). Multi-geography (Djibouti, Marseille) is a later RFC; it must keep every account's partitions and the links it books in the same geography, or accept `pending` for cross-geography bookings. |
-| R4 | **Clock uncertainty.** The expiry timing, the confirm fence's timestamp guard, the closed positions and `request_age` depend on a bounded `ε`, now the database's maximum clock offset, set to **100 ms** by the coordinator's decision, relying on RFC-006's GNSS/PTP clock discipline in the Kenyan facilities and on Kenyan NTP time servers for R3's nodes, never the provider's smeared time (AI6-5); it puts the fence about 260 ms before `D` (up to about 300 ms with `δ_x_cfg` at p99.9, AI6-3). Safety against overselling and partial booking does not depend on it (A8). | **If clocks degrade:** a database node whose offset from a majority of its peers reaches 80% of `max_offset` (80 ms) terminates itself, and its ranges move to other replicas (a node loss, §5.1); an owner host whose offset to the database exceeds 50 ms gives up its owner leases and a standby takes them; the confirm guard is checked against the commit timestamp, so it fails safe. RFC-006 **alarms** when any measured offset exceeds 40 ms (40% of the bound), before nodes start to stop, and when a facility's time source (GNSS or PTP grandmaster) is lost; a facility that loses its time source for longer than its holdover runs on its peers' clocks, and if a whole region drifts, its nodes self-terminate and the region is handled as lost (region-wide failover). Raising `max_offset` needs a rolling restart and moves the fence earlier (`τ` = 100 + `δ_x` grows with it), never the release later; RFC-006 monitors measured offsets and `δ_x` against the configured values (AI-1). |
+| R4 | **Clock uncertainty.** The expiry timing, the confirm fence's timestamp guard, the closed positions and `request_age` depend on a bounded `ε`, now the database's maximum clock offset, set to **100 ms** by the coordinator's decision, relying on RFC-006's GNSS/PTP clock discipline in the Kenyan facilities and on Kenyan NTP time servers for R3's nodes, never the provider's smeared time (AI6-5); with the batching waits it puts the fence about 420 ms before `D` (capped at about 450 ms, AI6-3, AI-17-5). Safety against overselling and partial booking does not depend on it (A8). | **If clocks degrade:** a database node whose offset from a majority of its peers reaches 80% of `max_offset` (80 ms) terminates itself, and its ranges move to other replicas (a node loss, §5.1); an owner host whose offset to the database exceeds 50 ms gives up its owner leases and a standby takes them; the confirm guard is checked against the commit timestamp, so it fails safe. RFC-006 **alarms** when any measured offset exceeds 40 ms (40% of the bound), before nodes start to stop, and when a facility's time source (GNSS or PTP grandmaster) is lost; a facility that loses its time source for longer than its holdover runs on its peers' clocks, and if a whole region drifts, its nodes self-terminate and the region is handled as lost (region-wide failover). Raising `max_offset` needs a rolling restart and moves the fence earlier (`τ` = 100 + `δ_x` grows with it), never the release later; RFC-006 monitors measured offsets and `δ_x` against the configured values (AI-1). |
 | R5 | **The hottest link is a serial point.** 2,500 requests/s is provisional (POL-06; P1 open question 1). | Group commit and an in-memory schedule; RFC-001 states the measured ceiling per link and the share of `pending` (§6). |
 | R6 | **The account owner is a large state machine.** An account with many reservations or agent keys concentrates state and work in one partition. | `account_rate_limit` bounds its booking rate; reservations and charge-line state can be sub-partitioned by reservation under the account's log if needed, without a second writer of decisions. RFC-002 sets the limit. |
 | R7 | *(Resolved.)* Waiter queues across a failover. | Waiter registrations, waiting notices and yields are log entries (§2). |
@@ -1503,13 +1686,16 @@ Figures marked "est." are estimates (§3, §6), to be replaced by measurement (R
 | R10 | **Webhook load is unknown** (X2 open question 2). | The notifier is partitioned by account and scaled independently; RFC-006 sets a provisional figure. |
 | R11 | **RFC-004 is large, and its Part A is now inside RFC-002's component.** | The division in §7; RFC-002 and RFC-004 Part A are reviewed together. |
 | R12 | *(Resolved by RQ-4.)* Firm equivalent-path offers hold capacity on the new path for `offer_window`. | A move hold on each new-path link, owned by the reservation's move command; no funds hold, since the price is no higher (D4). RFC-001 and RFC-002 specify it. |
-| R13 | **Degraded latency after a region loss, or while R1 commits through R3** (about 230 to 245 ms for a final single-link answer, est., report position included). | Allowed by RQ-3 for a declared disaster; not allowed for a fibre cut. RFC-006 evaluates a two-write single-link path while degraded (about 160 ms, est., so within `ack_budget`) against both cases, and a replacement site for a lost region. |
+| R13 | **Degraded latency after a region loss, or while R1 commits through R3** (about 425 to 455 ms for a final single-link answer with batching waits, est., report position included; `pending` within about 160 ms). | Allowed by RQ-3 for a declared disaster; not allowed for a fibre cut. RFC-006 evaluates a two-write single-link path while degraded (about 160 ms without waits, about 260 to 290 ms with them, est., so no longer within `ack_budget` by itself) together with second in-flight batches, against both cases, and a replacement site for a lost region. |
 | R14 | **Fibre paths.** The subsea routes to southern Africa land at Mombasa, so without diverse paths one Nairobi–Mombasa cut could isolate R1 from R2 and R3 at once, and even a cut that does not would make R2 unavailable and R1 marginal for the hours a repair takes, outside any declared disaster (A0R-05). | **Go-live condition** (R2-D2, recorded in the requirements' topology assumption and in RFC-006): two Nairobi–Mombasa paths, and Nairobi–Johannesburg and Mombasa–Johannesburg paths not via each other, with no shared risk, verified by Share's network team. The cut analysis (§5.1) depends on it. |
 | R15 | **Charge-line volume depends on reservation length**, which is assumed (mean 1 h); so does journal storage (about 2.2 PB per copy over 7 years in columnar segments, est.; §6). | RFC-003 and RFC-004 size from a stated distribution; posting one movement per account and minute keeps the ledger's write rate independent of it; RFC-004 confirms the segment encoding (A0R-11). |
 | R16 | **Region-wide failover is a mechanism of its own** (A0R-13): what decides that a region can no longer lead, and how the database's range leases and thousands of owner leases move within admission's 1 min RTO, together, for every group. | RFC-006 specifies the placement table (2 + 2 + 1), the triggers, the lease-preference swap, the owner-lease stagger by class and the expected time to move every lease; the R1 spike tests it. |
 | R17 | **Partner clocks** (A0R-08). A partner applies the hold expiry `D` by its own clock, so a confirm that reaches it after its `D` is answered "unknown" (P2 C8). | RFC-002 budgets partner clock skew inside `commit_margin`, and states the path: reconcile, then cancel at Share's cost (POL-28) if the partner booked it. |
 | R18 | **The substrate is a product Share does not control** (the trade of revision 4). Closed-timestamp cadence, changefeed latency, range-lease failover time, per-transaction overhead and behaviour with thousands of owner slots and millions of partitions are the database's. | The R1 spike measures each against the figures of §3 and §4; the logical design does not depend on the vendor (§5.5), and YugabyteDB is the retained alternative. A support contract and the enterprise licence are go-live conditions; RFC-006 records them. |
-| R19 | **Busy slots pay a batching wait** (one transaction in flight per slot, §3; AI3-11): up to about 30 ms at p99 on the hottest link (est.), which has a slot of its own. | Measured in the spike; if it eats the margin, the hottest links get a second in-flight batch with an application-assigned sequence (RFC-006), or RFC-001 lowers the share of `pending` by sizing. |
+| R19 | **Every slot pays a batching wait** (one transaction in flight per slot, §3; AI3-11; revision 4.2, AI-17-5, AI-R6-4): about 20 ms at p99 per step on shared slots at the occupancy target, 30 ms on the hottest link's own slot (est.), and about one commit in the degraded states; it is now in the single-link budget and in `δ_x`. | Measured in the spike. Account slots: more slots first (about 16,384, est.), then the second in-flight batch per account slot for partitions not in flight. Hottest links: a second in-flight batch with runtime-assigned sequences (RFC-006), or RFC-001 lowers the share of `pending` by sizing. `δ_x`: deadline entries ride the second batch before `τ` passes its cap (§4.3). |
+| R23 | **Thin margin on X2-S15** (revision 4.2): with the batching waits, about 196 ms at p99 as the R2 probe measures a single-link booking, by a conservative sum of p99s; drift, a facility lost in R2 or a path cut take it over 200 ms while they last. | Spike exit criterion: the account step's p99, batching wait included, at the design load, at most 50 ms. If it is not met, the second in-flight batch per account slot is turned on before go-live (about 166 ms). RFC-006 reports the monthly p99 per serving region with the transient states' share. |
+| R24 | **More slots cost probe accounts, probe load and availability budget** (B-AI-10, revision 4.2): at about 16,384 account slots, one probe account per slot is about 16,384 Share-internal accounts, each with a credit limit set by finance, and about 1,100 probe bookings a second over both regions (est.). Under v1.8 (in progress) a minute is unavailable when every probe of any one slot fails, so probe-side noise scales with the slot count: to keep it under a tenth of the 99.99% budget, an independent probe failure must be below about 2.5×10⁻⁵ at 16,384 slots, against about 10⁻⁴ at 1,024. | Placement provisions the probe accounts from the slot map in bulk, with one finance action covering the set; probes book only designated probe links, never the hottest link; consumers exclude them by designation (§5.4). The slot count is the least that meets the occupancy target; if the spike's probe failure rate makes it spend more than a tenth of the budget, RFC-006 uses fewer slots and turns on the second account lane instead. Coalescing applied unposted usage (RFC-004) would halve the slot count. |
+| R25 | **Open reductions hold rating's closure** (AI-17-3): a reservation in an open reduction's affected set is not closed past `T_eff` until the link's final step is applied, which for a large affected set can take minutes. | The link decides at `T_eff` by adopting its projection and re-checking only the changes since, so the decision is bounded by the affected set, not the link (RFC-001); rating's 2 min per minute (X2-N3) absorbs ordinary cases; a hold longer than 1 min is alerted, and the minutes it delays are counted against X2-S22 by RFC-006. |
 | R20 | **Kafka is a second distributed system to run.** | It is transport only (§5.5): a lost topic is replayed from the database, so its failures cost latency, never facts. Apache Kafka (KRaft) is the choice, not Redpanda, because it survives a Kenyan region loss with no broker in R3 (§5.1, AI6-2). |
 | R22 | **Fault tolerance after the automatic 2 + 2 change returns in minutes only for the admission tables** (AI6-4): they keep a standing R3 non-voter; every other range needs a new R3 voter bootstrapped, about 30 min to 3 h (est.), during which a further fault stops writes to those tables. | A **known cost**, accepted: a standing R3 copy of every table is not kept. RFC-006 reserves R3 capacity for the second voter set, raises the snapshot rate, and alerts while any range is still on three voters. |
 | R21 | **Payload encryption and the personal-data store** add key management on the write path and an availability dependency for anything that shows personal data. | Data keys are cached in owner memory and rotated per period; HSMs are in both Kenyan regions. The personal-data store is engineered to identity's targets; nothing on the booking or posting path reads it (A11). RFC-005 specifies. |
@@ -1559,6 +1745,20 @@ database.
 
 RFC-002's other requirement questions (B-RQ-3 … B-RQ-8) do not touch the architecture and
 stay with RFC-002 and the v1.6 amendments.
+
+**Revision 4.2.** No new requirements issue. Three `requirements-v1.7` decisions are
+applied: a request has begun committing for POL-07 only if its confirmation committed
+without seeing the reduction (P1-S78; B-AI-9); `erasure_max` runs from the erasure request,
+across every copy (POL-19, X1-S39; AI-R5-3, AI3-13); every account slot is probed every
+minute (X2-S27; B-AI-10). The `requirements-v1.8` amendments in progress were checked as
+announced: the lateness bound gains the admission RTO (60 s), a requirement on exposure
+that the account owner's 1 min RTO already meets; an outage records a capacity level and
+the capacity in force is the least of the announced capacity and the open outages, which
+the link's capacity history and the `min`-composed cut targets express (§8, link supply
+commands); a minute is unavailable when every probe of an account slot fails, each slot being
+probed at least twice a minute from two locations, which one probe account per slot makes
+measurable (B-AI-10; the price of more slots is R24); one delivery may carry many notices (§8,
+signed webhook). None changes a component or a contract's owner.
 
 ## Review resolution
 
@@ -1766,3 +1966,45 @@ so; A1 is amended (reads across owners) but single-writer ownership is not.
 | AI6-5 (RFC-006) | R3's nodes take Kenyan time (NTP from Kenyan time servers), not the provider's smeared time, as they are inside the database's clock domain | §4.3, §5.1 (diagram, regions), §8, R4 |
 | JR-1 (RFC-002, RFC-004) | Interface: no `key_status` call; `rate_check` returns `NotAccepted{revoked}` for a key revoked as applied by F4, and F4's outcome lists the revoked keys. RFC-004 §A10 aligned | RFC-004 §A10 |
 | KYB on F4 (RFC-002, RFC-004) | Interface: KYB status travels in F4 (the identity status push); F5 is the credit limit only. RFC-002 §2.3 aligned | RFC-002 §2.3 |
+
+## Revision 4.2 errata
+
+Architecture errata raised by revision 3 of the detailed RFCs and by reviews
+[16](../reviews/16-rfc-005-review.md) to [20](../reviews/20-rfc-006-review.md), applied by
+the coordinator's binding decisions: every listed issue's proposed amendment is accepted,
+with the specifics recorded per row. The logical design (single writers, fenced epochs,
+append-only entries, conditional deciding entries, the report position) is unchanged.
+What changes is stated per row; the largest is the latency budget, which now carries the
+batching waits revision 4.1 left out.
+
+| Id (raised in) | Change in revision 4.2 | Where |
+|---|---|---|
+| AI-R5-1 (RFC-005 rev. 3.1; review 16, R5-12; V-1, V-4 of review 21) | Every cross-owner input except the link displacement read is **owner-served**, never a SQL grant, and named: identity's **edge stream** (replacing the edge cache "refreshed by push"), **catch-up**, **`visibility()`** (reporting, notifier, provisioning feed), the **operator check** (every owner and reader of envelopes and read grants), owners' **target summaries** for the console, **read grants** carried by console reads to reporting, status replicas, the link owner, catalogue, the audit query and the personal-data store with the readers' audit appends, the edge → identity **erasure-request intake** and **recovery objection** (the console reads `open_requests` only), and ingestion's `put_payload`. A1 states the rule | §1 (A1), §2 (identity and access), §3 (diagram, prose, interaction table), §5.5 (A1 row), §8 (six new rows) |
+| AI-R5-2 (review 16) | "R3 holds ciphertext" scoped to **every application column** except pseudonymous keys and the ordering and fencing columns, keys by purpose (log, audit column, feed); secret-free job definitions and no value-bearing diagnostics in system ranges | §5.1 (encryption, diagram), §8 (column encryption), Benefits, §5.5 item 11 |
+| AI-R5-3 (review 16), AI3-13 (RFC-003) | The personal-data store separates **put / get / erase / expire**, with callers per operation; **per-bucket expiry fixed at put**, at which the item is unrecoverable in every copy, backups and escrow included (an expiry key held only in the Kenyan HSMs, never escrowed or backed up, destroyed at expiry); `erasure_max` counted from the request (v1.7) | §1 (A11), §2 (identity and access), §5.3, §8 (personal-data store), Benefits, §5.5 item 11 |
+| AI-R5-4 (RFC-005 rev. 3.1, replacing review 16's identity → account owner call) | The identity status push carries resolved timestamps; the account owner **pulls catch-up** for its slot when its push is silent for 20 s and on taking a lease before deciding, and **confirms only within 45 s of identity freshness**; the 60 s bound holds while Kafka or identity is reachable, and otherwise nothing of the slot is confirmed after 45 s | §2, §3 (interaction table), §4.2, §7 (X1-N3), §8 (identity status push and catch-up) |
+| AI-17-1 (review 17, R1-04) | The **hold** carries `wait`, kind, receipt minute and policy version; the link decides `wait` = false itself (refusal with tombstone, no waiter) and judges validity against the receipt minute | §2 (link owner), §3 (sequence, interaction table), §8 (link hold port) |
+| AI-17-2 (review 17, R1-08) | Each **feed stream** has its own contiguous per-partition sequence (e.g. the link's `feed_seq`), kept in the head row; **point-to-point notifications** are idempotent state messages deduplicated by (request, attempt, kind), with no high-water rule, and a reconcile `query` on a timer. "Consumers ignore anything older" now applies to commands only, by (generation, epoch) | §3 (interaction table), §4.4, §5.2, §8 (waiting port, schedule feed) |
+| AI-17-3 (review 17, R1-06), A-3 (review 18, J-07) | **Causes with a known future effective minute are recorded before that minute** (revocation due, offer move, price change); an owner that reaches one late uses the next boundary after its timestamp and alerts the delay. **For a reservation in an open reduction's affected set, the closure rating applies does not pass `T_eff` until the link's final step is applied**; rating takes each reservation's closure as the least of the lifecycle closure, its links' schedule-feed closures and the open reductions' `T_eff`. **A cut is a per-link target rate**, idempotent by (link, reduction, reservation), composed by `min` | §2 (link owner), §3 (capacity-reduction path), §4.5, §8 (schedule feed, lifecycle feed, reservation command port), R25 |
+| AI-17-4 (review 17, R1-10) | Owner sessions run with idle-in-transaction and transaction timeouts below the lease margin; takeover reads run at high priority and push a deposed holder's pending batch | §5.2, §5.5 (crash points, item 11), §8 (substrate conventions) |
+| AI-17-5 (review 17, R1-11), A-2 (review 18, J-08), AI-R6-4 (review 20, R6-05) | **Batching waits are budgeted** per owner step and topology state (account `W_a`, link `W_l`), in the single-link budget and in `δ_x`. Occupancy target about 0.15 per lane: about **16,384 account slots** and **4,096 shared link slots** (est.); marker-only transactions outside the lane. **Account-slot lever: more slots first; a second in-flight batch per account slot (partitions not in flight) as fallback.** Single-link p99 about 176 ms (R1), 186 ms (R2), **196 ms as the R2 probe measures it**: X2-S15 holds with about 4 ms margin; 146 to 166 ms with the fallback; the thin margin is risk R23 with a spike exit criterion. `δ_x` ≈ 105 ms steady, ≈ 300 ms worst (p99); `δ_x_cfg` ≈ 320 ms, **`τ` ≈ 420 ms, cap about 450 ms** (was 260 to 300 ms), beyond which deadline entries ride the second batch (`τ` ≈ 335 ms); partner window about 9.6 s; `route_deadline_min` leaves at least 550 ms; `read_lease` sizing re-checked (about 805 ms ≤ 1 s) | §3 (route sequence, slot paragraph, wait table, budget tables, X2-S15 paragraph), §4.3, §4.6, §5.5 (costs, item 11), §6, §8, Benefits, Competition, R4, R13, R19, R23, R24 |
+| AI-17-6 (review 17), A-4 (review 18), B-AI-9 (RFC-002) | The partner-confirm exception is deleted: **a request has begun committing only if its confirm transaction committed without seeing the marker** (v1.7, P1-S78); a partner booking of a displaced request is cancelled at Share's cost. B-AI-7's "had begun committing" is narrowed accordingly | §3 (capacity-reduction path), §5.5 (crash point), §8 (outcome and expiry port), Requirements issues |
+| A-1 (review 18, J-05) | **Invoice-status feed** (overdue, paid, written off, credit limit removed), each event with the buyer partition's ledger position, applied only once the applied ledger position has reached it; **credit-limit command** (console → account owner, finance envelope). §3 names receivables, not payments, as the source | §2 (payments), §3 (diagram, interaction table), §8 (two new rows) |
+| AI-19-1 (review 19, F3-04) | Rating's charge lines travel in **reservation batches** (not gated by unposted usage, one movement per account and minute) and **usage batches** (usage lines, amendments, fees, cost lines; at most the movement limit; posted whole in one movement); "whole" and the usage reduction are defined over usage batches | §6, §8 (charge-line feed, posting port, movement feed) |
+| AI-19-2 (review 19, F3-07) | Lifecycle **moves carry the path's catalogue route ID and shown price**; the equivalent-path source offers only **catalogue routes with split weights** | §8 (lifecycle feed, equivalent-path source) |
+| AI-R6-1 (review 20, R6-01) | An acquisition of a slot whose holder session has expired **revokes that session**; a renewal succeeds only on a non-revoked session, so none commits after an acquisition | §5.2, §5.5 (crash point, item 11), §8 |
+| AI-R6-2 (review 20, R6-02) | A read lease is granted only if it **ends inside the holder's own lease**; a handing-off holder stops granting at the handoff; **after any acquisition the new holder reports nothing until `read_lease` + ε** after its acquisition commit | §4.6, §5.5 (crash point, item 11), §8 |
+| AI-R6-3 (review 20, R6-09) | A per-partition **generation**, incremented by each move, carried in every row, header and command; writers ordered by **(generation, epoch, sequence)**; head rows keyed by partition | §4.4, §5.2, §5.5 (crash point, item 11), §8 |
+| B-AI-10 (RFC-002) | **One probe account per account slot**; placement (RFC-006) owns the **account slot map**, overrides included, as the single source of truth, which RFC-002, the edge and probes read; a re-slotting that would leave a slot without its probe account is refused | §2 (probes, placement), §5.1 (probes), §5.4, §7 (X2-N1), §8 (account slot map, probe designation), R24 |
+| Coverage (v1.7) | X1-N11 (personal data erased without breaking the audit), added in `requirements-v1.7`, is allocated: identity and access, every owner (A11), RFC-006 for backups and expiry keys; 67 needs | Header, §7 |
+
+**Interface points the detailed RFCs must match** (no slice RFC is edited here):
+
+| RFC | Must match |
+|---|---|
+| RFC-001 | Hold inputs `wait`, kind, receipt minute, policy version; `wait` = false decided at the link (AI-17-1). Per-link `feed_seq`; waiting-port notifications as state messages with a `query` (AI-17-2). Cut targets per (link, reduction, reservation) from `T_eff`; affected set fixed and published at `T_eff`; final step on the schedule feed (AI-17-3). Shared link slots by the occupancy target; `W_l` in its latency and `δ_x` figures (AI-17-5). Generation in rows, headers and commands (AI-R6-3). v1.8 outage capacity level, min-composed. |
+| RFC-002 | Sends the new hold inputs; begun = confirm committed without the marker, no partner exception (B-AI-9). Reconcile `query` and identity-based deduplication of link notifications (AI-17-2). Future-effective E11s recorded before their minute; composes cut targets by `min`; lifecycle moves carry route ID and shown price (A-3, AI-17-3, AI-19-2). Catch-up pull and the 45 s confirm gate (AI-R5-4). Applies the invoice-status feed gated on ledger position; accepts the credit-limit command (A-1). Reads account → slot from placement's map, keeps none (B-AI-10). About 16,384 account slots, marker-only transactions outside the lane, `W_a` in §14, the second lane as fallback (AI-17-5). |
+| RFC-003 | Reservation and usage batch streams; usage batch ≤ movement limit (AI-19-1). Closure per reservation as the least of lifecycle closure, link schedule-feed closures and open reductions' `T_eff` (AI-17-3). Labels moved reservations by the carried route ID and weights version; registers offered paths as catalogue routes (AI-19-2). Payload buckets put with expiry (AI3-13). |
+| RFC-004 | Posts reservation batches as one movement per account and minute and usage batches whole; "whole" over usage batches (AI-19-1). Owns the invoice-status feed (with ledger positions) and the credit-limit command semantics (A-1). Its Part A F4 holds identity freshness for the confirm gate (AI-R5-4). |
+| RFC-005 | Serves the edge stream, catch-up, `visibility()`, the operator check, read grants, the erasure intake and recovery objection as §8 names them (AI-R5-1); column-encryption scope (AI-R5-2); store put / get / erase / expire with expiry keys never escrowed or backed up (AI-R5-3, AI3-13). Edge routing reads placement's account slot map. |
+| RFC-006 | Session revocation on acquisition (AI-R6-1); read-lease end inside the lease and the `read_lease` + ε reporting wait after any acquisition, handoff included (AI-R6-2); generations and partition-keyed head rows (AI-R6-3); per-stream sequences in the runtime (AI-17-2); session timeouts and high-priority takeover reads (AI-17-4); slot counts by occupancy, marker-only transactions outside the lane, the second account-slot lane, `δ_x_cfg` and `τ` cap with waits, the R23 exit criterion (AI-17-5, AI-R6-4); the account slot map, one probe account per slot, refusal of re-slotting without a probe (B-AI-10); secret-free system ranges (AI-R5-2); expiry keys outside backups (AI3-13). |

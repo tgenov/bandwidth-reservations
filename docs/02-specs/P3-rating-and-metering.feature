@@ -198,15 +198,16 @@ Feature: Rating reservations and metered traffic
         | 31 days | the account is charged no cancellation fee    |
 
     @P3-S63 @need-P3-N12 @POL-08
-    Scenario Outline: A shorten whose new end falls inside a partner's minimum term incurs the shown fee, as a cancellation would
-      Given a reservation over a partner leg with a minimum term of 30 days, shown at booking as a cancellation fee of 0.500000 USD, which started 2 days ago
+    Scenario Outline: A shorten to a later end incurs a shown fee only if its new end falls inside a partner's minimum term
+      Given a reservation over a partner leg with <terms> shown at booking, which started 2 days ago
       When the account shortens it to end <when> after it started
       Then <result>
 
       Examples:
-        | when    | result                                      |
-        | 10 days | the account is charged 0.500000 USD         |
-        | 31 days | the account is charged no cancellation fee  |
+        | terms                                                                    | when    | result                                      |
+        | a minimum term of 30 days, charged as a cancellation fee of 0.500000 USD | 10 days | the account is charged 0.500000 USD         |
+        | a minimum term of 30 days, charged as a cancellation fee of 0.500000 USD | 31 days | the account is charged no cancellation fee  |
+        | a cancellation fee of 0.500000 USD and no minimum term                   | 10 days | the account is charged no cancellation fee  |
 
     @P3-S44 @need-P3-N12 @POL-08 @POL-07 @POL-16 @POL-30
     Scenario Outline: Who pays a shown cancellation fee depends on who ended the reservation early
@@ -220,6 +221,18 @@ Feature: Rating reservations and metered traffic
         | terminated by Share (POL-30)                             | charged to the account                           |
         | revoked under a permanent reduction (POL-07)             | not charged to the account; Share pays it (P4)   |
         | cancelled by its account after its rate was cut under a permanent reduction (POL-07) | not charged to the account; Share pays it (P4) |
+
+    @P3-S74 @need-P3-N12 @POL-08 @POL-11
+    Scenario Outline: A booked window that ends inside a partner's minimum term incurs the fee shown on the offer
+      Given a partner leg with a minimum term of 30 days, charged as a cancellation fee of 0.500000 USD
+      And the offer for a reservation over it for a window of <window> showed <shown> before the account booked it
+      When the reservation ends at its window's end
+      Then <result>
+
+      Examples:
+        | window  | shown                                                  | result                                                                                     |
+        | 10 days | that the fee of 0.500000 USD is charged when the window ends | the account is charged 0.500000 USD, as a charge line of its own that goes wholly to the partner (P4) |
+        | 30 days | no fee                                                 | the account is charged no cancellation fee                                                 |
 
     @P3-S60 @need-P3-N12 @POL-08 @POL-11
     Scenario: A cancellation fee is a charge line of its own, charged at exactly its shown amount and once
@@ -494,7 +507,7 @@ Feature: Rating reservations and metered traffic
       Then it is rejected, and nothing is charged for it
       And the logs and the record kept of it hold only its identity, its digest and the reason "does not conform to the record template"
       And the payload itself is kept only in the erasable personal-data store (POL-19)
-      And it can no longer be recovered once an erasure it falls under is executed, or `dispute_window` (POL-17) + 7 days after its receipt, whichever comes first
+      And it can no longer be recovered from any copy Share holds, backups and escrowed copies included, by `dispute_window` (POL-17) + 7 days after its receipt, or earlier, once an erasure request covering it is executed (POL-19)
 
     @P3-S31 @need-P3-N7
     Scenario: An accepted record is never altered or removed
@@ -626,8 +639,8 @@ Feature: Rating reservations and metered traffic
       And records of 0.2 GB of "a1"'s usage-priced traffic have been accepted by usage ingestion but not yet posted
       When finance asks for "a1"'s usage exposure
       Then the unposted usage is 2,000 micro-USD, at 10,000 micro-USD per GB in those minutes
-      And the lateness bound is 46,250 micro-USD: 100 Mbps for `max_lateness` (180 s) plus `flow_active_timeout` (60 s) plus 60 s of minute granularity plus `attribution_lag_max` (10 s) plus the 60 s enforcement target, 370 s, 4.625 GB, at 10,000 micro-USD per GB
-      And the usage exposure is 48,250 micro-USD
+      And the lateness bound is 53,750 micro-USD: 100 Mbps for `max_lateness` (180 s) plus `flow_active_timeout` (60 s) plus 60 s of minute granularity plus `attribution_lag_max` (10 s) plus admission's 60 s recovery time (POL-06) plus the 60 s enforcement target, 430 s, 5.375 GB, at 10,000 micro-USD per GB
+      And the usage exposure is 55,750 micro-USD
 
     @P3-S38 @need-P3-N10 @POL-14
     Scenario: A record later than max_lateness is still charged and reported as a breach

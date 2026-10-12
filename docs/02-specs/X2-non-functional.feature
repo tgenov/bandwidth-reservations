@@ -46,6 +46,19 @@ Feature: Non-functional targets
         | 12     | 10        | unavailable | 83.3%                                        |
         | 12     | 12        | available   | every probe succeeds, during planned maintenance too |
 
+    @X2-S30 @need-X2-N1 @POL-06
+    Scenario Outline: A minute of admission or the wallet is unavailable when one account slot's measured probes all fail, or when it was not probed as required
+      Given <capability> in a serving region, every account slot of which is probed at least 3 times a minute from at least two locations (POL-06)
+      When in one minute <what>
+      Then the minute counts as <counted> for <capability>
+
+      Examples:
+        | capability        | what                                                                                                                         | counted     |
+        | the admission API | 99% of its probes succeed, and account slot 17 had 3 probes, from two locations, all of which failed                          | unavailable |
+        | the wallet        | 99% of its probes succeed, and account slot 17 had 3 probes, from two locations, 2 of which failed                            | available   |
+        | the admission API | 99% of its probes succeed, and account slot 17 had only 2 probes, both failing, so it is not a measured failing slot-minute    | available   |
+        | the admission API | 11 probes are made, all from one location, and all succeed                                                                   | unavailable |
+
     @X2-S18 @need-X2-N1 @POL-06 @POL-18
     Scenario Outline: Each capability is probed by its own operation, against its own per-probe limit
       When <capability> is probed
@@ -85,7 +98,7 @@ Feature: Non-functional targets
     Scenario: Enough probe accounts are designated that every account slot of admission and the wallet is probed
       Given the designated Share probe accounts (POL-06)
       When admission and the wallet are probed in a serving region over a minute
-      Then every account slot of admission and of the wallet is asked by at least one probe
+      Then every account slot of admission and of the wallet is asked by at least 3 probes, from at least two locations
       And no probe account is a buyer's account
 
     @X2-S21 @need-X2-N1 @need-X2-N5 @POL-06 @POL-15 @POL-18
@@ -232,7 +245,7 @@ Feature: Non-functional targets
     @X2-S29 @need-X2-N1 @need-X2-N3 @POL-06 @POL-32
     Scenario Outline: A region with no recorded loss may be declared a disaster on probe evidence, counted from the first failing probe minute
       Given the system recorded no loss of region "R1"
-      And admission's probes in "R1" failed in every minute from the one starting 10:00 to the one starting <last>, none of them an available minute for admission there
+      And admission's probes in "R1" failed in every minute from the one starting 10:00 to the one starting <last>, each minute with at least 12 probes from at least two locations of which fewer than 90% succeeded
       When an operator in network operations declares a disaster for "R1" at 10:20, citing that probe evidence, and a second network operations operator approves it (POL-32)
       Then <result>
 
@@ -240,6 +253,31 @@ Feature: Non-functional targets
         | last  | result                                                                                                                                                  |
         | 10:04 | the disaster is declared, and its minutes start at 10:00, the first failing probe minute, until its declared end (POL-06)                                |
         | 10:03 | the declaration is refused, the probes having failed for fewer than `disaster_probe_minutes` (POL-06: 5) consecutive minutes, and every minute counts against every target |
+
+    @X2-S31 @need-X2-N1 @need-X2-N3 @POL-06 @POL-32
+    Scenario Outline: A declared disaster counts from the earlier of the recorded loss and a run of probe evidence leading up to it
+      Given admission's probes in region "R1" failed in every minute from the one starting <first> to the one starting 10:05, each minute with at least 12 probes from at least two locations of which fewer than 90% succeeded
+      And the system recorded the loss of "R1" at 10:06
+      When the disaster is declared and approved at 10:20 (POL-32)
+      Then the disaster's minutes start at <start>, until its declared end (POL-06)
+
+      Examples:
+        | first | start | case                                                                                 |
+        | 10:00 | 10:00 | six measured failing minutes lead up to the loss, at least `disaster_probe_minutes` (POL-06: 5) |
+        | 10:03 | 10:06 | three measured failing minutes are fewer than `disaster_probe_minutes`, so the recorded loss counts |
+
+    @X2-S32 @need-X2-N1 @need-X2-N3 @POL-06 @POL-32
+    Scenario Outline: A minute in which admission was not probed as required is unavailable, but is not probe evidence for a disaster
+      Given the system recorded no loss of region "R1"
+      And admission's probes in "R1" failed in every minute from the one starting 10:00 to the one starting 10:04, each with at least 12 probes from at least two locations of which fewer than 90% succeeded, except the minute starting 10:02, in which <probing>
+      When an operator in network operations declares a disaster for "R1" at 10:20, citing that probe evidence, and a second network operations operator approves it (POL-32)
+      Then <result>
+
+      Examples:
+        | probing                                                       | result                                                                                                                                                         |
+        | 12 probes from two locations were made and 3 succeeded        | the disaster is declared, and its minutes start at 10:00 (POL-06)                                                                                               |
+        | only 8 probes were made, none succeeding                      | the declaration is refused, the minute starting 10:02 not being evidence, and every minute counts against every target, that one as unavailable (POL-06)       |
+        | 12 probes were made from one location only, none succeeding   | the declaration is refused, the minute starting 10:02 not being evidence, and every minute counts against every target, that one as unavailable (POL-06)       |
 
   Rule: No acknowledged fact is ever lost
 

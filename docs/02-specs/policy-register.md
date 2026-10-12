@@ -20,7 +20,11 @@ RFC-006 (`RQ-R1-n`, `B-RQ-n`, `RQ3-n`, `RQ4-n`, `RQ5-n`, `RQ-A` to `RQ-F`; see t
 [record of their resolution](../reviews/11-requirements-amendments-from-detailed-rfcs.md)),
 and by their revision 2 (RQ-R1-13, RQ-R1-14, B-RQ-9, RQ3-13 to RQ3-15, RQ4-10 to RQ4-12,
 RQ5-11, RQ5-12, RQ6-1 to RQ6-3; see the
-[record of their resolution](../reviews/12-requirements-amendments-from-rfc-revision-2.md)).
+[record of their resolution](../reviews/12-requirements-amendments-from-rfc-revision-2.md)),
+and by the reviews of their revision 3 and its issue tables (RQ-R5-1 to RQ-R5-7, RQ-17-1,
+RQ-17-2, Q-1 to Q-4, RQ-19-1 to RQ-19-5, RQ-R6-1, RQ-R6-2, B-RQ-10, RQ3-16, RQ4-13,
+RQ6-4, RQ6-5; see the
+[record of their resolution](../reviews/22-requirements-amendments-from-c3-reviews.md)).
 
 **How to read an entry.** Each entry states the **current** rule, self-contained: the
 decision as rules, its parameters with their current defaults, why, and the alternatives
@@ -52,35 +56,35 @@ the provenance line under each heading lists the questions it answers.
 | POL-01 | Pricing model | Pay per reservation: per Mbps-minute reserved, accrued per minute, no minimum term; usage pricing only for best-effort, burst and traffic outside a reservation |
 | POL-02 | Contention | The oldest request wins; a waiting younger holder yields; contention alone never makes every competitor lose, for waiters whose deadline less their completion margin outlasts the outcome ahead; refusals caused by Share's own holds or undecided partner bookings are contention |
 | POL-03 | Interrupted route requests | Resume within the deadline; otherwise fail, release, notify |
-| POL-04 | Buyer interaction | An answer within `ack_budget`: final if ready, otherwise `pending`, then poll or webhook; each outcome is decided at one point, and a status read lags it by at most `status_staleness`, never contradicting it; an outcome other than confirmed is reported only once its Share-link releases are durable, within `status_staleness` of the decision (`release_grace` while a link's schedule owner is failing over); pending or the decided outcome while the decision record is unavailable, before or at the deadline (at most 1 min, or up to `release_grace` past the deadline), never another; capacity is free from the moment the outcome is reported; a notice is given once it is recorded for the account and its first delivery attempted |
+| POL-04 | Buyer interaction | An answer within `ack_budget`: final if ready, otherwise `pending`, then poll or webhook; each outcome is decided at one point, and a status read lags it by at most `status_staleness`, never contradicting it; an outcome other than confirmed is reported only once its Share-link releases are durable, within `status_staleness` of the decision (`release_grace` while a link's schedule owner is failing over); pending or the decided outcome while the decision record is unavailable, before or at the deadline (at most 1 min, or up to `release_grace` past the deadline), never another; capacity is free from the moment the outcome is reported; a notice is given once it is recorded for the account and its first delivery attempted, a notice in a shared delivery when that delivery is |
 | POL-05 | Authority over a link | One schedule owner per link; a single-link booking is a one-leg route; contended requests wait unless `wait = false`; `retry_after` is the latest remaining deadline among the blockers; concurrent requests checked in the order they reach the schedule owner |
-| POL-06 | Non-functional targets | 99.99% admission and ingestion, 99.9% wallet, payouts, reporting, in each serving region; funds holds and headroom checks for bookings held to admission's targets; ×50 design load; latency p99 per calendar month per serving region; RPO 0; RTO per capability (1 min to 30 min on node or zone loss, 1 h on region loss); a declared region disaster, declared with four eyes and counted from the loss the system recorded (or, on probe evidence alone, from the first of `disaster_probe_minutes` failing admission minutes), is outside the availability, latency and timeliness measurements, while RPO 0 still applies; the assumed topology, and its go-live condition of four pairwise diverse fibre paths, are in X2's constraints; probes use designated accounts, at least one per account slot, and a designated probe supplier, on credit limits set by finance, with no business side effects |
-| POL-07 | Loss of supply | Never revoke silently; stop new sales at once (a confirmation that does not see the reduction's displacement record may complete, and is then affected); an outage affects only the minutes it overcommits, all holders alike, from the minute recorded to the first minute boundary at or after the restoration; maintenance beside committed and held capacity only, cancellable by the supplier; every rise in sellable capacity from the first minute boundary at or after its record; permanent reductions by notice, newest Mbps first, recomputed until the notice ends, with a firm equivalent-path offer at the lower price, all-Share paths first, its Share-leg capacity held for `offer_window` and any partner leg booked at acceptance; only the supplier increases capacity; holders told whenever their affected minutes change |
-| POL-08 | Changing a reservation | Cancel or shorten any time; extend or increase by a new admission of the difference; decrease last in, first out, except over a partner leg whose shown terms forbid it; partner fees go wholly to the partner, a shorten inside a minimum term included; Share pays to cancel a partner booking left without its confirmation |
+| POL-06 | Non-functional targets | 99.99% admission and ingestion, 99.9% wallet, payouts, reporting, in each serving region; funds holds and headroom checks for bookings held to admission's targets; ×50 design load; latency p99 per calendar month per serving region; RPO 0; RTO per capability (1 min to 30 min on node or zone loss, 1 h on region loss); a declared region disaster, declared with four eyes and counted from the loss the system recorded (or, on probe evidence alone, from the first of `disaster_probe_minutes` failing admission minutes), is outside the availability, latency and timeliness measurements (counted from the earlier of the recorded loss and a run of measured failing probe minutes leading up to it), while RPO 0 still applies; a minute is unavailable also when one account slot's measured probes (at least 3, from two locations) all fail, or when probing falls short, and only measured failing minutes are probe evidence; the assumed topology, and its go-live condition of four pairwise diverse fibre paths, are in X2's constraints; probes use designated accounts, every account slot probed at least 3 times a minute from two locations, and a designated probe supplier, on credit limits set by finance, with no business side effects |
+| POL-07 | Loss of supply | Never revoke silently; stop new sales at once (a confirmation that does not see the reduction's displacement record may complete, and is then affected); capacity in force is the lowest of the announced capacity and every open outage's level, and a permanent reduction removes only what the announced capacity needs; an outage affects only the minutes it overcommits, all holders alike, from the minute recorded to the first minute boundary at or after the restoration; maintenance beside committed and held capacity only, cancellable by the supplier; every rise in sellable capacity from the first minute boundary at or after its record; permanent reductions by notice, newest Mbps first, recomputed until the notice ends, with a firm equivalent-path offer at the lower price, all-Share paths first, its Share-leg capacity held for `offer_window` and any partner leg booked at acceptance; only the supplier increases capacity; holders told whenever their affected minutes change |
+| POL-08 | Changing a reservation | Cancel or shorten any time; extend or increase by a new admission of the difference; decrease last in, first out, except over a partner leg whose shown terms forbid it; partner fees go wholly to the partner; a shorten to a later end pays only a minimum-term fee its new end falls inside; a booked window ending inside a minimum term pays the fee shown on the offer; Share pays to cancel a partner booking left without its confirmation |
 | POL-09 | Selling horizon | Rolling 12 calendar months (UTC) from the request's arrival; open-ended bookings guaranteed as the horizon rolls |
 | POL-10 | Rejections | Actionable counter-offers from the requested start, beside committed and held capacity; two top-up amounts; never disclose other buyers |
 | POL-11 | Money unit and rounding | Micros per currency; each charge line rounded down once; fees exact; residues carried, never taken |
 | POL-12 | Splitting revenue | Webster per route; Share loses ties, then leg order; one party per supplier; rule published |
 | POL-13 | Multi-minute flows | Exporters cut flows at 60 s; longer flows are spread evenly |
-| POL-14 | Late usage | Billed whenever it arrives; exposure bounded by `usage_rate_cap` over the flow timeout, minute granularity, lateness, attribution lag and enforcement time; lateness counted from the end of a record's last minute; breaches of the bound are reported |
+| POL-14 | Late usage | Billed whenever it arrives; exposure bounded by `usage_rate_cap` over the flow timeout, minute granularity, lateness, attribution lag, admission's recovery time and enforcement time, at the highest price in force over the bound's span; lateness counted from the end of a record's last minute; breaches of the bound are reported |
 | POL-15 | Funds at admission | Hold a rolling coverage window (or the partner fee, if larger, while it applies); nothing held for minutes after a reservation ends; vetted accounts get credit limits, invoices written off 90 days after due; a top-up repays a written-off amount first, then overdue invoices oldest first |
-| POL-16 | Suspension | Suspend below zero headroom; keep reservations for a funded grace period, then release; resume automatically at `low_balance_warning` headroom and overdue invoices paid |
+| POL-16 | Suspension | Suspend below zero headroom; keep reservations for a funded grace period, then release; resume automatically at `low_balance_warning` headroom and overdue invoices paid; the resume amount is the least top-up that resumes, itemised |
 | POL-17 | Unmatched traffic | Kept always; over-rate traffic is policed; carried excess paid by Share; unattributable traffic is quarantined; a mistaken attribution is reversed at Share's cost; one count per route, at the last Share-metered point |
 | POL-18 | Balance shown | Available headroom, with balance, held funds, accrued charges and the two parts of usage exposure itemised; unposted usage counts records accepted by ingestion |
-| POL-19 | History | Bitemporal: every reservation change, who and when, kept 7 years; principals recorded by pseudonym, personal data held apart and erasable; erasure at the data subject's request, by one compliance operator, complete in every copy within `erasure_max`; a non-conforming record payload kept only in the erasable store |
+| POL-19 | History | Bitemporal: every reservation change, who and when, kept 7 years; principals recorded by pseudonym, personal data held apart and erasable; erasure on a recorded request (a user's own, an operator's own, a verified request for a non-user, or a legal requirement with four eyes), by one compliance operator, complete in every copy within `erasure_max`; a non-conforming record payload kept only in the erasable store, gone from every copy by `dispute_window` + 7 days |
 | POL-20 | Currency | USD settlement; conversion at top-up (rounded up) and payout (rounded down) at a shown rate; each FX difference against the partner's USD amount posted to Share's own account |
 | POL-21 | Reversals and refunds | Reversals in scope now; a negative balance no invoice covers is written off 90 days after it arose; write-offs stay owed and keep the account suspended until repaid; withdrawals later; SLA credits are service credit |
 | POL-22 | Payouts | Weekly, on confirmed transfer, with a minimum amount; never instructed twice; a transfer the provider executes twice is recovered as debt |
-| POL-23 | Bad debt | Share bears buyer credit risk and its own errors; supplier earnings are final once charged; an exporter's wrong record is corrected by a superseding record that changes only measured fields, borne by whoever's exporter erred |
+| POL-23 | Bad debt | Share bears buyer credit risk and its own errors; supplier earnings are final once charged; an exporter's wrong record is corrected by a superseding record that changes only measured fields, borne by whoever's exporter erred; a cost Share paid a supplier is final except the supplier's own error; a dearer path's difference is against the buyer's charge as booked |
 | POL-24 | Regulation | Hold funds through a licensed payment partner; daily signed reconciliation matching every partner transaction, Share's own deposits and withdrawals included, payments received but not yet posted, payments posted but not yet received (netting to zero with a reversal before receipt) and payouts executed but not yet confirmed each counted in flight at the partner's USD amount; Share's own balance covers the receivables it funds (a treasury obligation, never a gate on movements) |
-| POL-25 | AI-agent controls | Administrator-set per-key spending and in-flight limits, rate limits; funds held before capacity; concurrent checks made one at a time in arrival order |
-| POL-26 | Route deadline | Chosen per request, 1 s to 60 s (11 s with a partner leg), default 30 s; failed as of the deadline if not confirmed; committing begins no later than the deadline less the completion margin (`commit_margin` with a partner leg, `ack_budget` otherwise); confirmed only by a decision timestamped before the deadline, which may become known up to `release_grace` after the deadline if the decision record was unavailable; Share-link holds released at the deadline, or within `release_grace` after it if the decision record is unavailable then (or in the last `ack_budget` before it) or a link's schedule owner is failing over; a partner's hold expires at the deadline by itself |
+| POL-25 | AI-agent controls | Administrator-set per-key spending (of the parts the key booked or added) and in-flight limits, rate limits; funds held before capacity; concurrent checks made one at a time in arrival order |
+| POL-26 | Route deadline | Chosen per request, 1 s to 60 s (11 s with a partner leg), default 30 s; failed as of the deadline if not confirmed; committing begins no later than the deadline less the completion margin (`commit_margin` with a partner leg, `ack_budget` otherwise), a fence only, POL-07 judging its own sense; confirmed only by a decision timestamped before the deadline, which may become known up to `release_grace` after the deadline if the decision record was unavailable; Share-link holds released at the deadline, or within `release_grace` after it if the decision record is unavailable then (or in the last `ack_budget` before it) or a link's schedule owner is failing over; a partner's hold expires at the deadline by itself |
 | POL-27 | Price changes | On minute boundaries only; a booked reservation keeps its price; open-ended ones, every part, and every `usage_price` change with notice, the notice stating any top-up the new hold needs |
 | POL-28 | Partners without holds | Includes partners whose holds are too short or cannot be set to expire at the deadline; booked last; at most one per route; any partner booking left without Share's confirmation, with or without holds, is cancelled at once at Share's cost; reconciled at once and daily |
 | POL-29 | Idempotency | Per account; a different principal is refused; sameness defined for bookings and for changes; 24 h for bookings, 7 years for money |
 | POL-30 | Termination by Share | On Share's own decision, only for fraud, legal order or network abuse, recorded; the holder is always told unless compliance, with four eyes, records a legal order forbidding it as part of the termination itself; support acting at an account's authenticated request is the account's own change |
 | POL-31 | Reserved rate precision | Whole Mbps, at least 1 Mbps |
-| POL-32 | Operator roles | Support, network operations, commercial, finance, compliance, each owning a catalogue of actions and the reads they need; compliance erases personal data, one operator; four eyes on fraud and legal-order terminations, identity disclosure, prices and weights, and region-disaster declarations, lapsing after `approval_expiry`; account, supplier and exporter actions named too |
+| POL-32 | Operator roles | Support, network operations, commercial, finance, compliance, each owning a catalogue of actions and the reads they need; compliance erases personal data, one operator, on a recorded request; four eyes on fraud and legal-order terminations, identity disclosure, erasure without a request, prices and weights, and region-disaster declarations, lapsing after `approval_expiry`; account, supplier, exporter, onboarding (account recovery, with a `recovery_hold`) and workforce actions named too |
 | POL-33 | Supplier visibility | Reservation, its termination points on the supplier's link and an opaque reference only; buyer identity only with an administrator's per-supplier consent or under a legal order of stated scope and end |
 
 ---
@@ -209,7 +213,7 @@ stays in flight.
 
 ## POL-04. Buyer interaction: synchronous when ready, otherwise pending
 
-*Answers D-04 (R-06); architecture review RI-3; RFC-000 revision RQ-5, RQ-6; RFC-000 review 2 RQ-7, RQ-8, RQ-10; RFC-000 revision 3 RQ-12; RFC-000 revision RQ-13; detailed RFCs B-RQ-7, RQ-E.*
+*Answers D-04 (R-06); architecture review RI-3; RFC-000 revision RQ-5, RQ-6; RFC-000 review 2 RQ-7, RQ-8, RQ-10; RFC-000 revision 3 RQ-12; RFC-000 revision RQ-13; detailed RFCs B-RQ-7, RQ-E; revision 3 reviews RQ-R6-2.*
 
 **Decision.**
 - Every booking request gets an answer, final or `pending`, within `ack_budget`.
@@ -260,6 +264,9 @@ stays in flight.
   account's registered webhook endpoints, if any, has been attempted, both within that
   time. An endpoint that is down or slow does not make the notice late; delivery is then
   retried for `webhook_retry`.
+  - **Notices delivered together.** One delivery to an endpoint may carry many notices
+    (for example every holder notice of one outage for an account). A notice carried in
+    a delivery has its first delivery attempted when that delivery is first attempted.
 
 | Parameter | Default |
 |---|---|
@@ -290,7 +297,10 @@ report it during the failover instead: that answer is never wrong, reaches the b
 sooner, and making every replica answer `pending` would cost every report one more round
 trip. A notice counts as given once it is recorded and its first delivery attempted,
 because Share controls those and not the buyer's endpoint; the notice list keeps the
-buyer able to learn it whatever its endpoint does.
+buyer able to learn it whatever its endpoint does. Letting one delivery carry many
+notices keeps a mass event (an outage touching thousands of reservations) within its
+notice time without one call per notice; each notice is as told as the delivery that
+carries it.
 
 ## POL-05. Authority over a link: one schedule owner
 
@@ -328,7 +338,7 @@ wins").
 
 ## POL-06. Non-functional targets
 
-*Answers D-06 (R-10); GB-23, GB-39; gate B D6, D7; round 6; final gate B D1, D9; architecture review RI-2, RI-4, RI-5; RFC-000 review RQ-3, D3; RFC-000 review 2 A0R-05; detailed RFCs RQ-A to RQ-D, RQ-F; RFC revision 2 RQ6-2, RQ6-3.*
+*Answers D-06 (R-10); GB-23, GB-39; gate B D6, D7; round 6; final gate B D1, D9; architecture review RI-2, RI-4, RI-5; RFC-000 review RQ-3, D3; RFC-000 review 2 A0R-05; detailed RFCs RQ-A to RQ-D, RQ-F; RFC revision 2 RQ6-2, RQ6-3; revision 3 RQ6-4, RQ6-5, RQ-R6-1.*
 
 **Availability.**
 
@@ -347,7 +357,12 @@ wins").
 - **An available minute:** each capability is probed at least every 10 s from at least
   two locations outside the region (at least 12 probes a minute). A probe succeeds if it
   gets a correct answer within its operation's per-probe limit. A minute is available if
-  at least 90% of its probes succeed. Planned maintenance is not excluded.
+  at least 90% of its probes succeed and, for admission and the wallet, no account slot
+  (below) had a **measured failing slot-minute** in it: at least 3 probes of that slot,
+  from at least two locations, all of which failed. A slot with fewer probes in a minute
+  is not evidence for this rule. A minute in which the capability was not
+  probed as required (fewer than 12 probes, or from fewer than two locations) is not
+  available. Planned maintenance is not excluded.
 - Every target is per **serving region**: each region whose edge answers buyers,
   suppliers, exporters or payment providers. A region that only keeps copies of state
   and answers none of them has no targets of its own. The topology assumed today (two
@@ -360,14 +375,24 @@ wins").
   operations operator approves it (POL-32); its end, when the lost region is restored or
   replaced, is declared the same way. For every measurement it lasts from the loss of the
   region as the system recorded it when it happened (not as the operator states it)
-  until the declared end. A region loss that is never declared is not a disaster: its
-  minutes count against every target.
+  until the declared end, or from the start of a run of probe evidence that leads up to
+  that loss without a break, if that is earlier (below). A region loss that is never
+  declared is not a disaster: its minutes count against every target.
 - **A disaster declared on probe evidence.** Network operations may also declare a region
   disaster, in the same way, when the system recorded no loss of the region, if
-  admission's probes in that region have failed for `disaster_probe_minutes` consecutive
-  minutes (each of them not an available minute for admission there). The loss then
-  counts, for every measurement, from the start of the first of those failing minutes.
-  Without a recorded loss or that probe evidence, a declaration is refused.
+  admission's probes in that region have failed in `disaster_probe_minutes` consecutive
+  measured failing minutes. Only a **measured failing minute** counts as probe evidence: a minute in which
+  admission there was probed at least 12 times from at least two locations and fewer
+  than 90% of those probes succeeded. A minute probed less than that is not available
+  (above), but it is not evidence, and it breaks a run of evidence; nor is a minute that
+  is unavailable only because of a measured failing slot-minute. The loss then
+  counts, for every measurement, from the start of the first minute of the run of
+  evidence. Without a recorded loss or that probe evidence, a declaration is refused.
+- **Probe evidence before a recorded loss.** When the system did record the loss, and
+  an unbroken run of at least `disaster_probe_minutes` measured failing minutes of
+  admission in that region leads up to it (the run's last minute is the one in which the
+  loss was recorded, or the one before it), the disaster counts from the start of that
+  run's first minute: from the earlier of the run's start and the recorded loss.
 - **Funds holds and headroom checks for bookings are part of admission.** The funds
   hold (or credit hold) and the headroom check that a booking or change needs are part
   of the admission capability, and meet its targets (99.99%, RTO 1 min on node or zone
@@ -379,8 +404,8 @@ wins").
   a supplier to ask about. There are enough probe accounts, spread across the accounts
   admission and the wallet serve, that every **account slot** (the unit in which the
   design owns, serves and fails over accounts, as the platform design defines it) is
-  probed, by at least one probe account each, every minute; a probe account is never a
-  buyer's account.
+  probed, by at least one probe account each, at least 3 times every minute and from at
+  least two locations; a probe account is never a buyer's account.
   Their bookings, holds and records run end to end through the real path, but they are
   excluded from rating, settlement, supplier reports and quarantine reports.
 - **Probe accounts book on credit.** Each is a Share-internal account with a
@@ -461,8 +486,20 @@ yet unusable (its edges failing while its database and network stay up), and the
 then records no loss; accepting probe evidence lets such a region be declared, and
 counting from the first failing probe minute keeps the figure independent of the
 operator, at the cost of up to five minutes of real failure being removed from the
-measurement on evidence the measurement itself produced. Probing every account slot
-means no slot can fail unseen, at the cost of one probe account per slot.
+measurement on evidence the measurement itself produced. Only measured failing minutes
+are evidence, so a fault of the probes themselves can never justify a declaration, while
+the unmeasured minute still counts against Share. Counting from the earlier of the
+evidence and the recorded loss treats a failure the same whether or not a loss is later
+recorded, which counts more minutes against Share, never fewer. Probing every account
+slot means no slot can fail unseen, at the cost of one probe account per slot; counting a
+minute unavailable when a slot's measured probes all fail makes an outage of a few
+accounts count against the target as an outage of all would, which spends error budget on
+partial outages but treats every buyer the same. Counting only measured slot-minutes (at
+least 3 probes from two locations, all failing) keeps probe noise across thousands of
+slots from turning into lost availability, while a dead slot is still caught; probing
+every slot at least 3 times a minute, from two locations, is what lets it be caught, at
+the cost of about three probes a minute per slot (about 820 a second at 16,384 slots,
+about 3% of the admission design throughput).
 Bounding the time from a record's acceptance to its effect on headroom makes the usage
 exposure bound (POL-14) cover the whole interval in which traffic is carried but not yet
 counted. Giving ingestion admission's RTO and
@@ -475,7 +512,7 @@ across the planned markets; legal must confirm it per market (POL-24).
 
 ## POL-07. Loss of supply: never revoke silently
 
-*Answers D-07 (R-11); GA-08, GA-15, GA-33; gate A D-04, D-05, D-10; gate B D10; final gate B D5; RFC-000 review RQ-4; detailed RFCs RQ-R1-1 to RQ-R1-7, RQ-R1-11, RQ-R1-12, B-RQ-2, RQ3-8, RQ-E; RFC revision 2 RQ-R1-13, B-RQ-9.*
+*Answers D-07 (R-11); GA-08, GA-15, GA-33; gate A D-04, D-05, D-10; gate B D10; final gate B D5; RFC-000 review RQ-4; detailed RFCs RQ-R1-1 to RQ-R1-7, RQ-R1-11, RQ-R1-12, B-RQ-2, RQ3-8, RQ-E; RFC revision 2 RQ-R1-13, B-RQ-9; revision 3 RQ-17-1, B-RQ-10 (Q-4).*
 
 **Decision.**
 
@@ -491,8 +528,8 @@ it from then on (for example once a permanent reduction to zero has taken effect
 the reduced capacity: every request decided from the moment the reduction is recorded at
 the link is decided against it. A reservation is never revoked silently.
 - **A confirmation already being decided.** A request whose confirmation was already
-  being decided when the reduction was recorded (it had begun committing, POL-26) may
-  still be confirmed, by its deadline as usual. Its reservation is then an affected
+  being decided when the reduction was recorded (it had begun committing, judged as
+  below) may still be confirmed, by its deadline as usual. Its reservation is then an affected
   reservation like any other confirmed one at the minutes it overcommits: flagged, its
   holder told within `affected_notice_time` of the confirmation, SLA credits applying
   (Problem 6) and, on a permanent reduction, in the affected set of step 2 below.
@@ -503,7 +540,32 @@ the link is decided against it. A reservation is never revoked silently.
   **displacement record** (the record, made at the link with the reduction, of the
   requests in flight it no longer fits) is visible to the transaction confirming the
   request. A confirmation that sees it is decided against the reduced capacity; one that
-  does not see it had begun committing, and may complete as above.
+  does not see it had begun committing, and may complete as above. This is the only
+  sense of "begun committing" for this policy. POL-26's sense (when committing begins
+  relative to the deadline) governs only the latest moment a request may begin
+  committing; a route whose partner confirmation was requested before the reduction was
+  recorded, but whose confirmation sees the displacement record, is decided against the
+  reduced capacity, and if it then fails its partner booking is cancelled at Share's
+  cost (POL-28).
+
+*Capacity in force when changes overlap.* Every change of a link's capacity states a
+level, never an amount:
+- The link's **announced capacity** is the capacity it was registered with, as changed
+  by its supplier's permanent reductions and increases (below): a reduction lowers it
+  for new sales from its record and for what the link carries from when its notice ends;
+  an increase raises it from the first minute boundary at or after its record.
+- An unplanned outage records the capacity the link carries while it lasts (it reduces
+  the link *to* that capacity, not *by* an amount).
+- The **capacity in force** at a minute is the lowest of the announced capacity and the
+  capacity of every outage open at that minute. New sales, and which reservations an
+  outage affects, are judged against it.
+- A permanent reduction removes reservations only to fit the announced capacity, never
+  because of an outage: an outage still open when a reduction's notice ends makes the
+  reservations it overcommits affected, as any outage does, and removes nothing.
+- A permanent increase recorded during an outage raises the announced capacity only: the
+  link carries, and sells, no more than the outage's capacity until the outage is
+  restored. A permanent reduction may be announced during an outage, judged against the
+  announced capacity, whatever the outage's capacity.
 
 *Permanent increase.* A permanent increase of a link's capacity, recorded by its
 supplier, takes effect from the first minute boundary at or after its record; new sales
@@ -602,7 +664,8 @@ effect from that boundary.
    path's parties are split on what is charged (POL-12). Only when the new path is
    dearer does Share bear the difference (POL-23): for each minute, what the new path
    would have charged for it, computed exactly and rounded down once to the micro, less
-   the buyer's charge for that minute. The difference is split by Webster among the new
+   the buyer's charge for that minute before any price correction of the buyer's price
+   (POL-23). The difference is split by Webster among the new
    path's parties (POL-12), each supplier is paid its share from Share's own account,
    and the commission share is not posted.
 5. The buyer may decline. The offer lapses after `offer_window`; no answer counts as
@@ -655,7 +718,11 @@ capacity cannot take what a pending request may yet confirm, and it is rejected 
 than queued because it is booked weeks ahead. A moved reservation keeps its age so that
 moving at Share's request never makes it the first to lose on its new path. Telling
 holders when their affected minutes change keeps their SLA position exact. One rule for
-every rise in sellable capacity leaves no case to tell apart. Judging "had begun
+every rise in sellable capacity leaves no case to tell apart. Stating every capacity
+change as a level, and taking the lowest in force, lets changes overlap in any order
+without an oversell or a cut the reduction does not need: an outage, which nobody
+planned, never makes a permanent removal larger, and an increase the link cannot yet
+carry is never sold. Judging "had begun
 committing" by what the confirming transaction sees makes it exact and checkable from the
 records, with no window to bound; a request whose owner had not yet learned of the
 reduction is treated as already being decided, at the cost of a few more affected
@@ -667,12 +734,12 @@ subject to availability (the path could be gone when the buyer accepts).
 
 ## POL-08. Changing a reservation
 
-*Answers D-08 (R-12); GA-12, GB-10; gate B D8; final gate A D-4; RFC-000 review RQ-2; detailed RFCs B-RQ-8, RQ3-4, RQ5-9.*
+*Answers D-08 (R-12); GA-12, GB-10; gate B D8; final gate A D-4; RFC-000 review RQ-2; detailed RFCs B-RQ-8, RQ3-4, RQ5-9; revision 3 RQ-19-1, RQ-19-2.*
 
 | Change | Rule |
 |---|---|
 | Cancel | Any time; takes effect at the next minute boundary after it is made; charges stop then. An earlier change to the reservation still pending fails with "reservation ended" |
-| Shorten | Any time, as a cancellation of the remaining part. A shorten whose new end falls inside a partner leg's minimum term incurs that leg's shown fee, paid as for a cancellation (below) |
+| Shorten | Any time; charges stop at the new end. A shorten to a later end incurs a shown fee only if its new end falls inside a partner leg's minimum term: that leg's shown fee, paid as for a cancellation (below). A plain cancellation fee (one with no minimum term) is incurred only by a cancellation, and a shorten to or before the next minute boundary is one (below) |
 | Extend, or increase the rate | A new admission of the difference only; the existing part is never at risk. The added part is priced at the price in force when the change is made; the existing part keeps its price (POL-27). An increase applies from the next minute boundary to the end of the reservation; a rate that differs over sub-windows is a separate reservation |
 | Decrease the rate | Any time, from the next minute boundary. Removes the most recently added part first (last in, first out). Over a partner leg whose terms shown at booking do not allow a decrease, a decrease is rejected, stating that rule; the buyer may cancel instead (paying any shown fee) |
 | Renew | An extension |
@@ -695,14 +762,18 @@ subject to availability (the path could be gone when the buyer accepts).
 
 **Partner fees.**
 - A partner leg may impose a minimum term or a cancellation fee. It is shown in the
-  price at booking and charged on cancellation; a minimum term is charged on early
-  cancellation, or on a shorten whose new end falls inside it, as a cancellation fee.
-  Share absorbs partner fees it did not show.
+  price at booking. A plain cancellation fee is charged on cancellation. A minimum term
+  is charged, as a cancellation fee, on a cancellation inside it, on a shorten whose new
+  end falls inside it, or when the window the buyer booked ends inside it (the
+  reservation ending at its window's end, as booked or as last changed). The offer
+  shown before booking states a fee that the requested window will incur because it
+  ends inside a minimum term. Share absorbs partner fees it did not show.
 - The funds hold at admission is the larger of the coverage and that fee, while the fee
   could still be charged (POL-15).
 - Who pays the fee:
-  - the buyer, on its own cancellation or shorten, when reservations are released after suspension
-    (POL-16), and on a termination by Share (POL-30);
+  - the buyer, on its own cancellation or shorten, when the window it booked ends inside
+    a minimum term, when reservations are released after suspension (POL-16), and on a
+    termination by Share (POL-30);
   - Share, when a reservation is revoked (POL-07), when the holder of a reservation whose
     rate was cut under POL-07 cancels (that exit stays free to the buyer), and when a
     partner booking is left without Share's confirmation, because the request is
@@ -721,7 +792,13 @@ minute is absolute; a pending change loses nothing it had. A fee follows the con
 that caused it: the buyer's own cancellation, non-payment or misconduct, or Share's
 decision to revoke or cut. The fee compensates the partner's commitment, so Share does
 not profit from a cancellation. A shorten into a minimum term ends the partner's
-commitment early just as a cancellation does, so it carries the same fee. Rejecting a
+commitment early just as a cancellation does, so it carries the same fee; a shorten to
+a later end leaves a plain cancellation fee alone, since the partner's commitment ends
+only on a cancellation, and a buyer (an agent especially) shortening programmatically is
+not surprised by it. A window that ends inside a minimum term costs the partner's term
+whatever the buyer does, so the buyer who chose the window pays the fee it was shown
+before booking, rather than Share bearing a cost no conduct of Share's caused, or the
+window being refused, which would take a short booking from a buyer willing to pay. Rejecting a
 decrease that a partner's shown terms forbid keeps Share from paying, open-endedly, for
 partner capacity the buyer no longer pays for; the buyer saw the terms at booking and can
 still cancel.
@@ -864,7 +941,7 @@ POL-01 this affects only usage-priced traffic.
 
 ## POL-14. Late usage
 
-*Answers D-14 (R-20); GB-05; architecture review RI-2; detailed RFCs RQ3-9, RQ3-10; RFC revision 2 RQ3-13.*
+*Answers D-14 (R-20); GB-05; architecture review RI-2; detailed RFCs RQ3-9, RQ3-10; RFC revision 2 RQ3-13; revision 3 Q-1, RQ-19-5.*
 
 **Decision.**
 - A usage record is billed whenever it arrives; late records are never dropped (they
@@ -885,15 +962,25 @@ POL-01 this affects only usage-priced traffic.
   later than `max_lateness`.
 - The lateness part of usage exposure (POL-18) = `usage_rate_cap` × (`max_lateness` +
   `flow_active_timeout` (POL-13) + 60 s of minute granularity + `attribution_lag_max` +
-  the 60 s suspension-to-enforcement target of POL-06) × the product's highest
-  `usage_price` on any route. It covers usage-priced traffic carried but not yet counted
-  in headroom: traffic in a record still open at its exporter (up to
-  `flow_active_timeout`), traffic in a record whose last minute has not yet ended (a
-  record that straddles a minute boundary ends in the next minute, up to 60 s later),
-  traffic
-  whose record has not yet arrived (its lateness, counted from the end of its last
-  minute), traffic in records accepted but not yet counted, and traffic carried between
-  the suspension decision and its enforcement.
+  admission's 60 s recovery time on node or zone loss (POL-06) + the 60 s
+  suspension-to-enforcement target of POL-06) × the product's highest `usage_price` on
+  any route. It covers usage-priced traffic carried but not yet counted in headroom:
+  traffic in a record still open at its exporter (up to `flow_active_timeout`), traffic
+  in a record whose last minute has not yet ended (a record that straddles a minute
+  boundary ends in the next minute, up to 60 s later), traffic whose record has not yet
+  arrived (its lateness, counted from the end of its last minute), traffic in records
+  accepted but not yet counted (up to `attribution_lag_max`, or up to admission's
+  recovery time more while the part of admission that counts the account's usage fails
+  over), and traffic carried between the suspension decision and its enforcement.
+- **Which price.** The product's highest `usage_price` on any route in force at any time
+  in the bound's span: from the bound's window less the enforcement target before now
+  (the oldest traffic not yet counted) to the enforcement target after now (the traffic
+  still to be carried before enforcement). At the defaults that is the last 370 s and the
+  next 60 s, so after a price decrease the old price still counts until no uncounted
+  traffic can carry it.
+- A record counted later than `attribution_lag_max` after its acceptance is still
+  reported as a breach, even when admission's recovery time covers it: only a failover
+  may delay it that long, and each case is reported.
 - Under a credit limit, the limit includes the unmetered window: suspend early rather
   than lose beyond the limit.
 
@@ -903,8 +990,8 @@ POL-01 this affects only usage-priced traffic.
 | `usage_rate_cap` | Set at onboarding per account and product, and changed, only by an operator in finance (POL-32), with a reason; 100 Mbps by default |
 | `attribution_lag_max` | 10 s |
 
-At the defaults the bound covers 180 s + 60 s + 60 s + 10 s + 60 s = 370 s at
-`usage_rate_cap`: at 100 Mbps, 4.625 GB.
+At the defaults the bound covers 180 s + 60 s + 60 s + 10 s + 60 s + 60 s = 430 s at
+`usage_rate_cap`: at 100 Mbps, 5.375 GB.
 
 **Why.** Late traffic is still owed to a supplier. One number bounds Share's risk per
 account; more burst means a higher cap agreed at onboarding. Using the highest price is
@@ -915,8 +1002,14 @@ its last minute ends, so its lateness is counted from then; and traffic is carri
 to `flow_active_timeout` before its record is even closed, and a record that straddles a
 minute boundary is counted from the end of the next minute, so the bound's window includes
 both, at the cost of a larger deduction from every account's headroom (120 s more at its
-cap than without them). The bound assumes no price
-rise within its window, which holds only if every `usage_price` changes with notice.
+cap than without them). While the part of admission that counts an account's usage fails
+over, accepted records cannot be counted; adding admission's recovery time keeps the
+bound, and suspension before any loss beyond it (P4), true through that failover, at
+the cost of 60 s more at the cap (7,500 micro-USD at 100 Mbps and 10,000 micro-USD per
+GB). The bound assumes no price rise within its window, which holds only if every
+`usage_price` changes with notice; taking the highest price over the span the uncounted
+traffic was and will be carried in keeps it from being understated after a decrease, at
+the cost of at most the bound's past span at the old price, once per change.
 
 ## POL-15. Funds at admission
 
@@ -979,7 +1072,7 @@ overdue invoices first does that, and collects Share's oldest receivable first.
 
 ## POL-16. Suspension and resumption
 
-*Answers D-16 (R-22); GB-21, GB-37; gate B D3; final gate B D8; detailed RFCs RQ4-6.*
+*Answers D-16 (R-22); GB-21, GB-37; gate B D3; final gate B D8; detailed RFCs RQ4-6; revision 3 Q-3.*
 
 **Decision.**
 - **Suspension.** An account is suspended when its headroom (POL-18) would fall below
@@ -1004,14 +1097,17 @@ overdue invoices first does that, and collects Share's oldest receivable first.
   the headroom did not cover.
 - **Resumption.** A suspended account resumes automatically, within the grace period,
   when, with every reservation's full coverage hold restored, its headroom is at least
-  `low_balance_warning`. The suspension notice, and any rejection while suspended,
-  quotes the **resume amount** that achieves that.
+  `low_balance_warning`.
   - An account suspended for an overdue invoice resumes only when every overdue invoice
-    is paid **and** the headroom rule holds. Headroom alone never resumes it. A top-up
-    pays its overdue invoices first (POL-15), so one top-up of the overdue amount plus
-    the resume amount resumes it.
+    is paid **and** the headroom rule holds. Headroom alone never resumes it.
   - After a write-off, the account stays suspended until a top-up repays the written-off
     amount (POL-21).
+  - **The resume amount** is the least single top-up after which the account resumes,
+    applied as POL-15 applies a top-up (a written-off amount first, then overdue invoices
+    oldest first, then the balance). It is quoted itemised: the written-off amount owed,
+    if any; each overdue invoice, if any; and what headroom then still needs, with every
+    reservation's full coverage hold restored, to reach `low_balance_warning`, if
+    anything. The suspension notice, and any rejection while suspended, quotes it.
 - **After the grace period** the reservations are released and the buyer is told. This
   is intended: a termination caused by non-payment, announced at suspension, and
   distinct from the supply-side withdrawals of POL-07. The buyer pays any shown partner
@@ -1029,7 +1125,9 @@ resumption suits self-serve and agent buyers. Resuming at `low_balance_warning` 
 than zero costs at least 1 USD more, but the account is not suspended again at the next
 minute. One warning per crossing, quoting about one more window of runway, avoids
 repeated alerts. Requiring overdue invoices to be paid enforces credit terms: an
-enterprise that pays late loses its reservations after the grace.
+enterprise that pays late loses its reservations after the grace. Quoting one figure,
+the least top-up that resumes, itemised, gives an agent a single amount to pay and a
+finance team the reason for each part of it, without either adding figures together.
 
 **Rejected.** Resuming at zero headroom (re-suspends at the next minute).
 
@@ -1107,7 +1205,7 @@ POL-14.
 
 ## POL-19. History
 
-*Answers D-19 (R-29); detailed RFCs RQ5-6, RQ5-8; RFC revision 2 RQ5-11, RQ6-1, RQ3-14.*
+*Answers D-19 (R-29); detailed RFCs RQ5-6, RQ5-8; RFC revision 2 RQ5-11, RQ6-1, RQ3-14; revision 3 RQ3-16, RQ-R5-1, RQ-R5-2, RQ-R5-3, RQ-R5-6.*
 
 **Decision.** Every change to a reservation is recorded with who made it and when, and
 the system can answer "what was known to be reserved on this link at time T" for any
@@ -1128,19 +1226,40 @@ past T. Kept for 7 years (POL-06).
   that decrypts it). Financial and audit records keep the pseudonymous identifier for
   their 7-year retention and are never altered by an erasure; after it, they no longer
   lead to the person.
-  - **Who asks, who erases.** The data subject requests erasure through an administrator
-    of its account (an account administrator or supplier administrator), or by a
-    documented request to support (POL-32). One operator in compliance executes it,
-    recorded with the request (POL-32).
-  - **Complete in every copy.** Within `erasure_max` of the request, the person's
-    personal data can no longer be recovered from any copy Share holds: the live store,
-    every backup and every escrowed copy (for example of a key).
+  - **Who asks.** An erasure is executed only on a recorded **erasure request**, which
+    names the data subject and the channel it came by:
+    - a user of a buyer or supplier account, for its own personal data only, through an
+      administrator of its account (an account administrator or supplier administrator),
+      or by a documented request it makes itself through the marketplace (POL-32); an
+      agent key or other credential that is not a user asks for nothing, and a user's
+      request about another person is refused and recorded;
+    - an operator, for its own personal data, through Share's workforce administration;
+    - a person who is not a user of Share (for example an end customer whose address
+      appears in a supplier's flow export), or someone acting for that person, by a
+      **documented erasure request** to Share: a written request naming the person, the
+      exporters and the period concerned, with evidence of identity or authority, which
+      an operator in compliance verifies before acting on it; a request compliance
+      cannot verify is refused, recorded, and its sender told;
+    - compliance itself, without a request from anyone, only on a documented legal
+      requirement (for example a court order), approved by a second compliance operator
+      and recorded as an erasure request with the requirement's legal reference.
+  - **Who erases.** One operator in compliance executes a request, recorded with it
+    (POL-32).
+  - **Complete in every copy.** Within `erasure_max` of the request (the moment it is
+    recorded, for a legal requirement its approved record), the person's personal data
+    can no longer be recovered from any copy Share holds: the live store, every backup
+    and every escrowed copy (for example of a key).
 - **A record payload that does not conform.** A received flow-record payload that does not
   conform to Share's record template (the fields Share's metering accepts, which exclude
   personal data) is rejected. The logs and the record kept of it (P3) hold only its
   identity, its digest and the reason. The payload itself is kept only in the personal
-  data store, and is made unrecoverable when an erasure it falls under is executed or
-  `dispute_window` (POL-17) + 7 days after its receipt, whichever comes first.
+  data store. It can no longer be recovered from any copy Share holds, backups and
+  escrowed copies included, by `dispute_window` (POL-17) + 7 days after its receipt,
+  or earlier, once an erasure request that covers it is executed. A request covers a
+  payload if it names the payload's exporter and a period that includes its receipt, or
+  if it is the request of a user of the supplier whose exporter sent it, or of the
+  account its traffic is attributed to, if any: a payload cannot be matched to the
+  person whose data it may hold, so every such request erases it.
 
 | Parameter | Default |
 |---|---|
@@ -1157,14 +1276,24 @@ Giving erasure an owner, a request path and a time bound makes it an action that
 checked; 30 days matches the one month common in data protection law, at the cost of
 backups and escrowed keys that must age out or be destroyed within it. One operator
 suffices, since erasure follows the data subject's own request and cannot touch a
-financial or audit record. A non-conforming payload may hold personal data (an address,
+financial or audit record. A user asks only for itself, so nobody erases another's data
+by asking; an operator asks where its employment is administered; a person with no
+Share account, the likeliest subject of a rejected payload, still has a way to ask,
+verified by compliance because it cannot authenticate. An erasure without a request is
+an irreversible act on Share's own initiative, so it needs a legal requirement and four
+eyes, like the other compliance actions taken on a legal order. A payload expires from
+backups and escrow too, since a copy that outlives its deadline defeats it; erasing
+every payload a request could cover gives up some dispute evidence, in a case that is
+the supplier's misconfiguration and whose record is rejected anyway. A non-conforming payload may hold personal data (an address,
 say), so keeping it beside the record would put personal data where it cannot be erased;
 keeping its digest keeps the record's evidence, and the payload itself stays readable
 just long enough for a dispute about it.
 
 **Rejected.** Erasing or rewriting audit records on request (breaks immutability and
 reproducibility); refusing erasure for the retention period (breaches data protection
-law, for example Kenya's Data Protection Act 2019).
+law, for example Kenya's Data Protection Act 2019); no erasure ever without a request
+(leaves a court order with no way to be obeyed); a non-user's request passed on only by
+an administrator (the person may have no relationship with any account).
 
 ## POL-20. Currency
 
@@ -1265,7 +1394,7 @@ was a transfer, not its own.
 
 ## POL-23. Bad debt
 
-*Answers D-23 (R-34); GB-12; gate B D11; final gate B D5; detailed RFCs RQ3-2, RQ3-8, RQ3-11; RFC revision 2 RQ3-15.*
+*Answers D-23 (R-34); GB-12; gate B D11; final gate B D5; detailed RFCs RQ3-2, RQ3-8, RQ3-11; RFC revision 2 RQ3-15; revision 3 RQ-19-3, RQ-19-4.*
 
 **Decision.**
 - Share bears buyer credit risk. A supplier's earnings are final once a charge is
@@ -1290,8 +1419,16 @@ was a transfer, not its own.
   equivalent-path price difference (POL-07) is split the same way, as the Webster split
   of the difference among the new path's parties; the difference for a minute is what
   the new path would have charged, computed exactly and rounded down once to the micro,
-  less the buyer's charge. In both, each supplier is paid its share from Share's own
+  less the buyer's charge for that minute as booked, before any price correction of the
+  buyer's price. A later correction of the buyer's price amends only the buyer's charge,
+  never the difference. In both, each supplier is paid its share from Share's own
   account, and the commission share is not posted.
+- **A cost Share has paid is final.** A cost Share has paid a supplier (carried excess, an
+  equivalent-path difference, a fee Share bears) is never taken back when what it was
+  computed from later falls, except a supplier's own reduction when that supplier's
+  exporter erred: a superseding record that lowers carried excess the supplier's own
+  exporter overstated makes that supplier owe its own share of the reduction (supplier
+  debt, POL-22); in every other case the supplier keeps what it was paid.
 - **Corrected records.** Only the exporter that produced a record submits a corrected
   version of it, under the exporter's own credential; no operator submits, edits or
   removes a record's contents. A corrected version of a record that could not be used
@@ -1324,7 +1461,11 @@ rounded, keeps it exact and reproducible. Limiting a correction to measured fiel
 an exporter from moving traffic to another account, reservation or minute by
 "correcting" it, which would bypass quarantine and attribution; an exporter that got the
 keys wrong submits nothing and the traffic follows the quarantine rules, at the cost of a
-record whose keys were wrong never being corrected by its exporter.
+record whose keys were wrong never being corrected by its exporter. Computing the
+dearer-path difference against the buyer's charge as booked pays the path's suppliers
+its value once: a correction of the buyer's price is Share's matter with the buyer and
+must not pay the suppliers again. Keeping a paid cost final, except for the supplier's
+own error, is the same rule as for earnings: the party whose device erred bears it.
 
 ## POL-24. Regulation
 
@@ -1419,7 +1560,7 @@ earnings non-final).
 
 ## POL-25. Controls for AI agents
 
-*Answers D-25 (R-39); GA-21, GB-22; gate A D-07; gate B D13; round 6; detailed RFCs RQ4-1, B-RQ-1.*
+*Answers D-25 (R-39); GA-21, GB-22; gate A D-07; gate B D13; round 6; detailed RFCs RQ4-1, B-RQ-1; revision 3 Q-2.*
 
 **Decision.** In scope now, owned by P2 (booking) and P4 (money).
 - **Keys.** API keys per agent, scoped to an account. Only an account administrator
@@ -1433,9 +1574,12 @@ earnings non-final).
   of headroom: key headroom = min(account headroom, `key_spend_limit` − key spending in
   the period), shown to that key as its headroom.
 - **Key spending** is cumulative over the period: the charges accrued in the period by
-  the key's reservations (covered by a hold or not, including reservations that have
-  since ended), plus the funds currently held for their future charges, each minute
-  counted once.
+  the parts the key booked or added (POL-08: a reservation it booked, and an extension or
+  increase it made, to any reservation of the account), covered by a hold or not and
+  including parts that have since ended, plus the funds currently held for their future
+  charges, each minute counted once. A part another principal booked or added counts
+  toward that principal's spending, never the key's, even on a reservation the key
+  booked.
 - **Negative key headroom** blocks new bookings and additions (extensions, increases) by
   that key only. It never ends, suspends or reduces reservations, and the account's other
   keys are unaffected.
@@ -1481,12 +1625,18 @@ outcome, and a request checked while it exists must count it. The alternative, w
 for every earlier request's outcome before checking the next, would put a whole route's
 deadline in front of every agent request of the account.
 
+Counting by the part each principal booked or added charges each key for what it chose
+to buy, so an administrator who increases an agent's reservation does not spend the
+agent's limit, and an agent cannot escape its limit by adding to another's reservation.
+
 **Rejected.** Key spending as held funds plus only the charges the holds did not cover
-(short sequential bookings escape it); relying on KYC tiers against squatting.
+(short sequential bookings escape it); relying on KYC tiers against squatting; counting
+whole reservations by who booked them (another principal's addition would spend the
+key's limit).
 
 ## POL-26. Route deadline
 
-*Answers D-26 (R-42); GA-36; gate A D-11; final gate A D-1; architecture review RI-1; RFC-000 review RQ-1, RQ-2; RFC-000 revision RQ-5; RFC-000 review 2 RQ-7, RQ-8; detailed RFCs B-RQ-6.*
+*Answers D-26 (R-42); GA-36; gate A D-11; final gate A D-1; architecture review RI-1; RFC-000 review RQ-1, RQ-2; RFC-000 revision RQ-5; RFC-000 review 2 RQ-7, RQ-8; detailed RFCs B-RQ-6; revision 3 B-RQ-10 (Q-4).*
 
 **Decision.**
 - A route request carries a deadline chosen by the buyer, from `route_deadline_min` to
@@ -1500,7 +1650,11 @@ deadline in front of every agent request of the account.
   - a request without one does not begin committing later than deadline −
     `ack_budget` (POL-04).
 
-  `commit_margin` applies only to requests with a partner leg.
+  `commit_margin` applies only to requests with a partner leg. These bounds are the
+  only use of "begun committing" in this policy: they fence when committing may begin.
+  Whether a request had begun committing when a capacity reduction was recorded is a
+  different question, judged under POL-07 by whether its confirmation sees the
+  reduction's displacement record.
 - A request not confirmed by its deadline has failed as of its deadline, whatever
   Share's state, and later status reports that.
 - **When a confirmation can be decided.** A request is confirmed only by a decision
@@ -1732,7 +1886,7 @@ products.
 
 ## POL-32. Operator roles
 
-*Answers gate A D-09; gate B D15; round 6; final gate A D-4; detailed RFCs RQ-R1-7, RQ3-1, RQ3-2, RQ3-3, RQ5-2, RQ5-4, RQ5-5, RQ5-6, RQ5-9, RQ-A; RFC revision 2 RQ5-11, RQ5-12, RQ6-3.*
+*Answers gate A D-09; gate B D15; round 6; final gate A D-4; detailed RFCs RQ-R1-7, RQ3-1, RQ3-2, RQ3-3, RQ5-2, RQ5-4, RQ5-5, RQ5-6, RQ5-9, RQ-A; RFC revision 2 RQ5-11, RQ5-12, RQ6-3; revision 3 RQ3-16, RQ-R5-1, RQ-R5-3, RQ-R5-4, RQ-R5-6.*
 
 **Decision.** Every operator acts under exactly one role, and each action belongs to
 exactly one role. Every operator action is recorded with the operator, the role, the
@@ -1744,7 +1898,7 @@ reason and the time.
 | Network operations | Records unplanned outages and restorations (POL-07); terminates for network abuse (POL-30), one operator, at once; declares a region disaster, and its end, with the reason and the evidence (a recorded loss of the region, or `disaster_probe_minutes` of failing admission probes there), with a second network operations operator's approval (POL-06); manages the credentials of exporters on Share's own network |
 | Commercial | Sets `reservation_price` and `usage_price` per product and route (POL-01, POL-27) and each supplier's split weights (POL-12), each with a second commercial operator's approval; records each partner's terms: minimum terms and cancellation fees, whether a leg can be decreased, and whether and how long it holds capacity (POL-08, POL-26, POL-28); registers a supplier's link with its capacity, and retires it once nothing is reserved, held, offered or booked as maintenance on it from then on (POL-07) |
 | Finance | Price corrections, with their cause (POL-23); attribution of quarantined traffic, and reversal of a mistaken attribution (POL-17); setting or removing a credit limit, only on an account that has passed know-your-business checks (KYB) (POL-15), including re-vetting after an invoice write-off (POL-21) and the probe accounts' limits (POL-06); setting `usage_rate_cap` per account and product (POL-14); resolving money escalations: escalated payouts (POL-22) and escalated reversals (POL-21). Each with a reason |
-| Compliance | Terminates for fraud or a sanctions or legal order (POL-30), with a second compliance operator's approval; discloses a buyer's identity to a supplier under a legal order that requires it (POL-33), with a second compliance operator's approval, recorded with the order, and ends such a disclosure (one operator); withholds a termination notice that a legal order forbids (POL-30), only as part of that termination and approved with it; erases a data subject's personal data at its request, made through an administrator of its account or by a documented request to support (POL-19), one operator, recorded with the request; reads the audit trail |
+| Compliance | Terminates for fraud or a sanctions or legal order (POL-30), with a second compliance operator's approval; discloses a buyer's identity to a supplier under a legal order that requires it (POL-33), with a second compliance operator's approval, recorded with the order, and ends such a disclosure (one operator); withholds a termination notice that a legal order forbids (POL-30), only as part of that termination and approved with it; erases a data subject's personal data on its recorded erasure request (POL-19), one operator, recorded with the request: a user's own request, made through an administrator of its account or by a documented request it makes itself; an operator's own request, made through workforce administration; or a documented erasure request by or for a person who is not a Share user, naming the exporters and the period concerned, which the operator first verifies (identity or authority), refusing and recording one it cannot verify; opens an erasure with no request only on a documented legal requirement, with a second compliance operator's approval, recorded as an erasure request with the requirement's legal reference; reads the audit trail |
 
 - **Reads.** A read needed to prepare an action belongs to that action's role (a finance
   operator reads the charges it corrects; network operations reads the schedule of a
@@ -1769,10 +1923,27 @@ reason and the time.
 | Supplier administrator (of a supplier account) | Adds and removes the supplier's users, and grants and removes their supplier administrator right; manages the supplier's credentials, its exporters' included; registers, changes and removes its webhook endpoints; passes on a user's request to erase its personal data (POL-19) |
 | A supplier's users | On the supplier's own links: book and cancel maintenance, announce a permanent reduction, record a permanent increase, record an unplanned outage and its restoration (POL-07) |
 | An exporter | Submits flow records, and corrected versions of its own records (POL-23), under its own credential |
+| Onboarding (Share's process that verifies a business, with know-your-business checks, before it trades; how it verifies stays out of scope) | Recovers a buyer or supplier account that has no administrator able to act (below) |
+| Workforce administration (Share's own staff administration) | Records an operator's request to erase its own personal data, for compliance to execute (POL-19) |
+
+- **Account recovery.** When every administrator of an account (or supplier) has left or
+  lost its means of authentication, onboarding re-verifies the business at the
+  know-your-business level and then grants the administrator right to a user it names,
+  recorded. Every existing user of the account is told at once. For `recovery_hold` after
+  the grant:
+  - an objection by an existing administrator (one who held the right before the
+    recovery), made through the marketplace, cancels the recovery: the right granted is
+    removed and the account is as before, recorded, and every user is told;
+  - the new administrator cannot remove users or administrator rights, issue agent keys,
+    register or change webhook endpoints, or give consent to identify the account to a
+    supplier (POL-33); its other administrator actions are allowed.
+
+  When `recovery_hold` passes without an objection, the recovery is final.
 
 | Parameter | Default |
 |---|---|
 | `approval_expiry` | 72 h |
+| `recovery_hold` | 24 h |
 
 **Why.** Clear accountability, and four eyes on the irreversible actions that are not
 urgent (terminations for fraud or legal order, identity disclosure). Abuse can still be
@@ -1786,7 +1957,14 @@ without making support a back door to every record. An approval that could wait 
 or apply to a reservation that has since changed, would let a stale request take effect;
 72 h covers a weekend. Naming the account, supplier and exporter actions too leaves no
 action without an owner, and keeps the power to redirect an account's outcomes (a webhook
-endpoint) or to create traffic (a record) with the party that owns it.
+endpoint) or to create traffic (a record) with the party that owns it. Recovery is the
+usual path of an account takeover, so it needs the know-your-business evidence the
+account was opened with, and a hold in which the real owner can object while the new
+administrator cannot silence it (by removing it), redirect outcomes or spend through new
+keys; the cost is a day before a recovered account is fully administered. Giving every
+erasure request a channel, including operators' and people with no account, and an
+erasure with no request only a legal requirement and four eyes, leaves no personal data
+without a way to erase it and no erasure on one person's judgment.
 
 ## POL-33. What suppliers see of buyers
 
@@ -1992,3 +2170,21 @@ keep it from outliving its purpose, and legal orders commonly forbid telling the
 | 2026-10-12 | RFC revision 2: RQ4-12 (POL-24): a payment posted, not yet received and then reversed nets to zero with its reversal in the posted-not-received term, the two matched to each other, with no alert | Coordinator decision (RFC-004's reading): no false alert for money that never reached the partner; the pair is listed in the run rather than matched to a partner transaction |
 | 2026-10-12 | RFC revision 2: RQ6-2 (POL-06): "every part" of admission and the wallet serving accounts means every account slot, each probed by at least one probe account every minute | Coordinator decision: no slot can fail unseen, at the cost of one probe account per slot (1,024 at the design load) |
 | 2026-10-12 | RFC revision 2: RQ6-3 (POL-06, POL-32): network operations may declare a region disaster, with four eyes, on probe evidence (admission probes failing in that region for `disaster_probe_minutes`, 5, consecutive minutes) even with no recorded loss; the loss then counts from the first failing probe minute | Coordinator decision: a reachable but unusable region can be declared; up to five minutes of real failure leave the measurement on evidence the measurement itself produced |
+| 2026-10-12 | Revision 3 reviews: RQ-R6-2 (POL-04): one delivery may carry many notices; a notice carried in a delivery has its first delivery attempted when that delivery is first attempted | Coordinator decision: a mass event stays within its notice time without one call per notice |
+| 2026-10-12 | Revision 3 reviews: RQ-R6-1 (POL-06): a minute of admission or the wallet is also unavailable when one account slot had a measured failing slot-minute in it (at least 3 probes from at least two locations, all failed); a slot-minute with fewer probes is not evidence; each slot is probed at least 3 times a minute from two locations; a minute probed short of the capability rule is unavailable | Coordinator decisions (RQ-R6-1, refined from RFC-000 rev 4.2 risk R24): spends error budget on partial outages, treats every buyer alike, without probe noise across ~16,384 slots costing availability; amender: 3 probes per slot a minute so a dead slot is caught, about 820 probes/s |
+| 2026-10-12 | Revision 3 reviews: RQ6-4 (POL-06): only a measured failing minute (at least 12 probes from at least two locations, under 90% succeeding) is probe evidence for a disaster declaration; an unmeasured minute is not evidence and breaks a run | Coordinator decision: a probe-estate fault can never justify a declaration; the unmeasured minute still counts against Share |
+| 2026-10-12 | Revision 3 reviews: RQ6-5 (POL-06): a declared disaster counts from the earlier of the recorded loss and the start of an unbroken run of at least `disaster_probe_minutes` measured failing minutes leading up to it | Coordinator decision: the same failure counts the same whether or not a loss is recorded; more minutes count against Share, never fewer |
+| 2026-10-12 | Revision 3 reviews: RQ-17-1 (POL-07): every capacity change states a level; an outage records the capacity the link carries; capacity in force = min(announced capacity, every open outage's capacity); a permanent reduction removes only what the announced capacity needs, never because of an outage; an increase during an outage raises the announced capacity only | Coordinator decision: overlapping changes compose without oversell or an unplanned cut; an increase the link cannot carry yet is not sold |
+| 2026-10-12 | Revision 3 reviews: B-RQ-10, Q-4 (POL-07, POL-26): POL-07's "begun committing" is judged only by whether the confirmation sees the displacement record; POL-26's sense governs only the commit fence | Coordinator decision: one exact test per question; a partner route whose confirmation sees the record is decided against the reduced capacity, its partner booking cancelled at Share's cost if it fails |
+| 2026-10-12 | Revision 3 reviews: RQ-19-1 (POL-08): a shorten to a later end incurs a shown fee only if its new end falls inside a minimum term; a plain cancellation fee only on a cancellation | Coordinator decision: buyers shortening (agents included) are not surprised; the partner's commitment ends only on a cancellation |
+| 2026-10-12 | Revision 3 reviews: RQ-19-2 (POL-08): the buyer pays the shown minimum-term fee when the window it booked ends inside a partner leg's minimum term; the offer shows the fee before booking | Coordinator decision: the buyer who chose the window pays a cost it was shown; replaces RFC-003's interim Share-borne line |
+| 2026-10-12 | Revision 3 reviews: Q-1 (POL-14): the lateness bound adds admission's 60 s recovery time: 370 s becomes 430 s at the defaults, 4.625 GB becomes 5.375 GB at 100 Mbps | Coordinator decision: about 7,500 micro-USD more exposure at P3-S37's figures; suspension before loss (P4-S19) holds through an owner failover |
+| 2026-10-12 | Revision 3 reviews: RQ-19-5 (POL-14): the bound's price is the highest `usage_price` in force over its span, the window less the enforcement target before now to the enforcement target after (370 s back, 60 s ahead at the defaults) | Coordinator decision: exposure never understated after a price decrease, for at most the past span at the old price once per change |
+| 2026-10-12 | Revision 3 reviews: Q-3 (POL-16): the resume amount is the least top-up after which the account resumes, itemised (written-off amount, overdue invoices, headroom still needed) | Coordinator decision: one figure to pay, each part explained |
+| 2026-10-12 | Revision 3 reviews: RQ3-16, RQ-R5-1, RQ-R5-6 (POL-19, POL-32): a user asks erasure of its own data only (through an administrator or by its own documented request); operators through workforce administration; a non-user or its representative by a documented erasure request naming exporters and a period, verified by compliance | Coordinator decision: every data subject has a channel; nobody erases another's data by asking; compliance verifies what cannot authenticate |
+| 2026-10-12 | Revision 3 reviews: RQ-R5-2 (POL-19): a non-conforming payload is gone from every copy, backups and escrow included, by `dispute_window` + 7 days, earlier when an erasure request covering it is executed | Coordinator decision: no copy outlives the deadline; amender: every request that could cover a payload erases it, at some loss of dispute evidence |
+| 2026-10-12 | Revision 3 reviews: RQ-R5-3 (POL-19, POL-32): compliance opens an erasure with no request only on a documented legal requirement, approved by a second compliance operator, recorded as a request with its legal reference, `erasure_max` running from that record | Coordinator decision: a court order can be obeyed; no irreversible erasure on one person's judgment |
+| 2026-10-12 | Revision 3 reviews: RQ-R5-4 (POL-32): account recovery is an onboarding action: re-verification, then `recovery_hold` (24 h) in which an existing administrator's objection cancels it and the new administrator cannot remove users or rights | Coordinator decision: the usual takeover path is guarded; amender: during the hold no keys, endpoints or consent either; a day before full administration |
+| 2026-10-12 | Revision 3 reviews: Q-2 (POL-25): key spending counts the charges and holds of the parts the key booked or added | Coordinator decision: each key pays for what it chose; another principal's addition never spends a key's limit |
+| 2026-10-12 | Revision 3 reviews: RQ-19-3 (POL-23, POL-07): the dearer-path difference is against the buyer's charge as booked, before any price correction; a correction of the buyer's price amends only the buyer's charge | Coordinator decision: suppliers are paid the path's value once |
+| 2026-10-12 | Revision 3 reviews: RQ-19-4 (POL-23): a cost Share has paid a supplier is final, except that supplier's own reduction when its exporter erred | Coordinator decision: the party whose device erred bears it; earnings stay final otherwise |
