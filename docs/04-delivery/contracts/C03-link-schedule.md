@@ -3,8 +3,8 @@
 | | |
 |---|---|
 | Contract ID | C03 (`link-schedule`) |
-| Version | 2 (draft for `contract-C03-v1`; revised per [review 39](../../reviews/39-contract-C03-review.md)) |
-| Status | **Draft**, for fix verification of review 39. No open mismatches (M1, M2 settled; review 39 decisions D39-1 … D39-6 applied). Freeze together with or after C01. **Errata owed** (R39-08): **RFC-001**: (i) M1: `target_version` = registry version, `ENVELOPE_REFUSED(check)`, supply idempotency by (link, **tenant**, key) with `action_id` on the console path, deduplicated before the envelope checks (R39-07, D39-4); (ii) M2: §11.1 rule (2) and the `REDUCTION_FINAL` row release `hold_2` only with the lifecycle `cut` at the highest revision; (iii) C4-7: `onAdopt`/`onMovedOut` re-arm the `T_eff` Tick, step and `notice_due` timers, `Moving` and `Stopped` handled; (iv) `REDUCTION_SET_EXTENDED` a feed event, not only an `ALERT` value; (v) `REDUCTION_FINAL` only after every `CutAnswer` (R39-02); (vi) offer-only classified from state at the `ReductionEffective` entry (R39-03 (a)); (vii) a revision ≥ 2 sent only when strictly lower at some minute or its covered parts changed (R39-01 (c)); (viii) `last` replaces `of` (R39-04); (ix) affected notices per reservation, due-now first (R39-05, R39-06); (x) a supplier may restore an outage network operations recorded and the reverse (D39-5); (xi) cite P1-S84. **RFC-002**: revision on the lifecycle `cut` (M2); `cut_target` repeat = same (key, revision), a revision at or below the highest recorded answered with its recorded answer and writing nothing, a higher revision always writing a `cut` (R39-01 (b)); an offer-scoped target whose offer is Final with `move_at ≤ T_eff` applied as a normal cut (R39-03 (b)). **RFC-003**: `hold_2` release on the highest applied revision (M2, D39-1); any lifecycle `cut` applied after closed minutes amends them ("late POL-07 cut", R39-03 (c)), replacing erratum 5.1's extension-only rule and its "extension chunk" wording; the `hold_2` liveness alarm (R39-20). **RFC-006**: the notifier tells affected holders from `AFFECTED_NOTICE` only (R39-05) within 40 s (R39-06). **C04**: same revision rule as RFC-002 (R39-01 (b)); same integrity rule (R39-13). **RFC-000**: AI-39-1, AI-39-2. **Requirements**: RQ-39-1 |
+| Version | 2.1 (draft for `contract-C03-v1`; revised per [review 39](../../reviews/39-contract-C03-review.md) and [review 52](../../reviews/52-contract-C03-fix-verification.md)) |
+| Status | **Draft**, verified by [review 52](../../reviews/52-contract-C03-fix-verification.md) with V52-1 … V52-4 applied; to be tagged only once C02 and C04 carry the same revision rule. No open mismatches (M1, M2 settled; review 39 decisions D39-1 … D39-6 applied). Freeze together with or after C01. **Errata owed** (R39-08): **RFC-001**: (i) M1: `target_version` = registry version, `ENVELOPE_REFUSED(check)`, supply idempotency by (link, **tenant**, key) with `action_id` on the console path, deduplicated before the envelope checks (R39-07, D39-4); (ii) M2: §11.1 rule (2) and the `REDUCTION_FINAL` row release `hold_2` only with the lifecycle `cut` at the highest revision; (iii) C4-7: `onAdopt`/`onMovedOut` re-arm the `T_eff` Tick, step and `notice_due` timers, `Moving` and `Stopped` handled; (iv) `REDUCTION_SET_EXTENDED` a feed event, not only an `ALERT` value; (v) `REDUCTION_FINAL` only after every `CutAnswer` (R39-02); (vi) offer-only classified from state at the `ReductionEffective` entry (R39-03 (a)); (vii) a revision ≥ 2 sent only when strictly lower at some minute or its covered parts changed (R39-01 (c)); (viii) `last` replaces `of` (R39-04); (ix) affected notices per reservation, due-now first (R39-05, R39-06); (x) a supplier may restore an outage network operations recorded and the reverse (D39-5); (xi) cite P1-S84. **RFC-002**: revision on the lifecycle `cut` (M2); `cut_target` repeat = same (key, revision), a revision at or below the highest recorded answered with its recorded answer and writing nothing, a higher revision always writing a `cut` (R39-01 (b)); an offer-scoped target whose offer is Final with `move_at ≤ T_eff` applied as a normal cut (R39-03 (b)). **RFC-003**: `hold_2` release on the highest applied revision (M2, D39-1); any lifecycle `cut` applied after closed minutes amends them ("late POL-07 cut", R39-03 (c)), replacing erratum 5.1's extension-only rule and its "extension chunk" wording; the `hold_2` liveness alarm (R39-20). **RFC-006**: the notifier tells affected holders from `AFFECTED_NOTICE` only (R39-05) within 40 s (R39-06). **C02** (V52-1, V52-2): the "Revisions (C4-2)" bullet carries rule 3's text verbatim (replacing "A lower revision received after a higher one is recorded …"); the case-table row "new revision" reads "a revision above the highest recorded"; a new case-table row "`offer` set, offer Final, `move_at ≤ T_eff` → E11 cause *cut* → `APPLIED`" (R39-03 (b)). **C04** (V52-1, V52-2): "Cut": every revision above the highest recorded writes one `cut`, `APPLIED(none)` included, a revision at or below it writes nothing and never supersedes; idempotency key (link, reduction, reservation, `target_revision`); PL-3 the same rule; "Cut" and PL-3 add "except an offer-scoped target whose offer is Final with `move_at ≤ t_eff` and the link on the new path: applied as a normal cut and emitted as `cut`" (R39-03 (b)); same integrity rule (R39-13). Status stays Draft until C02 and C04 carry the same text. **RFC-000**: AI-39-1, AI-39-2. **Requirements**: RQ-39-1 |
 | Provider | RFC-001 (link schedule owner) |
 | Consumers | Supply commands: callers are the supplier API (supplier principals through RFC-005's edge) and the operator console (network-operations envelope, RFC-005 §7.4). Schedule feed: RFC-002 (account owner), RFC-003 (rating), RFC-006 (history, notifier, alerting) |
 | Transport | Supply commands: synchronous command, gRPC to the owner-lease holder of the link's slot (RFC-000 §8). Schedule feed: Kafka event from the link outbox (`link_outbox`) through the changefeed relay, topic `link.schedule.v1`; `CLOSED` markers produced by the closure emitter of C01 |
@@ -203,10 +203,11 @@ interface AffectedChanged extends FeedEventBase {
   notice_due: HlcTimestamp }                 // history and alerting only: never triggers a notice (R39-05)
 
 /** The ONLY trigger of an affected notice (D39-3). One per reservation (its one leg on this link)
- *  per due notice, self-contained, so the notifier needs no AFFECTED_CHANGED (R39-06). */
+ *  per due notice, self-contained, so the notifier needs no AFFECTED_CHANGED (R39-06).
+ *  Notifier dedup key: (link_id, log_seq, reservation), all in the payload (V52-3).
+ *  Size budget: mean encoded, encrypted Kafka value <= 200 B (V52-3). */
 interface AffectedNotice extends FeedEventBase {
   kind: 'AFFECTED_NOTICE'; reservation: ReservationId; leg: LegId;
-  notice_id: string;                         // (link, causing log_seq, reservation): notifier dedup key
   parts: { part: PartId; ranges: MinuteRange[] }[];   // full current sets; [] = no longer affected
   cause_kind: AffectedChanged['cause_kind']; causes: FactId[];
   notice_due: HlcTimestamp; recipients: ('holder' | 'network_operations')[] }
@@ -321,7 +322,7 @@ link; a reduction to 6 is announced (`A_now` = 6, `A_s` = 6 at once, `A_p` = 10 
 | P1-S84 (move final after a cut) | On the new path's link M: `offer_accept` → `LEG_CONFIRMED` (the offer parts as the reservation's from `move_at`), then the move's `reduce_parts` → `LEG_CHANGED` (cause `POL-07`, `applies` naming the old link's binding (link, reduction), parts at the cut rate from `move_at`); the capacity held beyond the cut rate is freed from `move_at` (R39-20) | RFC-006 history; no `AFFECTED_*` or hold event on M |
 | `CAPACITY_CHANGED` | Every supply fact, and every maintenance trim at a reduction's `T_eff` (`maintenance_cut`, with `supplier_notice_due` = the deciding entry's `ts`; P1-S81) | RFC-006: history, plus the notifier tells the supplier of a maintenance cut within `affected_notice_time`. RFC-002 and RFC-003: **`reduction_announced` opens reduction `R`** for the closure rules below. RFC-003 never rates maintenance |
 | `AFFECTED_CHANGED` | The flag projection changes a part's affected ranges (P1-S25, S40, S50, S63, S72, S79, S82). Carries the **complete** current range set for the part | RFC-002 marks the route affected. RFC-003 annotates the reservation line, with no amount (P3-S10). RFC-006: history and alerting **only**; it sends no notice (D39-3) |
-| `AFFECTED_NOTICE` | `ts` has passed a `notice_due` (the table of RFC-001 §5.7, restoration included: "every holder already told" is the set of reservations with an earlier `AFFECTED_NOTICE` for the outage). One per reservation per due notice, self-contained; due-now notices are written **first** (R39-06) | **The only notice trigger** (D39-3). RFC-006's notifier tells the holder and network operations within `affected_notice_time`, 60 s (P1-S26, S40, S50, S75), deduplicating by `notice_id`. Budget: Timeouts |
+| `AFFECTED_NOTICE` | `ts` has passed a `notice_due` (the table of RFC-001 §5.7, restoration included: "every holder already told" is the set of reservations with an earlier `AFFECTED_NOTICE` for the outage). One per reservation per due notice, self-contained; due-now notices are written **first** (R39-06) | **The only notice trigger** (D39-3). RFC-006's notifier tells the holder and network operations within `affected_notice_time`, 60 s (P1-S26, S40, S50, S75), deduplicating by (`link_id`, `log_seq`, `reservation`). Budget: Timeouts |
 | `OFFER_AFFECTED` | An outage overcommits an open offer's path (P1-S68) | RFC-002 tells the offer's holder |
 | `REDUCTION_AFFECTED` | Each committed output of the reduction projection during the notice, as a **diff** of the cut-set rows (a cut of 0 removes a row), chunked at 1,000 rows | RFC-002 offers a newly affected holder an equivalent path at once, and keeps an offer once made (P1-S31, S52, S58, S59, S64) |
 | `REDUCTION_EFFECTIVE` | The first entry at or after `T_eff` (extension 0), then the steps after it; and later, extension chunks (extension ≥ 1). Membership is judged from the **state at the `ReductionEffective` entry**: a reservation whose offer was accepted (`offer_accept` applied) by then holds those parts as its own and is a member; only a reservation whose cut parts are parts of a still-open offer is offer-only (R39-03 (a)) | See *Closure across a reduction*. An empty `A_R` is still published, as chunk 1 with `last: true` and no reservations |
@@ -354,8 +355,10 @@ consume them, with C4-2 applied.
 
    The account owner side (RFC-002, C04, C02 carry the same rule; R39-01 (b)): a target
    is a repeat when it has the same (link, reduction, reservation, **revision**). A
-   revision at or below the highest recorded one is answered with its recorded answer,
-   **writes nothing and never supersedes**. **Every new, higher revision is applied and
+   repeat of a recorded (key, revision) is answered with its recorded reply. A lower
+   revision that was never recorded is answered with the highest recorded revision's
+   reply, echoing its own revision. Neither writes an entry or a `cut`, and neither ever
+   supersedes. **Every new, higher revision is applied and
    writes a lifecycle `cut` event carrying it**, also when the composed target is
    unchanged (`APPLIED(none)`). So a stale revision 1 arriving after revision 2, or a
    revision 2 equal to revision 1, can neither strand nor regress the hold.
@@ -471,14 +474,21 @@ consume them, with C4-2 applied.
     part is from the notice's due time to `AFFECTED_NOTICE` on Kafka. The flag projection
     writes due-now notices first, one per reservation, before every other output of the
     run (future-due notices and `AFFECTED_CHANGED` rows follow).
+    - **Size budget** (V52-3): the mean encoded, encrypted Kafka value of
+      `AFFECTED_NOTICE` is at most **200 B**. This is a stated budget, not an estimate,
+      checked by PT-9.
     - Hottest-link worst case: an outage touching about 100,000 reservations active at
-      the record. Projection about 1 s (about 10 µs a part), about 100,000 notices × about
-      200 B = about 20 MB through the link's tail range at 2 to 3 MB/s = 7 to 10 s, relay
+      the record. Projection about 1 s (about 10 µs a part), about 100,000 notices × 200 B
+      (budget) = about 20 MB through the link's tail range at 2 to 3 MB/s = 7 to 10 s, relay
       and Kafka 2 to 3 s: **10 to 14 s**, so the link's bound is **15 s at p99**.
     - Up to about 50,000 due-now notices (about 10 MB, 3 to 5 s + 1 s + 2 to 3 s): 6 to
       9 s, within **10 s at p99**.
     - Split of `affected_notice_time` (60 s): the link 15 s, the notifier **40 s**, a
       **5 s tail margin**. RFC-006 takes the 40 s as an erratum.
+    - **Fallback** (V52-3, binding): if the 200 B budget cannot be met, the size is 300 B
+      (30 MB: 10 to 15 s + 1 s + 2 to 3 s = 13 to 19 s), and the split becomes link
+      **20 s**, notifier **35 s**, margin **5 s** (RFC-006 erratum 35 s). PT-9's bound
+      becomes 20 s.
     - Takeover: the bound excludes a link failover (about 5 s warm, up to 60 s cold, est.).
       RQ-39-1 asks for `release_grace` there, as POL-04 and POL-26 give releases.
   - `CLOSED` lag: about 2 to 3 s behind now (est.). The closure-lag alarm is at 10 s (C01).
@@ -564,7 +574,8 @@ consume them, with C4-2 applied.
 9. **PT-9 Notice budget** (R39-06). An outage to 0 on a link with 100,000 active
    reservations: every due-now `AFFECTED_NOTICE` is on Kafka within 15 s of the record
    (within 10 s at 50,000), and no future-due notice or `AFFECTED_CHANGED` of the run
-   precedes a due-now notice.
+   precedes a due-now notice. The mean `AFFECTED_NOTICE` value is ≤ 200 B (V52-3; under
+   the fallback, ≤ 300 B and 20 s).
 
 **Consumers:**
 
@@ -591,7 +602,7 @@ consume them, with C4-2 applied.
      applied revision stays 2 and `hold_2` lifts.
 5. **CT-3.4 (RFC-003) late extension.**
    - Reservations added by extension 1 after their minutes closed are amended down,
-     reason "late POL-07 cut", with (link, reduction, extension).
+     reason "late POL-07 cut", with (link, reduction) and the target revision (V52-4).
    - Minutes not yet closed are emitted as originals at the cut rate (P4-S117).
 6. **CT-3.5 (RFC-003) gaps.** With a `feed_seq` gap, `CLOSED(t, s)` beyond the gap does
    not advance closure until the gap is filled.
@@ -599,7 +610,7 @@ consume them, with C4-2 applied.
    (P3-S47).
 8. **CT-6.1 (RFC-006).**
    - `AFFECTED_NOTICE` is told within 40 s of its feed publish, with the endpoint down
-     (P1-S75), once per `notice_id`.
+     (P1-S75), once per (`link_id`, `log_seq`, `reservation`).
    - `AFFECTED_CHANGED` alone sends no notice (D39-3).
    - A restoration notice goes to exactly the reservations with an earlier
      `AFFECTED_NOTICE` for the outage (P1-S40).
@@ -692,3 +703,12 @@ The readings listed under "Readings adopted" are accepted.
 | R39-21 | Minor | `LEG_CONFIRMED`/`LEG_CHANGED` kept, with the reason stated (late-change semantics, P1-S84); other consumers skip them by the clear `kind` header |
 | D39-4, D39-5 | Decisions | Idempotency per tenant; either side may restore an outage (shared semantics) |
 | RQ-39-1, AI-39-1, AI-39-2 | Issues | Listed in the Status row as owed; not decided here |
+
+## Review 52 resolution
+
+| Defect | Resolution in version 2.1 |
+|---|---|
+| V52-1 | Rule 3 carries the record's exact text, including the reply to a never-recorded lower revision; C02 added to the Status errata with the same text |
+| V52-2 | Status errata list C02's new case-table row and C04's "Cut"/PL-3 exception for R39-03 (b) |
+| V52-3 | 200 B per `AFFECTED_NOTICE` is a stated budget; `notice_id` dropped (dedup by `link_id`, `log_seq`, `reservation`); PT-9 checks the size; fallback split 20 + 35 + 5 s at 300 B recorded |
+| V52-4 | CT-3.4's key matches rule 5: (link, reduction) and the target revision |
