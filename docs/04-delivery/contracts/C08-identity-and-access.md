@@ -47,7 +47,12 @@ This contract fixes, for both sides:
 Units: durations in **ms** unless named in s, h or days; timestamps as **epoch
 microseconds UTC** (`EpochMicros`, a `bigint`, a decimal string in JSON), commit, resolved
 and read timestamps being the database's HLC wall time **floored** to the microsecond;
-money in **micro-USD** (`int64`); capacity in **Mbps** (`int64`); rates per second. Every
+money in **micro-USD** (`int64`); capacity in **Mbps** (`int64`); rates per second.
+**µs → HLC rule** (consistent with C05's Units, which compares ms instants with HLC wall
+time): an identity timestamp `t` in µs is compared with an HLC timestamp `ts` only through
+its wall time, `t ≤ ts` ⇔ `t × 10³ ≤ ts.wallNanos`; identity floors every commit, resolved
+and read timestamp to the µs, which only ever makes a watermark older (safe); the confirm
+gate is `ts.wallNanos ≤ iam_fresh × 10³ + 45 × 10⁹`. Every
 identifier is pseudonymous (A11): no field of this contract carries a name, e-mail address,
 phone number or document. Byte strings are base64url without padding in JSON. Field names
 are the wire names; protobuf messages mirror these types one to one. **One exception**: in
@@ -792,16 +797,18 @@ type CertStreamMessage =
   `key_revoked` is terminal. On applying `key_revoked`, the booking module ends every
   undecided request of the key "key revoked" (P2-S72) and refuses later intakes with it as
   unauthenticated; decided requests are unchanged (P2-S103).
-- **Freshness watermark** (consumer-owned, the **booking module's**, S-M6): per account
-  slot, in the lease holder's memory,
-  `iam_fresh = max( min over the identity-push topic partitions feeding the slot of the
-  latest resolved timestamp applied, read_timestamp of the last catch-up )`, advanced by
-  every resolved marker and every catch-up, event or not; never written to an entry;
-  **unset after any takeover** until the first marker or catch-up. **Applied-only rule**
-  (as C05): a resolved marker on a topic partition counts toward `iam_fresh` only once
-  every event at or below it on that partition has been committed as F4 or found to be no
-  change, never when the marker is merely read. A confirm commits
-  only if its `ts ≤ iam_fresh + 45 s`; unset fails the check.
+- **Freshness watermark** (consumer-owned, the **booking module's**, S-M6; identical to
+  C05 S-2): per account slot, in the lease holder's memory,
+  `iam_fresh = max( min over the identity-push topic partitions p feeding the slot of
+  R_applied(p), read_timestamp of the last catch-up whose entry has committed )`.
+  `R_applied(p)` is the latest resolved timestamp of p up to which **every event of p is
+  applied, with no gap below it** (committed as F4, or found to be no change); a marker
+  merely read counts for nothing. A catch-up counts only **once its F4 entry commits** (or,
+  for an answer with no status change, once it is processed). Never written to an entry.
+  **After any acquisition** `iam_fresh` is unset, and is set only by a catch-up whose entry
+  has committed, or once **every** partition feeding the slot has reported an
+  `R_applied(p)`; until then nothing is confirmed. A confirm commits only if
+  `ts.wallNanos ≤ iam_fresh × 10³ + 45 × 10⁹`; unset fails the check.
 - **`catch_up(account_slot, since?)`**: identity answers by a consistent read at the present
   timestamp; `read_timestamp` = that read's timestamp. Preconditions: caller is the account
   owner's workload. **`since` is defined** (R46-07): a **new lease holder** (`iam_fresh`
@@ -816,9 +823,10 @@ type CertStreamMessage =
   status of every account of the slot from one consistent read, with its `position`
   (= `read_timestamp`); also answered when `since` is older than the 7-day retention. The
   funds module (F4) applies it in one entry as each account's full applied state (an F4 for
-  each actual difference, keys absent from the snapshot unchanged), the booking module sets
-  `iam_fresh` to `position`, and push events at or below `position` are then no-ops by the
-  version rule.
+  each actual difference); an **applied key absent from the snapshot is revoked** in that
+  entry (C05 `KEY_ABSENT_FROM_SNAPSHOT`, its undecided requests ending "key revoked"). Once
+  that entry commits, the booking module sets `iam_fresh` to `position`; push events at or
+  below `position` are then no-ops by the version rule.
 - **Errors**: `temporarily_unavailable` (retry at the pull period; the 45 s gate keeps the
   slot safe).
 - **KYB** (C10): `kyb_status` events; the account owner records the applied KYB status with
@@ -1266,7 +1274,7 @@ same test.
 | # | Side | Test | Scenarios |
 |---|---|---|---|
 | C-01 | Every owner | Contexts: expired, from a non-allowlisted peer, tenant ≠ partition, forged or lower-version key record → no effect (`not_found` or ignored), recorded where §A says; principal fields copied into `audit` (DT-4, DT-25) | X1-S02 … S05, X1-S07 |
-| C-02 | Account owner (RFC-002/004) | Two events of one account at one `committed_at` (one identity batch) → both applied; a new holder calls `catch_up` without `since` and applies the snapshot before deciding; a resolved marker does not advance `iam_fresh` while an earlier event on its partition is unapplied (R46-07, R46-08); push event replayed and duplicated by catch-up → one F4; heartbeat-only traffic → no entry, `iam_fresh` advances; after takeover no confirm before the first marker or catch-up; with push and catch-up both silent, no confirm after `iam_fresh` + 45 s; revocation ends undecided requests "key revoked" and leaves decided ones (DT-1, DT-2) | X1-S06, P2-S72, P2-S103 |
+| C-02 | Account owner (RFC-002/004) | Two events of one account at one `committed_at` (one identity batch) → both applied; a new holder calls `catch_up` without `since` and applies the snapshot before deciding, and `iam_fresh` is set only when that entry commits (or every partition has reported); an applied key absent from the snapshot is revoked and its undecided requests fail "key revoked"; a resolved marker does not advance `iam_fresh` while any earlier event on its partition is unapplied (gap); a catch-up whose F4 has not committed does not advance it; the gate compares µs with HLC by `t × 10³ ≤ wallNanos` (R46-07, R46-08, V53-3); push event replayed and duplicated by catch-up → one F4; heartbeat-only traffic → no entry, `iam_fresh` advances; after takeover no confirm until a catch-up has committed or every partition has reported; with push and catch-up both silent, no confirm after `iam_fresh` + 45 s; revocation ends undecided requests "key revoked" and leaves decided ones (DT-1, DT-2) | X1-S06, P2-S72, P2-S103 |
 | C-03 | Account owner | Credit limit refused `kyb_not_vetted` until a `kyb_status passed` is applied | P4-S82 |
 | C-04 | Every owner that accepts operator actions | Check 2 verified with identity's returned key only (an envelope carrying another key changes nothing); an expired or misrouted envelope is refused before `operator_check` and consumes nothing (R46-13); `not_after` beyond own ts + 72 h + ε refused (D5); a target outside the partition → `out_of_scope`; a repeated refused `action_id` gets the recorded refusal (R46-17); the DT-8 matrix: missing, reused, same-person, other-role assertion; wrong challenge, origin, `rpIdHash`, no UV; after `not_after − ε`; cancelled; stale `target_version`; a field changed after signing → refused with the named check; a four-eyes action with interleaved read grants (higher counters) → applied | X1-S12, X1-S13, X1-S26, X1-S31, X1-S32 |
 | C-05 | Account owner | Set-scoped credit limit: one `action_id`, applied once per member, `member` ≠ partition → `out_of_scope`; a non-probe account → `out_of_scope` before `kyb_not_vetted`; a refused member not re-applied under the same `action_id` (DT-32; membership by own F9, even with placement past v, S-M1) | X2-S24 |
@@ -1292,7 +1300,7 @@ erratum listed under "Consumer obligations".
 | S-M3 | Who computes the webhook HMAC | The notifier, in process, with the secret it holds in memory, in RFC-005's format. **Amended by review 46 (R46-19)**: the notifier's **delivery worker** holds the secrets and computes the HMAC, under its own key-release entry | RFC-006 §15 "signed by RFC-005's signing service" and "RFC-005 signs the delivery" → "signed by the delivery worker in RFC-005's format"; RFC-006 §7.1 "signed by placement's key through RFC-005's signing service" → "signed by placement's summary-signing key" (R46-21); RFC-005 §8.3, §10 key release to the delivery worker |
 | S-M4 | `webhook-id` across retries | Reused for every attempt of one fixed notice set; a regrouped retry is a new delivery with a new `webhook-id`; receivers deduplicate per `event_id`; a single-notice delivery's `webhook-id` = its `event_id` (kept, D4) | RFC-005 §8.3 "a retry carries the same notices under the same `webhook-id`" → as settled |
 | S-M5 | Two `integrity_stops` stores | Audit's table is authoritative and the restore role's row-level-security predicate; placement's projection is what the runtime honours; audit **closes** its row before sending `integrity_resume` | RFC-005 §9.3 and RFC-006 §12.2, §14.3 state the ordering |
-| S-M6 | Where `iam_fresh` lives | The booking module's, in owner memory: `max(min over the identity-push partitions feeding the slot of the latest resolved timestamp applied, last catch-up read timestamp)`; unset after takeover. **Amended by review 46 (R46-07)**: "applied" per C05's applied-only rule | RFC-005 C3 and §3.3 ("F4 keeps" / "funds module keeps") → booking module; RFC-004 §A2, F4, JR-11 state that F4 neither holds nor advances it (R46-08) |
+| S-M6 | Where `iam_fresh` lives | The booking module's, in owner memory: `max(min over the identity-push partitions feeding the slot of the latest resolved timestamp applied, last catch-up read timestamp)`; unset after takeover. **Amended by review 46 (R46-07) and fix verification 53 (V53-3)**: as C05 S-2: `R_applied(p)` gap-free, a catch-up counts once its F4 commits, after acquisition set only by a committed catch-up or once every partition has reported | RFC-005 C3 and §3.3 ("F4 keeps" / "funds module keeps") → booking module; RFC-004 §A2, F4, JR-11 state that F4 neither holds nor advances it (R46-08) |
 | S-G1 | `catch_up` with `since` older than retention | Answer a current-state `snapshot` of the slot's accounts with its `position`. **Amended by review 46 (R46-07)**: a new lease holder always asks for the snapshot (no `since`); a running holder uses `since = iam_fresh` | RFC-005 C3 adds the snapshot answer and the `since` rule; RFC-004 F4 applies the snapshot (R46-08); RFC-002 §5.6 takes it before deciding |
 | S-G2 | Owners' summary, check and reader duties | Listed per RFC under "Consumer obligations" | As listed there |
 | S-G3 | Authority of a target-summary request | The operator's console session (principal and role), unsigned, audited by the owner. **Amended by review 46 D3**: purpose-bound (mandatory `action_id` and `action_type`, target kind must match), counted against `operator_read_limit`, breadth-alerted, audited before answering | RFC-002 §13.1 "read grant or envelope request" → "console session, purpose-bound, audited"; RFC-005 §7.3, §7.6 state it; every summary-serving owner (Consumer obligations) |
@@ -1357,4 +1365,5 @@ specifies §N now so both sides can build; the RFC-000 row only names it.
 | R46-26 | Minor | `iam_slots` 256 marked est.; `operator_read_limit` and breadth alert initial values (est.); read types a closed list in the policy bundle | Common types, §E, §N; Timeouts |
 | R46-27 | Minor | RFC-005 row filled (identity's summaries and envelopes); placement calls `operator_check` at apply | Consumer obligations |
 | R46-28 | Minor | Tests added: P-12 … P-18; C-02, C-04, C-07, C-10, C-11, C-12 extended | Conformance tests |
+| V53-3 (C05 fix verification 53, binding) | — | §B matches C05: `iam_fresh` counts only gap-free applied resolved timestamps and committed catch-ups; after acquisition set only by a committed catch-up or once every partition has reported; the snapshot revokes applied keys absent from it; µs → HLC rule stated | Schema units, §B; S-M6; C-02 |
 | RQ46-1, AR46-1, AR46-2 | — | Recorded as raised upstream; §N specified here meanwhile | Consumer obligations (last paragraph) |
