@@ -4,8 +4,8 @@
 |---|---|
 | Contract ID | C07 |
 | Name | receivables-and-payouts |
-| Version | 2 (draft) |
-| Status | **Draft**, for contract fix verification. Revised per [review 37](../../reviews/37-contract-C07-review.md) (REJECT: R37-01 … R37-30), every proposed fix and decision D-37-1 … D-37-6 applied by the orchestrator's binding decision; see "Review 37 resolution". Every mismatch is settled (see "Settled"); none is open. Errata owed by the source RFCs and by other contracts are listed under "Errata owed" |
+| Version | 1 |
+| Status | **Frozen.** Frozen at C4 on [fix verification 49](../../reviews/49-contract-C07-fix-verification.md) (D49-1 … D49-5 applied); errata owed listed below. Revised per [review 37](../../reviews/37-contract-C07-review.md) (REJECT: R37-01 … R37-30), every proposed fix and decision D-37-1 … D-37-6 applied by the orchestrator's binding decision; see "Review 37 resolution". Every mismatch is settled (see "Settled"); none is open. Errata owed by the source RFCs and by other contracts are listed under "Errata owed" |
 | Provider | RFC-004 (receivables, payments, payouts, reconciliation; Part A semantics of the credit-limit command). RFC-005 (identity and access) for operation 5, the payout-destination query (RFC-000 §8 lists it as C16 of RFC-005) |
 | Consumers | RFC-002 (account owner: applies the invoice-status feed and the credit-limit command). RFC-005 (operator console: sends the credit-limit command; edge payment ingress and the authenticity verifier, RFC-005 C7, in front of operations 3 and 4). RFC-004 payouts (reads operation 5). External: payment providers, payout providers, the payment partner, banks |
 | Transport | Op 1: Kafka event (receivables' outbox and changefeed relay, [C01](C01-platform.md) §3.5). Op 2: HTTP (gRPC), synchronous command. Op 3, op 4: HTTP, external API (inbound notifications and reports; outbound instructions). Op 5: HTTP (gRPC), synchronous query. No cross-owner database read |
@@ -206,11 +206,14 @@ The owner evaluates, in this order; the first step that decides gives the answer
 (R37-01):
 
 1. **Authenticity**: checks 1 and 2. Fails → `refused{unauthorised, check}`, **not
-   recorded** (an unauthenticated message writes nothing).
+   recorded** (an unauthenticated message writes nothing). For a set-scoped action,
+   `member` ≠ `account` → `refused{out_of_scope}`, **not recorded** (D49-4).
 2. **Deduplication** by (`action_id`, account): if this account's log has an F5 (applied or
-   refused) for `action_id`, answer **the recorded answer**, before any check that can
-   change with time (3, 5, 6, scope, KYB). If the recomputed digest differs from the
-   recorded one → `refused{conflict}`, recorded. So a retry after a lost answer gets
+   refused) for `action_id`, answer the answer of the **first** F5 recorded for
+   `action_id`, before any check that can change with time (3, 5, 6, scope, KYB). A
+   recorded `conflict` refusal never becomes the action's answer (D49-2). If the
+   recomputed digest differs from the recorded one, or if the recorded F5's requester
+   `principal_id` differs → `refused{conflict}`, recorded (D49-1). So a retry after a lost answer gets
    `applied` with the original position even if the target version moved, `not_after`
    passed, the operator's role was withdrawn, or F9 changed.
 3. **Freshness**: checks 3, 5 and, for a single-account target, 6. Fails →
@@ -269,8 +272,8 @@ F4 that passed KYB if it is to succeed.
 Key (`action_id`, account). Duplicate → the recorded answer, before freshness checks.
 Same key, different digest → `refused{conflict}`, recorded. Retention: the account log
 (7 years for money identities, P4-S100). A money-moving `action_id` is the source
-reference (POL-29, P4-S99): the same `action_id` signed by another principal fails at
-step 2 as `conflict`.
+reference (POL-29, P4-S99): the same `action_id` signed by another principal is refused at
+step 2 (`conflict`): digest or requester principal differs.
 
 ## Operation 3. Payment notification ingress (payment providers → payments)
 
@@ -486,7 +489,7 @@ alerted (contract choice, S4).
 |---|---|---|---|---|
 | Instruction | At least once to the provider, within its idempotency retention; exactly-once effect at the provider by `Idempotency-Key` | `instruction_ref` | Provider returns the original | Never sent (generated once) |
 | Run | Once per (supplier, week) | (supplier, week) | Finds the run, pays nothing again (P4-S46) | — |
-| Transfer report | At least once, any order | (`instruction_ref`, `provider_ref`) | No effect | Escalated |
+| Transfer report | At least once, any order | (`instruction_ref`, `provider_ref`, `outcome`, `final`) | No effect | Escalated (amount/currency differences, per 4b); a different outcome under the same `provider_ref` follows the 4b rows |
 | Partner report | At least once | (`source`, `report_id`, `version`) | `duplicate` | `409 conflict`, alerted |
 
 ## Operation 5. Payout destination query (identity → payouts; RFC-005 C16)
@@ -592,7 +595,7 @@ final and reconciled, then as long as payout records need it).
 
 ## Versioning and compatibility
 
-- Contract version 2; JSON events carry `schema` (`invoice-status/1`); gRPC packages are
+- Contract version 1 (frozen); JSON events carry `schema` (`invoice-status/1`); gRPC packages are
   versioned `v1`; HTTP paths `/v1/`.
 - Compatible changes: adding optional fields; consumers ignore unknown fields.
 - **Coordinated minor version, consumer first** (R37-23): adding an event `type`, a refusal
@@ -668,10 +671,10 @@ is open.
 
 | # | Point | Reconciliation |
 |---|---|---|
-| F1 | RFC-004 §B12 `set_credit_limit(account, amount, reason, action_id)`; RFC-002 §7.3 `set_credit_limit(account, amount)` | `reason`, `action_id` and, since version 2, the amount travel in the signed C08 envelope (`reason_code`, `action_id`, `amounts.amount_micro_usd`) |
+| F1 | RFC-004 §B12 `set_credit_limit(account, amount, reason, action_id)`; RFC-002 §7.3 `set_credit_limit(account, amount)` | `reason`, `action_id` and, since the review 37 revision, the amount travel in the signed C08 envelope (`reason_code`, `action_id`, `amounts.amount_micro_usd`) |
 | F2 | Refusals: RFC-004 `kyb_not_vetted \| out_of_scope \| unauthorised \| invalid`; RFC-002 and RFC-005 "the failed envelope check" | `unauthorised` and `out_of_scope` carry the C08 check code; mapping to C08's `EnvelopeAnswer` stated in op 2 |
 | F3 | RFC-004 §B9 refuses a repeated `action_id` with different content "as a conflict"; §B12's list has no such reason | `conflict` added (C08's `digest_or_type` under a recorded `action_id`) |
-| F4 | Event identity: RFC-004 (receivables partition, epoch, sequence); RFC-002 "(partition, stream sequence)" | Since version 2, C01 §3.5's (partition, stream, `stream_seq`), the partition being the account; `epoch` informational (R37-22) |
+| F4 | Event identity: RFC-004 (receivables partition, epoch, sequence); RFC-002 "(partition, stream sequence)" | Since the review 37 revision, C01 §3.5's (partition, stream, `stream_seq`), the partition being the account; `epoch` informational (R37-22) |
 | F5 | `InvoiceOverdue.due_date` in RFC-004, absent from RFC-002's list | Carried; the account owner may ignore it |
 | F6 | RFC-004 §B7.1 "a re-instruction reuses them" (destination) | A re-instruction is a resend of the same instruction; a lot paid again in a later run goes to that run's destination (POL-22, P4-S118 row 3) |
 
@@ -687,7 +690,8 @@ is frozen.
 | RFC-004 | §A4 F5 apply rule: a `CreditLimitRemoved` is superseded by an F5 *set* committed after its `decided_at` | R37-03, D-37-5 |
 | RFC-004 | §B5 and §B12 invoice-status row: `ledger_pos` is the position of the account's last applied movement | R37-04 |
 | RFC-004 | §B12 credit-limit row and §B9: a repeat answers the recorded outcome before any freshness check | R37-01 |
-| RFC-004 | §B4.1, §B4.2, §B4.3, §B9: reversals one per transaction at the bound conversion; other completed kind is a mismatch; unattributed payments to the suspense queue; another account's `invoice_ref`/`quote_ref` ignored; quote validity by `occurred_at` | R37-08, R37-09, R37-18, D-37-1 … D-37-3 |
+| RFC-004 | §B4.1, §B4.2, §B4.3, §B9: reversals one per transaction at the bound conversion; other completed kind is a mismatch; unattributed payments to the suspense queue; another account's `invoice_ref`/`quote_ref` ignored; quote validity by `occurred_at`; §B4.2 "a different provider principal is refused": drop it; references are a per-provider namespace (R37-14) | R37-08, R37-09, R37-14, R37-18, D-37-1 … D-37-3, D49-5 |
+| RFC-004, RFC-002, RFC-005 | `temporarily_unavailable{identity_stale}` for a stale `iam_fresh` on a KYB-gated set: not recorded, never final, the console retries under the same `action_id`. Owed by RFC-004 §A4 F5 and §B12 credit-limit row, RFC-002 §7.3, and RFC-005 §7.3/§7.4 console fan-out | C05 review 45 M5, m7; D49-5 |
 | RFC-004 | §B6: partner transaction kinds and per-kind references; per-provider `Pnr` exposure alert | R37-10, R37-28 |
 | RFC-004 | §B7.1: "re-instruction" means a resend of the same instruction; resends bounded by the provider's idempotency retention; transfer reports keyed by (`instruction_ref`, `provider_ref`); `no_destination` carried forward, escalated after 4 runs | F6, R37-05, R37-06, R37-19 |
 | RFC-004 | §B7.2: "instruct the FailedFinal lots plus a new lot of `pay − Σ FailedFinal`", not "`round_down(pay)` plus every FailedFinal lot"; publishes `payout_schedule` | R37-02, R37-21 |
@@ -697,7 +701,7 @@ is frozen.
 | RFC-004 | Moves and stops on payments, payouts, receivables, reconciliation (C01 §10.3 rows) | R37-12 |
 | RFC-002 | §7.3 and §13.1 credit-limit row: drop "a member of the signed set at slot-map version v"; check order with deduplication before freshness; the supersession rule; `ledger_pos` per account | S1, R37-01, R37-03, R37-04 |
 | RFC-002 | §2.3 F9 payload: the designating slot-map version (also C01 §10.3) | S1, R37-13 |
-| RFC-005 | §7.4 check 6: "has not applied this `action_id`" is not a refusal; a repeat answers the recorded outcome after checks 1–2 and before checks 3–6 | R37-01 |
+| RFC-005 | §7.4 check 6 and C4: "has not applied this `action_id`" is not a refusal; a repeat answers the first recorded outcome after checks 1–2 and before checks 3–6; a different requester principal is a `conflict` | R37-01, D49-1, D49-5 |
 | RFC-005 | §7.3: the console fans out only to `probeAccountSet(v)`, v possibly the pending version; DT-32b: audit compares applied set-scoped F5s with the signed set's digest; console warning above `credit_limit_warn_above` | R37-11, R37-27, R37-29 |
 | RFC-005 | C16: refused, not held, under a recovery hold (as rev. 5 already says); `PayoutDestinationVersion` with `supplier` and `instruction_ref`, payouts' principal only, ownership check; sensitive-field redaction; the three `NOT_FOUND` reasons; the notice's run from `payout_schedule` | S2, R37-19, R37-20, R37-21 |
 | RFC-006 | Probe designation (F9 source) carries the designating slot-map version; `probeAccountSet(v)` and `probeSetSummary(v)` served for the pending, unpublished version | S1, R37-11 |
@@ -711,7 +715,7 @@ is frozen.
 
 ## Review 37 resolution
 
-| Finding | Change in version 2 |
+| Finding | Change in the review 37 revision (draft 2) |
 |---|---|
 | R37-01 (Blocker) | Op 2 check order: authenticity (1–2), then deduplication by (`action_id`, account) answering the recorded outcome, then freshness (3, 5, 6), scope, validity, KYB; K2b; errata RFC-005 §7.4, C08 §E, RFC-000 (AI-37-2) |
 | R37-02 (Blocker) | Op 4a composition: FailedFinal lots plus a new lot of `pay − Σ FF`; `K` from Σ lots; P4-S86 recomputed to 120 USD; P4b; erratum RFC-004 §B7.2 |
@@ -743,4 +747,5 @@ is frozen.
 | R37-28 | Per-provider `Pnr` exposure alert `provider_pnr_alert_usd`; RQ-37-3 |
 | R37-29 | Console warning above `credit_limit_warn_above`; RQ-37-2 |
 | R37-30 | `final?` required iff `failed` |
+| Fix verification 49, D49-1 … D49-5 | Step 2 compares the requester principal (`conflict`) and answers the first F5's answer, a `conflict` never replacing it; step 1 refuses `member` ≠ `account` as `out_of_scope`, not recorded; transfer reports keyed (`instruction_ref`, `provider_ref`, `outcome`, `final`); errata rows for RFC-005 C4, RFC-004 §B4.2 and the `identity_stale` answer |
 | C05 review 45 M5 (orchestrator, binding) | Op 2 answer `temporarily_unavailable{identity_stale}` when `iam_fresh` is stale for a KYB-gated set: nothing appended, console retries under the same `action_id`; mapping to C08; K2c |
