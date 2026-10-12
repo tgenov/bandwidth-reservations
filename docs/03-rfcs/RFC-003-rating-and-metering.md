@@ -2,11 +2,11 @@
 
 | | |
 |---|---|
-| Status | **Accepted, revision 4.** Accepted at C3 on [fix verification 24](../reviews/24-rfc-003-fix-verification.md) (V-1 … V-3 applied). Applies [review 19](../reviews/19-rfc-003-review.md) (F3-01 … F3-20; decisions D-19-1, D-19-3 … D-19-8; D-19-2 superseded by `requirements-v1.8`) and rebases on the requirements at tag `requirements-v1.8` ([review 22](../reviews/22-requirements-amendments-from-c3-reviews.md), which decides RQ-19-1 … RQ-19-5 and RQ3-16) and on RFC-000 revision 4.2 (its "Revision 4.2 errata", which resolve AI-19-1, AI-19-2 and AI3-13); what changed is listed in "Revision 4 resolution" at the end. Revision 3 rebased on `requirements-v1.7` and RFC-000 revision 4.1; revision 2 on `requirements-v1.6` and RFC-000 revision 4 (distributed SQL substrate, NestJS owners, Kafka); revision 1 was the rewrite on the accepted architecture (revision 3.2) |
-| Satisfies | P3-S01 … P3-S74 (all 74). The metering, attribution and rating parts of X2-S02, X2-S04, X2-S09, X2-S10, X2-S11, X2-S12, X2-S13, X2-S14, X2-S19, X2-S20, X2-S22 and X2-S23 (the rest of each is RFC-006's). The validation parts of X1-S12 (finance: price corrections, quarantine attribution and its reversal, `usage_rate_cap`) and X1-S31 (commercial: prices, split weights, partner terms). The metering parts of X1-N11 (no personal data outside the erasable store: non-conforming payloads, P3-S71). Inputs to P4-S15 and P4-S16 (headroom itemised; the 430 s lateness bound is RFC-004's to compute, by the definition of §5.9), P4-S110 and P4-S115 (the dearer-path amount, against the buyer's charge as booked) and P4-S116 (a downward cost-line amendment with its cause); RFC-004 satisfies them. See the traceability table at the end |
+| Status | **Draft, revision 5.** Reopened from **Accepted, revision 4** (accepted at C3 on [fix verification 24](../reviews/24-rfc-003-fix-verification.md)) because its baseline moved under it: `requirements-v1.9` ([review 28](../reviews/28-requirements-amendments-from-c3-round-2.md)) decides this RFC's RQ3-17 (keeping a non-conforming payload is not required; caps and a slow store drop it, each drop counted and reported to network operations) and adds P3-S75, which revision 4 did not satisfy (drops were alerted, not counted and reported); and RFC-000 revision 4.3 ("Revision 4.3 errata", RFC-003 row) changes contracts this RFC consumes or provides (`put_payload … → kept(bucket) \| not kept(cap)`, AI3-14 resolved; cut targets as minute pieces, AI-26-2; per-destination feed closure, AI-27-3; split reservation batches, AI4-12; price lead time, B-AI-11), as does RFC-006 revision 4 (self-outboxed `ingest_log`; stage B and rating slots as slot groups). What changed is listed in "Revision 5 resolution" at the end. Revision 4 applied [review 19](../reviews/19-rfc-003-review.md) (F3-01 … F3-20; D-19-1, D-19-3 … D-19-8) on `requirements-v1.8` and RFC-000 revision 4.2; revision 3 rebased on `requirements-v1.7` and RFC-000 revision 4.1; revision 2 on `requirements-v1.6` and RFC-000 revision 4 (distributed SQL substrate, NestJS owners, Kafka); revision 1 was the rewrite on the accepted architecture (revision 3.2) |
+| Satisfies | P3-S01 … P3-S75 (all 75). The metering, attribution and rating parts of X2-S02, X2-S04, X2-S09, X2-S10, X2-S11, X2-S12, X2-S13, X2-S14, X2-S19, X2-S20, X2-S22 and X2-S23 (the rest of each is RFC-006's). The validation parts of X1-S12 (finance: price corrections, quarantine attribution and its reversal, `usage_rate_cap`) and X1-S31 (commercial: prices, split weights, partner terms). The metering parts of X1-N11 (no personal data outside the erasable store: non-conforming payloads, P3-S71, P3-S75). Inputs to P4-S15 and P4-S16 (headroom itemised; the 430 s lateness bound is RFC-004's to compute, by the definition of §5.9), P4-S110 and P4-S115 (the dearer-path amount, against the buyer's charge as booked) and P4-S116 (a downward cost-line amendment with its cause); RFC-004 satisfies them. See the traceability table at the end |
 | Policies | POL-01, POL-06, POL-07, POL-08, POL-11, POL-12 (weights stored, applied by RFC-004), POL-13, POL-14, POL-15 (fee holds, by reference), POL-16, POL-17, POL-18, POL-19, POL-20, POL-23, POL-26 (by reference), POL-27, POL-28, POL-29, POL-30, POL-32, POL-33 |
 | Prior decisions | History log D10 (facts first), D18 (raw records, deduplicated by identity), D19 (amend, never edit; bound the exposure), D20 (price by usage time), D25 (amend by the line's new total), D27 (the bound covers the wait before charging). D26 (minute lock) and D28 (end-minute assignment) are **not** carried forward; see Competition. Review 19: D-19-1, D-19-3 … D-19-8 (binding) |
-| Builds on | The requirements at tag `requirements-v1.8`, which decide this RFC's issues RQ3-1 … RQ3-12 ([review 11](../reviews/11-requirements-amendments-from-detailed-rfcs.md)), RQ3-13 … RQ3-15 ([review 12](../reviews/12-requirements-amendments-from-rfc-revision-2.md)), RQ3-16 and review 19's RQ-19-1 … RQ-19-5 ([review 22](../reviews/22-requirements-amendments-from-c3-reviews.md)); and [RFC-000](RFC-000-architecture.md) revision 4.2: its components (metering ingestion, attribution and quarantine, rating, catalogue), their ownership and partitioning (§2), principles A1 … A11 (§1), idempotency and ordering (§4.4, §4.5), the topology (§5.1), the substrate mapping (§5.5), the sizing (§6), the allocation (§7) and the contracts (§8), including its resolution of AI3-1 … AI3-9 (revision 4), AI3-10 … AI3-12 (revision 4.1 errata), and AI-19-1, AI-19-2, AI3-13 (revision 4.2 errata). The personal-data store's interface is RFC-005 revision 4's (C12, `put_payload` with the exporter, buckets per exporter and hour) |
+| Builds on | The requirements at tag `requirements-v1.9`, which decide RQ3-17 ([review 28](../reviews/28-requirements-amendments-from-c3-round-2.md)) and, through `requirements-v1.8`, this RFC's issues RQ3-1 … RQ3-12 ([review 11](../reviews/11-requirements-amendments-from-detailed-rfcs.md)), RQ3-13 … RQ3-15 ([review 12](../reviews/12-requirements-amendments-from-rfc-revision-2.md)), RQ3-16 and review 19's RQ-19-1 … RQ-19-5 ([review 22](../reviews/22-requirements-amendments-from-c3-reviews.md)); and [RFC-000](RFC-000-architecture.md) revision 4.3: its components (metering ingestion, attribution and quarantine, rating, catalogue), their ownership and partitioning (§2), principles A1 … A11 (§1), idempotency and ordering (§4.4, §4.5), the topology (§5.1), the substrate mapping (§5.5), the sizing (§6), the allocation (§7) and the contracts (§8), including its resolution of AI3-1 … AI3-9 (revision 4), AI3-10 … AI3-12 (revision 4.1 errata), AI-19-1, AI-19-2, AI3-13 (revision 4.2 errata), and AI3-14 with the interface points of its revision 4.3 errata (AI-26-2, AI-27-3, AI4-12, B-AI-11). The personal-data store's interface is RFC-005 revision 4's (C12, `put_payload` with the exporter, buckets per exporter and hour, as RFC-000 4.3 §8 states it). The substrate is [RFC-006](RFC-006-availability-and-operations.md) revision 4's: self-outboxed log tables (§3.5) and slot groups (§7.1) |
 | Specifies | Per RFC-000 §7: metering ingestion; attribution and quarantine; rating; the catalogue except its link registry (RFC-001); the quarantine and breach report feeds and the evidence query |
 
 Terms are used in the sense of the [glossary](../02-specs/glossary.md): "reserved rate" is
@@ -114,10 +114,10 @@ rating applies the rule.
 
 | Component | Partition and slot | Log table (insert-only) and projections | Feeds out | Standby |
 |---|---|---|---|---|
-| Metering ingestion | By exporter; 128 slots (est.), hot exporters in a slot alone | `ingest_log` (batch, epoch, wrap, correction, supersession, identity-conflict, checkpoint entries); projections: identity range-set chunks, epoch table, wrap anchors, corrected and superseded references | Metering hand-off: the changefeed on `ingest_log` itself, plus the owner's direct publish (the log table is its own outbox, so a batch is written once, not twice) | Warm: tails the projections; takeover about 5 s (est.) |
+| Metering ingestion | By exporter; 128 slots (est.), hot exporters in a slot alone | `ingest_log` (batch, epoch, wrap, correction, supersession, identity-conflict, checkpoint entries); projections: identity range-set chunks, epoch table, wrap anchors, corrected and superseded references | Metering hand-off and the non-conforming drop report (§3.3): `ingest_log` is declared **self-outboxed** (RFC-006 revision 4 §3.5): its changefeed runs on the log table itself and the relay derives each destination event from the row, beside the owner's direct publish, so a batch is written once, not twice. As RFC-006 §3.5 gives it: 25 h `gc.ttlseconds`, the truncator never deletes a row within 1 h of the changefeed's oldest consumer position, and the relay drops delete events | Warm: tails the projections; takeover about 5 s (est.) |
 | Attribution, stage A | By exporter, the same slot map as ingestion | `attr_a_log` (processed, binding fact, quarantine, pending, attribution, reversal entries) | Attributed parts per account (outbox), watermark heartbeats | Hot, 3 s lease (RFC-000 §2) |
-| Attribution, stage B | By buyer account; 256 slots (est.) | `attr_b_log` (part batches, producer watermarks, attachment set) | In-process hand-off to rating, after commit; the table is the guaranteed path | Hot, 3 s lease |
-| Rating | By buyer account, the **same slot map as stage B**; placement keeps both slots' lease holders in one process | `rating_log` (inputs, accrual-closed, usage-closed, amendment, fee, emitted, posted, breach, checkpoint entries) | Charge-line feed (reservation batches and usage batches, §5.8), unposted-usage feed, breach report feed | Hot, 3 s lease |
+| Attribution, stage B | By buyer account; 256 slots (est.); stage B slot *i* and rating slot *i* form a **slot group** (RFC-006 revision 4 §7.1) | `attr_b_log` (part batches, producer watermarks, attachment set) | In-process hand-off to rating, after commit; the table is the guaranteed path | Hot, 3 s lease; one standby process per role for the group |
+| Rating | By buyer account, the **same slot map as stage B**; the slot group (stage B *i*, rating *i*) is acquired, handed off and taken over together, in one transaction or not at all (RFC-006 §7.1, §12.2: `onAcquire` once per slot, both before the group serves), so both leases are always held by one process | `rating_log` (inputs, accrual-closed, usage-closed, amendment, fee, emitted, posted, breach, checkpoint entries) | Charge-line feed (reservation batches and usage batches, §5.8), unposted-usage feed, breach report feed | Hot, 3 s lease |
 | Catalogue | By entity | `catalogue_log` per entity kind; projection: current versions | Catalogue feed | Warm |
 
 **Slot batch transactions.** An owner commits, per slot, one batch transaction at a time
@@ -129,8 +129,13 @@ metering and rating alone (est.); per slot it is about 24,000/s (§1.2). RFC-000
 
 **Time on the substrate.** An entry's timestamp is its transaction's **commit timestamp**
 (the database's hybrid-logical clock), monotone per partition across owner changes
-(RFC-000 §4.5). Closure uses **resolved timestamps**: the changefeed on a table emits, in
-each Kafka partition, a marker "every row committed at or below T has been emitted" (§5.6).
+(RFC-000 §4.5). Closure uses **resolved markers per destination partition** (RFC-000
+revision 4.3 §4.5, §5.5, AI-27-3): the marker a consumer reads on a destination (Kafka)
+partition says "every row of every changefeed partition that can feed this destination,
+committed at or below T, has been published"; the relay computes it as the minimum of
+those changefeed partitions' resolved timestamps and emits it only after publishing every
+such row. Every closure of this RFC (§4.2, §5.6, §6.4) takes **only** these markers as
+given; no consumer here combines raw changefeed resolved timestamps itself.
 
 **Personal data** (A11). No table or topic of this RFC holds personal data: exporters,
 accounts, suppliers and operators appear by pseudonymous identifiers; every entry's payload
@@ -138,9 +143,11 @@ is encrypted by the owner with keys held in Kenyan HSMs (RFC-005, AI5-3), so R3'
 and Kafka hold ciphertext. Flow records must not carry personal data (§3.1). The residual
 case, a received payload that does not conform to the record template, never reaches a
 table or topic of this RFC: its payload goes to the personal-data store through RFC-005's
-`put_payload` (into a bucket per exporter and hour) and the log keeps its identity, keyed digest and reason only (§3.3; P3-S71,
-POL-19; RFC-000 A11 as revision 4.1 states it, AI3-12, resolved; the store's expiry,
-AI3-13, resolved in revision 4.2).
+`put_payload` (into a bucket per exporter and hour) **if it is kept**, and the log keeps its
+identity, keyed digest and reason, always, and nothing more of it (§3.3; P3-S71, P3-S75,
+POL-19 as `requirements-v1.9` states it; RFC-000 A11 as revision 4.1 states it, AI3-12,
+resolved; the store's expiry, AI3-13, resolved in revision 4.2; the call's scope and
+signature, AI3-14, resolved in revision 4.3).
 
 #### 1.2 Sizing at the design load
 
@@ -154,7 +161,7 @@ AI3-13, resolved in revision 4.2).
 | All transactions of these components | About 4,300 + 2,600 + 8,500 + 8,500 ≈ **24,000/s** (est.) | R3-12 |
 | Database write volume (logical) | About 20 MB/s of records, 12 MB/s of parts, about 18 MB/s of rating entries (10 MB/s of reservation lines, 8 MB/s of usage lines with their ELAs) at peak (est.); × 5 replicas for replication | §3.6, §4.5, §5.11 |
 | Kafka | Hand-off about 20 MB/s, parts about 12 MB/s, figures about 25,000 small events/s (at most one per account every 2 s), about 1,700 reservation batches/s and 1,700 usage batches/s (est.) | §3.6, §4.5, §5.8, §5.9 |
-| Non-conforming payloads to the personal-data store | Rare: a misbehaving exporter's refused data sets; at most RFC-005's caps (10 puts/s per exporter, 1,000/s overall), about 0 in steady state | §3.3 |
+| Non-conforming payloads to the personal-data store | Rare: a misbehaving exporter's refused data sets; at most RFC-005's caps (10 puts/s and 256 KB/s per exporter, 1,000/s and 4 MB/s overall, 64 KB a payload), about 0 in steady state; beyond them dropped and counted, one `drop-count` entry per exporter with drops per hour (at most 10,000 an hour, est.) | §3.3 |
 | Live tail in the database | A few hours of `ingest_log` (est.; RFC-006 sets it), sealed to object storage every 15 min (est.) | §3.7 |
 
 Every row is an input to RFC-006's re-costing of the database and Kafka (RFC-000 §5.5,
@@ -318,24 +325,35 @@ Validation is per record. A rejected record never delays the records after it: t
 of its batch is accepted or deduplicated in the same entry, as if it had not arrived
 (P3-S29). A record with zero bytes is accepted (it charges nothing).
 
-**Non-conforming payloads: only identity, digest and reason in the log (P3-S71, P3-N7,
-POL-19; RQ3-14 as decided, AI3-12 and AI3-13 resolved).** A payload **conforms** when it
+**Non-conforming payloads: identity, digest and reason always; the payload only in the
+erasable store, if kept (P3-S71, P3-S75, P3-N7, POL-19 as `requirements-v1.9` states it;
+RQ3-14 and RQ3-17 as decided, AI3-12 … AI3-14 resolved).** A payload **conforms** when it
 parses and each of its data sets uses a template the session accepted (§3.1), which by
 construction holds no personal data. A data set rejected `no template` (one declaring IP
-addresses, say) does not; nor, in this RFC's reading, does an `unparseable` remainder of a
-message, whose content cannot be shown free of personal data (AI3-14). For each, while the
-owner builds the batch's transaction:
+addresses, say) does not; nor does an `unparseable` remainder of a message, whose content
+cannot be shown free of personal data (RFC-000 revision 4.3 §8 names both, AI3-14). Keeping
+the payload is **not required** (POL-19): it is kept within the caps the design states and
+when the store takes it in time, and otherwise **dropped**, never kept anywhere else, each
+drop counted and the count reported to network operations. For each, while the owner
+builds the batch's transaction:
 
 1. **Identity and digest.** Its identity is the record identity of §3.2 where the message
    header gives one, otherwise its **raw reference** (exporter partition, the log sequence
    of the `batch` entry being written, index). Its **keyed digest** is HMAC-SHA-256 of the
-   payload bytes under the exporter's digest key, held in the Kenyan HSMs (RFC-005, key
-   service). Keyed, because a plain hash of a short record holding an address could be
+   payload bytes under the exporter's **digest key**, one per (exporter, version), generated
+   in the Kenyan HSMs and released wrapped to ingestion's workload identity by
+   `digest_key(exporter) → (version, key)` (RFC-005 revision 5 §10, C12); the owner caches
+   the current version per exporter in memory (never on disk), fetches it on first use and
+   on rotation, and records the **key version** beside the digest, so a dispute check uses
+   the same key. A fetch that fails leaves the batch waiting at most `pd_put_timeout`, then
+   the payload is rejected with identity and reason, digest marked unavailable, alerted. Keyed, because a plain hash of a short record holding an address could be
    reversed by trying every address; Share, holding the key, can still show that a payload
-   presented in a dispute is the one it received.
+   presented in a dispute is the one it received. These are computed for every
+   non-conforming payload, kept or not.
 2. **Put.** The owner calls the personal-data store's
-   **`put_payload(record_id, exporter, supplier, account?, received_at, payload)`**
-   (RFC-005 C12, revision 4), with:
+   **`put_payload(record_id, exporter, supplier, account?, received_at, keep_by, payload)
+   → kept(bucket) | not kept(cap) | not kept(late)`** (RFC-005 C12, revision 5; AI3-15 as
+   the coordinator decided it; RFC-000 §8 erratum pending under RFC-005's AI-R5-6), with:
 
    | Argument | Value |
    |---|---|
@@ -344,45 +362,96 @@ owner builds the batch's transaction:
    | `supplier` | The exporter's **owner** as its credential names it (a supplier, or Share for an exporter on Share's network) |
    | `account` | Omitted: a rejected record is never attributed, and ingestion reads no provisioning (§1, RFC-000 §2) |
    | `received_at` | The time the edge received the batch, as the owner records it in the entry |
+   | `keep_by` | The put's issue time on the owner's clock + `pd_put_timeout` − ε (400 ms with ε = `max_offset`, 100 ms): the store commits the item only at a commit timestamp ≤ `keep_by` − ε, otherwise answers `not kept(late)`, keeping nothing |
 
-   The store answers **kept** (durable; it is idempotent by `record_id`), or **not kept**
-   when the exporter's or the global cap is reached (RFC-005 decision RD-1: 10 puts/s per
-   exporter, 1,000/s overall; the store counts it and alerts the supplier and operations).
-   The store wraps the item's payload key under the account key (none here), the
-   **bucket key** of (exporter, hour) and the **expiry key of `received_at`'s UTC day**,
-   destroyed at that day's start + `dispute_window` + 7 days (RFC-005 §3.7), so the
-   deadline is fixed at the put and no caller acts at expiry. A kept answer names the
-   bucket the item is in; for a repeated `record_id` (a resend after a crash, possibly in a
-   later hour) that is the first put's bucket, and the entry records the bucket the store
-   names, never one computed locally (F3-20). (Interface point for RFC-005 C12: the kept
-   answer names the payload bucket the item is filed in, the first put's for a repeated
-   `record_id`.)
+   The store answers **`kept(bucket)`** (durable in two regions; idempotent by
+   `record_id`), **`not kept(cap)`** when keeping it would exceed a cap (RFC-005 decision
+   RD-1, revision 5: 10 puts/s and 256 KB/s per exporter, 1,000/s and 4 MB/s overall, and
+   64 KB per payload, so a payload over 64 KB is always dropped; "the caps the design
+   states", review 28 decision 6), or **`not kept(late)`** when it could not commit by
+   `keep_by` − ε, nothing kept. The store wraps the item's payload key under
+   the account key (none here), the **bucket key** of (exporter, hour) and the **expiry key
+   of `received_at`'s UTC day**, destroyed at that day's start + `dispute_window` + 7 days
+   (RFC-005 §3.7), so the deadline is fixed at the put and no caller acts at expiry. A kept
+   answer names the bucket the item is in; for a repeated `record_id` (a resend after a
+   crash, possibly in a later hour) that is the first put's bucket, and the entry records
+   the bucket the store names, never one computed locally (F3-20).
 3. **Commit.** The slot's batch transaction commits once every put of the batch is answered,
-   or once `pd_put_timeout` (500 ms, est.) has passed. Its `batch` entry holds, for that
-   data set, the identity, the keyed digest, the reason, the `record_id`, the bucket and
-   the put's outcome: **kept**, **not kept: cap**, or **not kept: store unavailable** (no answer
-   within the timeout; alerted). The message is kept with the non-conforming sets cut out
+   or once `keep_by` + ε (= `pd_put_timeout`, 500 ms, est., after the put) has passed. Its `batch` entry holds, for that
+   data set, the identity, the keyed digest, the reason ("does not conform to the record
+   template" or `unparseable`), the `record_id` and the **keep outcome**: **kept** (with
+   the bucket), **dropped: cap** (`not kept(cap)`, the per-payload size included),
+   **dropped: not taken in time** (`not kept(late)`, P3-S75's second example), or
+   **dropped: unanswered, withdrawal pending** (no answer by `keep_by` + ε), and the digest
+   key version. Nothing more of the payload
+   is in the entry (P3-S71). The message is kept with the non-conforming sets cut out
    (header, template sets and conforming data sets verbatim, so the conforming records'
    identities and digests are unchanged).
 4. **Acknowledge**, as for any batch, after the commit.
+5. **Withdraw every unanswered put** (P3-S75; RFC-005 C12). For each payload recorded
+   "unanswered, withdrawal pending", the owner sends `withdraw_payload(record_id)` after
+   the commit, off the acknowledgement path, retrying with backoff until answered
+   `withdrawn(was kept | was absent)`. The store deletes any item a late put committed and
+   writes a tombstone until the receipt day's expiry, so no retried or later put can keep
+   it. The answer is recorded in a `withdrawn` entry (`record_id`, was kept or was absent).
+   The pending set is derived state: a new lease holder rebuilds it from `batch` entries
+   with a pending withdrawal and no `withdrawn` entry, and resends (idempotent by
+   `record_id`). A withdrawal pending more than 10 min (est.) is alerted. Until it is
+   answered, the payload can exist only in the erasable store, under its day expiry and
+   every covering erasure; once answered, it is kept nowhere.
+6. **Count and report the drops** (P3-S75). The count is derived from the `batch` entries
+   alone, so it is exact, durable and reproducible:
+   - The owner keeps, per exporter of the partition, the number of drops by reason in the
+     current **report hour** (the UTC hour of the `batch` entries' commit timestamps,
+     which are monotone per partition), in memory and in each `checkpoint`.
+   - The **first drop** of an (exporter, hour, reason) makes the batch transaction also
+     write a `drop-alert` entry (exporter, reason, the drop's identity and keyed digest);
+     the relay derives from it an alert to **network operations** on the alert feed
+     (RFC-006), at once.
+   - The first batch transaction of the slot committed after the hour's end (or, for an
+     idle slot, a marker-only transaction at the hour's end + 1 min) writes, for each
+     exporter with drops in the hour, a **`drop-count`** entry (exporter, hour, drops by
+     reason, the `batch` sequence range covered, and the withdrawals answered in the hour,
+     "was kept" and "was absent"); the relay derives from it the hourly
+     **drop report** to network operations (alert feed, RFC-006; also served to the
+     operator console). Because every later commit of the partition has a later
+     timestamp, no batch of the hour can commit after its `drop-count`.
+   - A new lease holder rebuilds the counters from the last `checkpoint` and the `batch`
+     entries after it, and writes a missing `drop-count` (it checks the log first, so each
+     (exporter, hour) has exactly one). The relay's events are identified by (partition,
+     sequence) and deduplicated downstream (RFC-000 §4.4).
+   The store's own counts (cap, late, withdrawn per exporter and minute, through
+   monitoring) and its daily notice to the supplier (RFC-005 revision 5 §3.7) remain; this
+   report, derived from ingestion's own log, is the one this RFC answers for, and it
+   carries no payload.
 
-So no log row, hand-off event, sealed segment, application log or trace holds the payload
-(RFC-000 A11). Crash points:
+So no log row, hand-off event, alert, sealed segment, application log or trace holds the
+payload (RFC-000 A11). Crash points:
 
 | Crash or fault | What happens |
 |---|---|
-| After the put, before the commit | An item exists that no log names. The exporter resends the unacknowledged batch; an identity-bearing payload gets the same `record_id` and the put is a no-op; a raw-referenced one may get a new raw reference and so a second item. An item nothing names is still unreadable after its day's expiry and erased by any erasure that covers its supplier |
-| After the commit, before the acknowledgement | The resend's conforming records are duplicates; its non-conforming set is rejected again with the same identity and digest (a second rejection entry, charging nothing) and a repeated put |
-| Put answered after `pd_put_timeout` | The entry says "not kept: store unavailable" although an item may exist; the console can still find it by `record_id` until its expiry. Nothing else depends on it |
-| Store unavailable | Batches holding a non-conforming payload wait at most `pd_put_timeout`, then commit with "not kept: store unavailable". Conforming batches and the ingestion probe never wait, so usage ingestion's 99.99% and its 1 s acknowledgement do not depend on the store |
+| After the put, before the commit | An item exists that no log names. The exporter resends the unacknowledged batch; an identity-bearing payload gets the same `record_id` and the put is a no-op answered with the first bucket; a raw-referenced one may get a new raw reference and so a second item. An item nothing names is in the erasable store only, unreadable after its day's expiry and erased by any erasure that covers its exporter or supplier |
+| After the commit, before the acknowledgement | The resend's conforming records are duplicates; its non-conforming set is rejected again with the same identity and digest (a second rejection entry, charging nothing) and a repeated put, answered with the first bucket; a drop is counted again (the count is of drops, each recorded) |
+| After a drop's commit, before its `drop-alert` or `drop-count` reaches the relay | They are rows of the same `ingest_log`; the changefeed relays them (RFC-006 §3.5) |
+| Between the hour's end and the `drop-count` commit | A takeover writes it (above); a report later than the hour's end + 1 min is itself alerted |
+| Put committed but its answer lost, or not answered by `keep_by` + ε | Recorded "unanswered, withdrawal pending"; `withdraw_payload` deletes any item and tombstones the `record_id` (step 5). A store commit after `keep_by` − ε is impossible (the store's condition), so no item can appear after the withdrawal |
+| Crash after the batch commit, before the withdrawal is answered | The new holder finds the pending withdrawal in the log and resends it; until answered the item, if any, is only in the erasable store |
+| Store unavailable | Batches holding a non-conforming payload wait at most `pd_put_timeout`, then commit with "dropped: not taken in time" or "unanswered, withdrawal pending", counted and reported; pending withdrawals are retried until the store answers. Conforming batches and the ingestion probe never wait, so usage ingestion's 99.99% and its 1 s acknowledgement do not depend on the store |
 
 **Decision (`pd_put_timeout`).** Waiting longer for the store would keep more dispute
 evidence at the cost of acknowledging a misconfigured exporter's batches late, which holds
 back its conforming records too; the payload is rejected in any case, its identity, digest
-and reason are kept, and RFC-005's RD-1 already accepts the digest alone as evidence beyond
-the caps. 500 ms keeps the batch's acknowledgement inside 1 s (X2-N4).
+and reason are kept, and POL-19 (`requirements-v1.9`) makes keeping the payload a courtesy
+to a dispute, not an obligation. 500 ms (`keep_by` 400 ms after the put, plus ε) keeps the batch's acknowledgement inside
+1 s (X2-N4).
 
-**Unrecoverable on an erasure or at its deadline (P3-S71, POL-19 as `requirements-v1.8`
+**Decision (the drop report).** Counting from the log rather than from a metrics counter
+makes the count exact across takeovers and re-derivable by an auditor; an hourly report
+with an immediate first alert per exporter tells network operations of a misconfigured
+exporter within seconds without one alert per dropped payload (a flood beyond the cap is
+up to tens of thousands an hour, est.). The alert names identities and keyed digests only.
+
+**Unrecoverable on an erasure or at its deadline (P3-S71, POL-19 as `requirements-v1.9`
 states it).** A kept payload stays readable until the first of:
 
 - **An erasure request that covers it is executed.** A request covers a payload if it
@@ -471,13 +540,23 @@ refused there and recorded as a refused privileged attempt (RFC-005, X1-N8).
 
 | Entry | Contents | Written when |
 |---|---|---|
-| `batch` | Session, edge region, the messages as received (compressed, encrypted payload) with any non-conforming payload cut out, and per record its outcome (accepted, duplicate with digest, rejected with reason; a non-conforming payload as identity, keyed digest, reason, `record_id`, bucket and put outcome, §3.3) | Each batch, in the slot's batch transaction, after any put of a non-conforming payload is answered or timed out |
+| `batch` | Session, edge region, the messages as received (compressed, encrypted payload) with any non-conforming payload cut out, and per record its outcome (accepted, duplicate with digest, rejected with reason; a non-conforming payload as identity, keyed digest with its key version, reason, `record_id` and keep outcome: kept with its bucket, dropped: cap, dropped: not taken in time, or dropped: unanswered, withdrawal pending, §3.3) | Each batch, in the slot's batch transaction, after any put of a non-conforming payload is answered or timed out |
+| `drop-alert` | Exporter, reason, the drop's identity and keyed digest | With the first drop of an (exporter, hour, reason) (§3.3) |
+| `withdrawn` | `record_id`, was kept or was absent | `withdraw_payload` answered for a put left unanswered by `keep_by` + ε (§3.3 step 5) |
+| `drop-count` | Exporter, report hour, drops by reason, `batch` sequence range, withdrawals answered (was kept, was absent) | Once per exporter with drops, after the hour's end (§3.3) |
 | `epoch-opened` | Epoch number, init time, first export time | A message with a new init time |
 | `wrap-opened` | Epoch, `k`, `t_k` | §3.2 |
 | `correction` | Raw reference corrected, the corrected record, its outcome, the principal | A correction message |
 | `supersession` | Original identity and raw reference, `v`, the new contents, its outcome (accepted, duplicate, or refused with its reason), the principal, the exporter's owner | A supersession message |
 | `identity-conflict` | Identity, both digests, positions | §3.5's verifier finds a duplicate whose content differs |
 | `checkpoint` | Snapshot reference of the derived state below | Every 10 s of log or 256 MB (est.) |
+
+`ingest_log` is **self-outboxed** (RFC-006 revision 4 §3.5, §12.1): its declaration names
+three streams the relay derives from its rows, the **metering hand-off** (`batch`,
+`correction`, `supersession` rows), the **drop alert** (`drop-alert`) and the **drop
+report** (`drop-count`), each with its versioned emit function; the owner's direct publish
+of the hand-off is the fast path and the changefeed the guaranteed one. No outbox table
+exists for it, and a truncator delete is never a feed event.
 
 Projection rows, written in the same transaction as the entries they derive from (RFC-000
 §5.5): the epoch table and wrap anchors; the **identity range-set chunks** (§3.5); the
@@ -550,8 +629,11 @@ P3-N7).
 - **Throughput.** 600,000 records/s is 60 MB/s raw (100 B each, RFC-000 §6), about
   20 MB/s compressed in the database, about 100 MB/s of replication traffic at five copies
   before storage-engine amplification; RFC-006 costs the nodes. The metering hand-off is
-  the changefeed on `ingest_log` (accepted records only are applied by stage A), about
-  20 MB/s in Kafka at peak.
+  derived by the relay from `ingest_log`'s own changefeed, the table being self-outboxed
+  (§3.4; RFC-006 §3.5), with the owner's direct publish as the fast path (accepted records
+  only are applied by stage A), about 20 MB/s in Kafka at peak. The table keeps 25 h of
+  MVCC history so a recreated changefeed finds its rows, and the truncator keeps at least
+  the hour behind the changefeed's oldest consumer position (RFC-006 §3.5, §13.2).
 - **Recovery.** A slot's lease holder fails: a warm standby in the other Kenyan region,
   which tails the slot's projection rows, takes the lease after expiry (3 s) and resumes:
   about **5 s** (est.), within the 1 min RTO (X2-S10). Nothing committed is rebuilt.
@@ -564,8 +646,9 @@ P3-N7).
 
 #### 3.7 Retention and evidence
 
-**Sealing** is RFC-006's history service (RFC-000 §5.5): it reads `ingest_log` through its
-changefeed, seals every 15 minutes of an exporter's log (est.) into a columnar segment in
+**Sealing** is RFC-006's history service (RFC-000 §5.5): it reads `ingest_log` by follower
+reads below the closed timestamp (RFC-006 revision 4 §3.5, §13.2; not through the
+changefeed), seals every 15 minutes of an exporter's log (est.) into a columnar segment in
 object storage replicated in two regions, verifies it, and only then is the live tail
 truncated. This RFC fixes what a segment must contain for the evidence query: records
 sorted by (observation point, attribution key, flow start), per-block minimum and maximum
@@ -711,8 +794,13 @@ the end of the hold it is quarantined. Unattributable traffic belongs to no acco
 the hold delays no account's headroom.
 
 **Stage A watermark.** Stage A has processed every record of its exporters accepted at or
-before `w` when it has consumed, on every Kafka partition it reads, the changefeed's
-resolved marker at or after `w` and processed everything before it. It publishes `w`
+before `w` when it has consumed, on every metering hand-off partition it reads, the
+**destination resolved marker** at or after `w` (the minimum over every `ingest_log`
+changefeed partition that can feed that destination, emitted only after the relay has
+published every such row: RFC-000 revision 4.3 §4.5, AI-27-3) and processed everything
+before it. It relies on nothing else: a changefeed partition's own resolved timestamp is
+never read directly, so a range split or a slow relay can delay the watermark but never
+make it pass a row still unpublished. It publishes `w`
 (pending-binding parts excepted) on a heartbeat topic every 1 s; an idle exporter's
 watermark follows the resolved timestamps. Rating uses the minimum over all stage A
 partitions to decide when a usage minute may close (§5.6). The heartbeat is not a fact:
@@ -728,9 +816,12 @@ traffic crosses (tens, est.). Stage B also keeps the account's **attachment set*
 products for which the account has a live binding, from the binding facts stage A
 forwards, which defines the "one per account and product" set of POL-14 (§5.9).
 
-After commit, the lease holder passes the committed batches to rating **in process**
-(stage B's and rating's slot leases are kept in one process by placement); after a
-takeover, rating reads them from `attr_b_log` from its last applied position. So the
+After commit, the lease holder passes the committed batches to rating **in process**:
+stage B slot *i* and rating slot *i* are one **slot group** (RFC-006 revision 4 §7.1), which
+placement acquires, hands off and lets a standby take over only together, in one
+transaction, so the two leases are never held by different processes. After a takeover or
+handoff, rating reads the batches from `attr_b_log` from its last applied position (in
+`rating_log`'s `inputs` entry), since the in-process hand-off is not durable. So the
 attribution → rating hop costs no Kafka round trip.
 
 The attribution log is the input of rating. It is kept in the database for
@@ -828,7 +919,7 @@ and every recomputation applies the same inputs in the same order.
 
 | Input | From | Used for |
 |---|---|---|
-| Reservation lifecycle feed, with its resolved timestamp (§7) | Account owner (RFC-002), Kafka | Parts, prices, effective minutes, ends and end causes, shortens, fees shown, moves (with the path's catalogue route ID and shown price), price steps, POL-07 cuts (link, reduction, target rate or none, `T_eff`), partner-leg affected status, residue events, probe account |
+| Reservation lifecycle feed, with its resolved timestamp (§7) | Account owner (RFC-002), Kafka | Parts, prices, effective minutes, ends and end causes, shortens, fees shown, moves (with the path's catalogue route ID and shown price), price steps, POL-07 cuts ((link, reduction), the applied target as minute pieces `[(from, r)…]` from `T_eff` or `none`, and the part rates that result, AI-26-2), partner-leg affected status, residue events, probe account |
 | Link schedule feed: affected flags, each reduction's affected set and final step, per-link closed time | Link schedule owners (RFC-001), Kafka | Affected marks on reservation lines (P3-S10); reservation closure (§5.6) |
 | Attributed parts | Stage B, in process (§4.3) | Usage line totals |
 | Stage A watermarks | Stage A heartbeats, Kafka | Usage minute closure |
@@ -906,6 +997,23 @@ decrease likewise and removes the newest part first (P3-S05, P3-S46), and a perm
 reduction's cut applies from the end of the notice (P3-S58: 4 Mbps → 2 Mbps, 8 → 4). An
 extension adds a part for the added window only (P3-S40: [10:00, 12:00) at 2,
 [12:00, 13:00) at 3).
+
+**POL-07 cuts as minute pieces** (RFC-000 revision 4.3 §8, AI-26-2). A cut event names its
+(link, reduction) and carries the reservation's **applied target**: a step function of the
+minute, `[(from, r)…]` from `T_eff` (each piece's rate holding until the next piece's
+`from`), or `none` (the reduction leaves the reservation uncut). The account owner composes
+the targets of every (link, reduction) affecting the reservation by `min` **per minute**
+and removes Mbps newest first to meet it; the event carries the **part rates** that result,
+over their effective intervals, as every change does. Rating accrues those part rates
+(never re-deriving the cut), and checks at each minute from `T_eff` that the reservation's
+total rate is at most the `min`, over the cuts applied to it, of each target's piece at
+that minute, alerting on a mismatch (as for P3-S46). A target whose pieces differ by minute
+(parts with different windows) is charged exactly minute by minute; run-length encoding in
+`accrual-closed` (§5.1) absorbs the steps. Maintenance bookings are not reservations and
+accrue nothing, so POL-07's trimming of maintenance at a reduction's effect (v1.9) charges
+nothing and needs no event here; and whether a reservation is affected during an outage
+after a reduction's notice (POL-07 v1.9: the committed rate counts the cut rate) is the
+link's decision, reaching rating only as affected marks (P3-S10).
 
 **A part's price at minute m.**
 
@@ -1090,20 +1198,35 @@ both and never neither (P3-S17); no lock is needed (Competition: D26). Closure d
 what is original and what is amendment; it is never a condition of correctness.
 
 **Reservation minute `m`** closes **per reservation** `r` (RFC-000 §4.5 and §8 as
-revision 4.2 states them; AI-17-3; RFC-001 revision 4 §11.1) when `m + 60 s` is at or
-before
+revisions 4.2 and 4.3 state them; AI-17-3, AI-27-3; RFC-001 revision 4 §11.1) when
+`m + 60 s` is at or before
 
 `closure(r) = min( lifecycle closed time of the account's partition,
                    CLOSED(t) of every Share link of r's route,
                    hold_1(r), hold_2(r) )`
 
-and rating has applied every event before those markers. The lifecycle feed's closed time
-is the changefeed's **resolved timestamp** (AI3-2): every entry not yet seen has a commit
-timestamp after it, and every reservation fact takes effect at or after the minute
+and rating has applied every event before those markers.
+
+**Closure relies only on per-destination markers** (RFC-000 revision 4.3 §4.5, §5.5,
+AI-27-3). Each closed time above is a marker read on the **destination partition** rating
+consumes: the lifecycle feed's Kafka partition carrying the account, and the schedule
+feed's partition carrying the link. The relay emits such a marker at `T` only once `T` is
+at or below the resolved timestamp of **every changefeed partition that can feed that
+destination** (the minimum over them) and it has published every row of those changefeed
+partitions committed at or below `T`. Rating never reads a changefeed partition's own
+resolved timestamp, never combines them itself, and never infers closure from an owner's
+heartbeat; a range split, a lease move or a lagging relay partition can only hold a marker
+back. So "rating has applied every event before the marker" means every fact committed at
+or below `T` that can reach this account or link.
+
+The lifecycle feed's closed time is that marker over the account's destination partition
+(AI3-2): every entry not yet seen has a commit timestamp after it, and every reservation fact takes effect at or after the minute
 containing its commit timestamp (confirmations from `floor_min`, every change and end from
 a later boundary, a cause known in advance recorded before its minute), so no fact can
 still affect `m`. A link's closed time is the `t` of its latest `CLOSED(t, feed_seq)`
-marker, applied once rating holds every event of the link up to that `feed_seq`.
+marker, which RFC-001 emits as the per-destination minimum (above) with the link's
+contiguous `feed_seq` (the relay's per-link `feed_seq` state being explicit, AI-27-3), applied
+once rating holds every event of the link up to that `feed_seq`.
 
 The one exception is a **POL-07 cut**, effective at its `T_eff` but decided by the link at
 or after it. For each **open reduction** `R` of a link, known from its
@@ -1112,7 +1235,7 @@ or after it. For each **open reduction** `R` of a link, known from its
 | Hold | Applies to | From | Until |
 |---|---|---|---|
 | `hold_1` = `T_eff` | **Every** reservation on the link | The announcement | Rating holds every chunk `i of n` of `REDUCTION_EFFECTIVE(R, T_eff, q, chunk i of n, reservations)`, which fix the affected set `A_R` |
-| `hold_2` = `T_eff` | Each reservation of `A_R` | All chunks held | `REDUCTION_FINAL(R)` is held **and** the reservation's cut (target rate or `none`) for `R` is applied in its lifecycle (the lifecycle feed's **cut** event; `CUT_DECIDED` on the schedule feed names the same decision and is used only to check it) |
+| `hold_2` = `T_eff` | Each reservation of `A_R` | All chunks held | `REDUCTION_FINAL(R)` is held **and** the reservation's cut for `R` (its applied target as minute pieces, or `none`) is applied in its lifecycle (the lifecycle feed's **cut** event; `CUT_DECIDED` on the schedule feed names the same decision and is used only to check it) |
 
 So no reservation closes past `T_eff` before the affected set is known, and no affected
 reservation closes past it before its cut is final and applied; the other reservations of
@@ -1220,7 +1343,7 @@ outbox row in the same transaction as the `emitted` entry, in one of **two batch
 | | **Reservation batch** | **Usage batch** |
 |---|---|---|
 | Carries | Reservation lines of **one minute** `m` of the account (originals; their affected marks as annotations) | Every other line: usage lines (originals and amendments), reservation-line amendments, fee and Share-borne fee lines, cost lines and their amendments |
-| Size | At most the movement limit `L` (RFC-004 §B10: 5,000 lines); a minute with more lines is several reservation batches, each with a disjoint set of reservations | At most `L` lines; lines due beyond it wait for the next usage batch. Settlement refuses a larger usage batch **whole** ("over limit"); rating checks the size before it commits the `emitted` entry, so a refusal is a defect: alerted, and the lines re-composed into batches within `L` under new batch identities, each named in a new figure before it is emitted |
+| Size | At most the movement limit `L` (RFC-004 §B10: 5,000 lines); a minute with more lines is several reservation batches, each with a disjoint set of reservations and each posted as one movement (RFC-000 revision 4.3 §6, §8, AI4-12) | At most `L` lines; lines due beyond it wait for the next usage batch. Settlement refuses a larger usage batch **whole** ("over limit"); rating checks the size before it commits the `emitted` entry, so a refusal is a defect: alerted, and the lines re-composed into batches within `L` under new batch identities, each named in a new figure before it is emitted |
 | Gate | **None**: reservation lines never enter unposted usage, so no figure need name them | **Publish before emit** (§5.9) when it holds any usage line; a usage batch with none (fees, reservation amendments, cost lines only) is not gated |
 | In flight per account | Up to `reservation_batches_in_flight` (8, est.), with one ordering rule: a reservation's line of minute `m + 1` is emitted only once its line of `m` is acknowledged, so originals reach the ledger in strictly increasing minutes per reservation, which its per-reservation watermark needs (RFC-000 §4.4) | **One**: the next is emitted only once settlement has acknowledged the last |
 | Posted by settlement (RFC-004) | One M4 movement per reservation batch | **Whole, in one movement**, never split and never sharing a movement with another usage batch |
@@ -1406,7 +1529,12 @@ on the reservation-accrual posting path. Here:
 
 - every slot of stage A, stage B and rating has a standby NestJS instance in the other
   Kenyan region that consumes the same Kafka partitions, tails the slot's log rows and
-  keeps the derived state current;
+  keeps the derived state current; for a slot group (stage B *i*, rating *i*) one standby
+  process per role stands by for both slots and takes both in one acquisition
+  transaction, `onAcquire` called for each before the group serves (RFC-006 revision 4
+  §7.1, §10.3, §12.2). These owners serve no status reads, so RFC-000 revision 4.3's reporting
+  rules for lapsed renewals, re-homes and moves (AI-27-1, AI-27-2) do not change them: every
+  output is a feed event committed under the epoch;
 - the owner lease for these classes is 3 s; on its expiry the standby takes it, reads
   anything committed since its last applied row, and resumes, re-emitting anything not
   yet acknowledged (idempotent): about **5 s** at p99 (est.; RFC-000 AI3-9). A database
@@ -1465,7 +1593,11 @@ they no longer hold (POL-32). An action from any other role is refused and recor
   requested.
 - **Every version is published at least 1 min before it takes effect**:
   `effective_from ≥ ceil_min(announced_at + 60 s)`; a version that is not is refused at
-  approval (RFC-002 B-AI-11). The account owner locks prices from its catalogue cache and
+  approval. This RFC **confirms** the lead time RFC-000 revision 4.3 §8 asks of the
+  catalogue (B-AI-11): the catalogue feed carries per-destination resolved markers (§6.4),
+  so a consumer whose replica has applied the feed through `T` holds every version
+  announced at or below `T`, and every version effective at or before `T + 60 s` was
+  announced by then. The account owner locks prices from its catalogue cache and
   refuses intakes while that cache is more than 60 s behind the feed's resolved timestamp
   (RFC-002 RB-19), so it can never lock a price that a version already published would
   have replaced.
@@ -1516,7 +1648,9 @@ posted (their originals use the corrected price).
 #### 6.4 Query, feed and availability
 
 - **Feed**: per entity, ordered, every version, on Kafka from the outbox, with the
-  changefeed's resolved timestamp. Every consumer (rating, attribution, the account owner
+  resolved marker of each destination partition (the minimum over every changefeed
+  partition that can feed it, emitted after the relay has published every such row;
+  RFC-000 revision 4.3, AI-27-3). Every consumer (rating, attribution, the account owner
   for locked prices and partner terms, settlement for weights, network operations'
   policing for `usage_rate_cap`, RFC-006 for probe designations) keeps a full in-memory
   replica and records the **catalogue position** it used in every decision: the resolved
@@ -1530,7 +1664,7 @@ posted (their originals use the corrected price).
 
 ### 7. Contracts
 
-RFC-000 §8 (revision 4.2) names the contracts; this section gives the semantics of those
+RFC-000 §8 (revision 4.3) names the contracts; this section gives the semantics of those
 this RFC owns and the guarantees it needs from those it consumes. Every asynchronous feed
 is a Kafka topic fed by the transactional outbox, its events identified by (producer
 partition, epoch, sequence) and consumed idempotently in sequence order (RFC-000 §5.5).
@@ -1540,11 +1674,12 @@ Schemas and wire formats belong to the delivery phase.
 
 | Contract (RFC-000 §8) | Kind | Semantics |
 |---|---|---|
-| **Flow-record ingestion protocol** | External protocol, to exporters | §3.1. At least once from the exporter, verbatim retransmission; each record's outcome is durable in two regions before the acknowledgement; an acknowledged record is never lost; identity per §3.2; duplicates acknowledged as such; rejections kept with their reason, a non-conforming payload in the log only as identity, keyed digest and reason, the payload in the personal-data store (`put_payload`) until an erasure request covering it is executed or its receipt day's expiry, kept only within RFC-005's caps (§3.3); a batch holding one is acknowledged only after its put is answered or `pd_put_timeout` passes; corrections and superseding versions only from the producing exporter, a superseding version changing measured fields only, within the original's minutes, else refused and recorded (§3.3); the Share metering template, without personal data. Probe: acknowledgement within 1 s |
-| **Metering hand-off** | Kafka, from `ingest_log`'s changefeed and the owner's direct publish | Per exporter, in sequence order: every batch, correction and supersession entry with its outcomes and commit timestamp; resolved markers. Consumer: attribution stage A |
+| **Flow-record ingestion protocol** | External protocol, to exporters | §3.1. At least once from the exporter, verbatim retransmission; each record's outcome is durable in two regions before the acknowledgement; an acknowledged record is never lost; identity per §3.2; duplicates acknowledged as such; rejections kept with their reason, a non-conforming payload (`no template` or `unparseable`) in the log always as identity, keyed digest and reason and nothing more; the payload, if kept, only in the personal-data store (`put_payload`) until an erasure request covering it is executed or its receipt day's expiry; keeping it not required: dropped beyond RFC-005's caps or when the store does not take it within `pd_put_timeout`, each drop counted and reported (§3.3; POL-19 v1.9, P3-S75); a batch holding one is acknowledged only after its put is answered or `keep_by` + ε (`pd_put_timeout`) passes, an unanswered put then withdrawn; corrections and superseding versions only from the producing exporter, a superseding version changing measured fields only, within the original's minutes, else refused and recorded (§3.3); the Share metering template, without personal data. Probe: acknowledgement within 1 s |
+| **Metering hand-off** | Kafka, derived by the relay from the self-outboxed `ingest_log` (RFC-006 §3.5), plus the owner's direct publish | Per exporter, in sequence order: every batch, correction and supersession entry with its outcomes and commit timestamp (a non-conforming payload by identity, keyed digest, reason and keep outcome only); per destination partition, resolved markers that are the minimum over every changefeed partition that can feed it, emitted after every such row is published (AI-27-3); never a delete event. Consumer: attribution stage A |
+| **Non-conforming drop alert and drop report** | Alert feed (RFC-006), derived by the relay from `ingest_log`'s `drop-alert` and `drop-count` rows; also read by the operator console | To network operations: at the first drop of an (exporter, hour, reason), an alert with the exporter, reason, identity and keyed digest; per exporter with drops, an hourly report of drops by reason, the `batch` sequence range covered and the withdrawals answered (was kept, was absent) (§3.3; P3-S75). Exactly one report per (exporter, hour), idempotent by it; never any payload |
 | **Catalogue** (link registry RFC-001) | Query and feed | §6. Products, account-product terms (`usage_rate_cap`), prices (every version published at least 1 min before its effective minute, B-AI-11) and corrections, weights, partner terms, probe designations; ordered per entity, bitemporal, never rewritten; resolved timestamps; every consumer records the catalogue position it used. Consumers: RFC-001, RFC-002, RFC-004, RFC-006, network operations |
 | **Unposted-usage feed** | Kafka, applied as entries in the account owner's log (RFC-002); semantics in headroom RFC-004's | Per (account, product), for the attachment set and every product with a usage line not fully posted: unposted usage `U(X)` and, for information, accrued reservation charges not yet posted, in micro-USD; the rating position; the ledger position `X`; the in-flight **usage batch** and its usage reduction `Δ_b` (§5.9). **No lateness bound**: RFC-004's F3 computes it (D-19-6). Absolute values, monotone positions: apply the latest whose `X` the applied ledger position has reached; subtract `Δ_b` once its movement is applied whole. Each application is acknowledged. At most one figure per account every 2 s (est.). Probe accounts get none |
-| **Charge-line feed** | Kafka, to settlement (RFC-004) | Two batch streams (§5.8; AI-19-1): **reservation batches** (reservation lines of one minute of one account, at most the movement limit, not gated, up to 8 in flight per account, a reservation's next minute only after its previous is acknowledged; one M4 movement each) and **usage batches** (every other line, at most the movement limit, gated by publish before emit when holding a usage line, one in flight per account, posted whole in one movement). Each item: kind (reservation, usage, fee; or cost line: carried excess, dearer path, Share-borne fee), source reference (§5.8), account, reservation or product and **route** (after a move, the path's catalogue route, §5.2), minute, amendment sequence, amount (signed micro-USD), **payer** (the account; Share for cost lines and Share-borne fees), reason and its details, **cause** of a downward amendment where §5.7 gives one (for a cost line, whether it is a supplier's own reduction, §5.5), trigger reference (correction, attribution, reversal, superseded record), and the catalogue position of its prices and **weights version**; plus affected marks as annotations. Originals per reservation in strictly increasing minutes; at least once until acknowledged; each line idempotent by its source reference (an item resent has identical contents) |
+| **Charge-line feed** | Kafka, to settlement (RFC-004) | Two batch streams (§5.8; AI-19-1): **reservation batches** (reservation lines of one minute of one account, at most the movement limit, several for one account minute above it, each one movement (AI4-12), not gated, up to 8 in flight per account, a reservation's next minute only after its previous is acknowledged; one M4 movement each) and **usage batches** (every other line, at most the movement limit, gated by publish before emit when holding a usage line, one in flight per account, posted whole in one movement). Each item: kind (reservation, usage, fee; or cost line: carried excess, dearer path, Share-borne fee), source reference (§5.8), account, reservation or product and **route** (after a move, the path's catalogue route, §5.2), minute, amendment sequence, amount (signed micro-USD), **payer** (the account; Share for cost lines and Share-borne fees), reason and its details, **cause** of a downward amendment where §5.7 gives one (for a cost line, whether it is a supplier's own reduction, §5.5), trigger reference (correction, attribution, reversal, superseded record), and the catalogue position of its prices and **weights version**; plus affected marks as annotations. Originals per reservation in strictly increasing minutes; at least once until acknowledged; each line idempotent by its source reference (an item resent has identical contents) |
 | **Quarantine report feed** | Kafka, to the operator console, notifier, reporting, RFC-006 alerting | Per quarantine entry and aggregated per (link, minute): bytes, observation point, reason, state (quarantined, attributed, reversed, superseded, with the entry that replaces a superseded one, §4.2); per supplier only its own links, no buyer data; never probe traffic |
 | **Breach report feed** | Kafka, to the same consumers, for finance and risk | Lateness breaches (exporter, identity, lateness), attribution-lag breaches (exporter, identity, lag), superseding versions that raise bytes; per minute and serving region, whether every accepted record was counted in time |
 | **Evidence query** | Query, served by RFC-006's history | §3.7: every accepted record of a reservation or link in a minute range, with its versions (accepted and refused), for the retention period; rejected non-conforming payloads by identity, keyed digest and reason, the payload itself only through the personal-data store while it exists (§3.3). Consumers: operations, support, finance, each read recorded for its role (POL-32) |
@@ -1555,18 +1690,18 @@ Schemas and wire formats belong to the delivery phase.
 
 | Contract | Owner | What this RFC needs from it |
 |---|---|---|
-| **Reservation lifecycle feed** | RFC-002 | Per reservation: route, product, legs, window, each part's rate over its effective intervals and its locked price (with the time it was locked), the deciding entry's commit timestamp, every change's effective minute, shortens with the new end, the end, its effective minute and its **end cause**, including "ended at its window's end" (§5.4), each fee shown at booking with its kind (plain, or minimum-term with the term's end) and, for a minimum-term fee, whether the offer showed it due at the window's end (P3-S74), using RFC-002 §13.1's events: **confirmed**, **part added**, **rate decreased**, **cut** (link, reduction, target rate or none, `T_eff`: `none` is the reduction's final step leaving the reservation uncut), **shortened** (with the fee due), **moved** (the path's catalogue route ID, shown price, minute; AI-19-2), **price step** (price version, minute, recorded at the announcement), **ended** (cause, minute, fee due and payer), **partner leg affected**, partner-leg affected status, whether the account is a probe account. **Effective-time closure**: the changefeed's resolved timestamp, every entry's effective time at or after its commit timestamp except a cut's `T_eff`, causes known in advance recorded before their minute (RFC-000 §4.5 and §8, revision 4.2; AI3-2, A-3, AI-17-3). **Residue events** (POL-28; AI3-4) |
+| **Reservation lifecycle feed** | RFC-002 | Per reservation: route, product, legs, window, each part's rate over its effective intervals and its locked price (with the time it was locked), the deciding entry's commit timestamp, every change's effective minute, shortens with the new end, the end, its effective minute and its **end cause**, including "ended at its window's end" (§5.4), each fee shown at booking with its kind (plain, or minimum-term with the term's end) and, for a minimum-term fee, whether the offer showed it due at the window's end (P3-S74), using RFC-002 §13.1's events: **confirmed**, **part added**, **rate decreased**, **cut** ((link, reduction), `T_eff`, the applied target as minute pieces `[(from, r)…]` or `none`, the reduction's final step leaving the reservation uncut, and the resulting part rates over their effective intervals; RFC-000 revision 4.3, AI-26-2), **shortened** (with the fee due), **moved** (the path's catalogue route ID, shown price, minute; AI-19-2), **price step** (price version, minute, recorded at the announcement), **ended** (cause, minute, fee due and payer), **partner leg affected**, partner-leg affected status, whether the account is a probe account. **Effective-time closure**: the resolved marker of the account's destination partition, the minimum over every changefeed partition that can feed it, emitted once the relay has published every such row (AI-27-3); every entry's effective time at or after its commit timestamp except a cut's `T_eff`, causes known in advance recorded before their minute (RFC-000 §4.5 and §8, revisions 4.2 and 4.3; AI3-2, A-3, AI-17-3). **Residue events** (POL-28; AI3-4) |
 | **Usage-applied acknowledgement** | RFC-002 (emitted by the account owner) | Through which rating position the account owner has applied unposted usage, with the applying entry's commit timestamp (AI3-3) |
-| **Link schedule feed** | RFC-001 | Affected flags per reservation, leg and minute, as a projection of the link log; `CAPACITY_CHANGED(reduction announced, R, T_eff)`, `REDUCTION_EFFECTIVE` (the affected set in chunks `i of n`, extension chunks after `REDUCTION_SET_EXTENDED`), `CUT_DECIDED` and `REDUCTION_FINAL`; per-link `feed_seq` and `CLOSED(t, feed_seq)` markers (RFC-000 §8 revision 4.2; RFC-001 revision 4 §11.1; AI-17-2, AI-17-3), which bound reservation closure with the two holds of §5.6. Maintenance bookings are not reservations |
+| **Link schedule feed** | RFC-001 | Affected flags per reservation, leg and minute, as a projection of the link log; `CAPACITY_CHANGED(reduction announced, R, T_eff)`, `REDUCTION_EFFECTIVE` (the affected set in chunks `i of n`, extension chunks after `REDUCTION_SET_EXTENDED`), `CUT_DECIDED` and `REDUCTION_FINAL`; per-link `feed_seq` and `CLOSED(t, feed_seq)` markers, `t` the per-destination minimum over every changefeed partition that can feed the link's destination partition, emitted after every such row is published (RFC-000 §8 revisions 4.2 and 4.3; RFC-001 revision 4 §11.1; AI-17-2, AI-17-3, AI-27-3), which bound reservation closure with the two holds of §5.6. Maintenance bookings are not reservations, and maintenance trimmed at a reduction's `T_eff` (v1.9) is not rating's input |
 | **Equivalent-path source** | Routing (out of scope), through RFC-002 | Every offered path is a catalogue route with split weights (AI-19-2); the catalogue registers it before it is offered (§6.1) |
 | **Posting acknowledgement** | RFC-004 (settlement) | Per line: posted, with the ledger position, or excluded and why (AI3-3) |
 | **Ledger movement feed** | RFC-004 | For the account owner's exact pairing (§5.9): per movement, the usage batch it posted and whether it posted it whole (AI3-10; "whole" over usage batches only, AI-19-1). For the cold re-rate (§5.10): per line its postings, amendment sequences and modes |
 | **Exposure parameters (F3)** | RFC-004 | Computes the lateness bound by §5.9's definition: the 430 s window and the price span `[now − 370 s, now + 60 s]` at the defaults (D-19-6) |
 | **Attribution keys**, with the observation point → link mapping | Provisioning (Problem 5) | §4.1, published before traffic flows |
 | **Principal and authorisation context; operator action envelope; audit record; payload encryption** | RFC-005 | Exporter credentials, each naming its exporter's owner (a supplier or Share); roles: finance for corrections, attributions, reversals and `usage_rate_cap`, commercial for prices, weights and partner terms, with the approver; audit fields in each command's entry; pseudonymous principals; HSM-held keys for every payload |
-| **Personal-data store** | RFC-005 (identity and access), C12 revision 4 | `put_payload(record_id, exporter, supplier, account?, received_at, payload)` (§3.3): idempotent by `record_id`, into the bucket (exporter, UTC hour of `received_at`), answered kept (durable, naming the bucket used) or not kept (RD-1 caps: 10/s per exporter, 1,000/s overall); the payload key wrapped under the account key, the bucket key and the day expiry key; expiry by the receipt day's expiry key, unrecoverable in every copy, backups and escrow included, at most `dispute_window` + 7 days after receipt (RFC-000 §8 revision 4.2, **expire**; AI3-13 resolved); erasure of every payload an erasure request covers (POL-19 v1.8: a request naming the exporter and a period including the receipt, by the bucket keys of those exporter-hours; or a user of the exporter's supplier, D-4); `get` by the console with a read grant and purpose "flow-record dispute", audited |
-| **Key service** | RFC-005 | A per-exporter **digest key** in the Kenyan HSMs for the keyed digest of a non-conforming payload, kept for the retention period (§3.3) |
-| **Substrate conventions; history; alert feed; probe designation semantics** | RFC-006 | As RFC-000 §8 revision 4.2, including slot batch transactions (AI3-11, resolved), generations and per-stream sequences, and the sealed-segment layout of §3.7. Probe accounts, one per account slot (X2-N1, POL-06; about 16,384 at the design load, RFC-000 revision 4.2), are designated in the catalogue (§6.1) and get no charges or figures, whatever their number |
+| **Personal-data store** | RFC-005 (identity and access), C12 revision 5; RFC-000 revision 4.3 §8 (erratum pending, AI-R5-6) | `put_payload(record_id, exporter, supplier, account?, received_at, keep_by, payload) → kept(bucket) \| not kept(cap) \| not kept(late)` (§3.3), committing only at or before `keep_by` − ε, for non-conforming data (rejected `no template` or `unparseable`; AI3-14 resolved): idempotent by `record_id`, into the bucket (exporter, UTC hour of `received_at`), answered `kept(bucket)` (durable in two regions, naming the bucket used, the first put's for a repeat) `not kept(cap)` (RD-1 caps: 10/s and 256 KB/s per exporter, 1,000/s and 4 MB/s overall, 64 KB a payload) or `not kept(late)` (nothing kept); `withdraw_payload(record_id) → withdrawn(was kept \| was absent)` for every put unanswered by `keep_by` + ε, deleting any item and tombstoning the `record_id` until the receipt day's expiry, idempotent, retried until answered; the payload key wrapped under the account key, the bucket key and the day expiry key; expiry by the receipt day's expiry key, unrecoverable in every copy, backups and escrow included, at most `dispute_window` + 7 days after receipt (RFC-000 §8 revision 4.2, **expire**; AI3-13 resolved); erasure of every payload an erasure request covers (POL-19 v1.8: a request naming the exporter and a period including the receipt, by the bucket keys of those exporter-hours; or a user of the exporter's supplier, D-4); `get` by the console with a read grant and purpose "flow-record dispute", audited |
+| **Key service** | RFC-005 revision 5 (§10, C12) | `digest_key(exporter) → (version, key)`: one HMAC-SHA-256 key per (exporter, version), generated in the Kenyan HSMs, released wrapped to ingestion's workload identity (and to the evidence query for a dispute check), kept for the retention period; ingestion records the version with each digest (§3.3) |
+| **Substrate conventions; history; alert feed; probe designation semantics** | RFC-006 | As RFC-000 §8 revisions 4.2 and 4.3 and RFC-006 revision 4, including slot batch transactions (AI3-11, resolved), generations and per-stream sequences, **self-outboxed** `ingest_log` with its three named streams, 25 h GC and the truncator's consumer-window rule (RFC-006 §3.5), **slot groups** (stage B *i*, rating *i*) acquired, handed off and taken over together (RFC-006 §7.1), per-destination closure markers (AI-27-3), no `COMMIT` timeout (AI6-6), the alert feed to network operations for the drop alert and report, and the sealed-segment layout of §3.7. Probe accounts, one per account slot (X2-N1, POL-06; about 16,384 at the design load, RFC-000 revision 4.2), are designated in the catalogue (§6.1) and get no charges or figures, whatever their number |
 
 ### 8. Parameters
 
@@ -1582,8 +1717,10 @@ design parameters of this RFC, changeable without a change of mechanism.
 | Lateness bound window (computed by RFC-004) | `max_lateness` + `flow_active_timeout` + 60 s + `attribution_lag_max` + admission's 60 s recovery time + 60 s = 430 s; price span the last 370 s and the next 60 s | POL-14, POL-06 |
 | `erasure_max` | 30 days from the request | POL-19 |
 | Non-conforming payload deadline | `dispute_window` + 7 days after receipt (the receipt day's expiry key destroyed at that day's start + that) | POL-19; RFC-005 |
-| `payload_put_limit`, `payload_put_global` | 10/s per exporter, 1,000/s overall | RFC-005 (RD-1) |
-| `pd_put_timeout` | 500 ms (est.) | This RFC |
+| `payload_put_limit`, `payload_put_global`; `payload_bytes_limit`, `payload_bytes_global`, `payload_max_bytes` | 10/s per exporter, 1,000/s overall; 256 KB/s per exporter, 4 MB/s overall, 64 KB a payload | RFC-005 (RD-1, revision 5) |
+| `pd_put_timeout`; `keep_by` | 500 ms (est.); the put's issue time + `pd_put_timeout` − ε (ε = `max_offset`, 100 ms) | This RFC; RFC-005 C12 |
+| Pending-withdrawal alert | 10 min (est.) | This RFC |
+| Drop report hour; idle-slot report flush | 1 h (UTC hour of commit); at the hour's end + 1 min (est.) | This RFC (P3-S75) |
 | `approval_expiry` | 72 h (applied by the operator console) | POL-32 |
 | `ingest_retry_timeout`, `epoch_jitter`, `wrap_slack`, `future_skew_max` | 2 s, 2 s, 10 min, 5 min (est.) | This RFC |
 | Ingestion flush interval and size | 20 ms, 256 KB (est.) | This RFC |
@@ -1615,7 +1752,8 @@ Each cites the scenario it serves (docs/README.md conventions).
 | Corrections and supersessions: a correction and a supersession from the producing exporter, each sent three times; another exporter's and an operator's attempt; a supersession after the window | P3-S30, P3-S66 |
 | Supersession scope: versions changing bytes and packets, an end time within the minute, times moved into another minute, a service-tag field, the observation point; then a version 2 that moves outside the original's minutes after a version 1 that narrowed them; only the first two accepted, refusals recorded, the original's charge untouched by the refused ones | P3-S72 |
 | Supersession dispositions: originals bound, held pending, quarantined, attributed by finance and reversed, each superseded; the version is bound to the same binding after a provisioning correction of it, quarantined in the quarantined one's place (0.5 GB of 1 GB, nothing billed), charged to the attribution's account, uncharged after the reversal; a later attribution selects the version's entry | P3-S73, P3-S66 |
-| Non-conforming payloads: a template declaring source addresses, data sets sent with it anyway, and an unparseable tail, with marker addresses; scan every log table, topic, sealed segment, application log and trace for the markers (none); the identity, keyed digest and reason present; the payload readable through the console; unrecoverable after an erasure request naming its exporter and period, and after one by a user of its supplier, and, with the clock advanced, after its receipt day's expiry from the live store and a restored backup; kill the owner between put and commit and check the resend; exceed the per-exporter cap ("not kept: cap", digest kept); make the store unavailable and check that conforming batches and the probe are unaffected and the batch is acknowledged within 1 s | P3-S71 |
+| Non-conforming payloads: a template declaring source addresses, data sets sent with it anyway, and an unparseable tail, with marker addresses; scan every log table, topic, sealed segment, application log and trace for the markers (none); the identity, keyed digest and reason present; the payload readable through the console; unrecoverable after an erasure request naming its exporter and period, and after one by a user of its supplier, and, with the clock advanced, after its receipt day's expiry from the live store and a restored backup; kill the owner between put and commit and check the resend; exceed the per-exporter cap ("dropped: cap", identity, keyed digest and reason kept); make the store unavailable and check that conforming batches and the probe are unaffected and the batch is acknowledged within 1 s | P3-S71 |
+| Drops counted and reported: one exporter sends non-conforming payloads at 50/s for 10 min (over the 10/s cap), one payload of 70 KB, then with the store stalled for 5 min, and once with the store committing a put whose answer is dropped; scan the store and every other copy for the dropped payloads (none once every withdrawal is answered); each drop's `batch` entry holds identity, keyed digest with its key version, reason and its keep outcome (cap, not taken in time, or unanswered with a `withdrawn` entry "was kept"); network operations gets one immediate alert per (exporter, hour, reason) and one hourly report whose counts equal the drop outcomes in the log; kill the ingestion lease holder just after the hour's end and before a withdrawal is answered, and check the report is written once and the withdrawal resent | P3-S75 |
 | Attribution and reversal: attribute quarantined traffic, reverse it, try to attribute it again, and repeat each command with its source reference; once at the window's boundary | P3-S27, P3-S65, P3-S70 |
 | Prices: an open-ended change with a part added after the announcement; a `usage_price` version for each kind of traffic with too little notice, refused at approval; a price and a weight approved by the requester, refused | P3-S64, P3-S69, X1-S31 |
 | Fees: shortens into and past a minimum term, then a cancellation, one fee line at most; a shorten of a reservation with a plain cancellation fee, none; a 10-day and a 30-day window ending on a 30-day minimum term, the first charged at its end, the second not; a 10-day window extended to 40 days, none; a 10-day window shortened to 5 days, charged once at the shorten | P3-S63, P3-S74, P3-S60 |
@@ -1629,7 +1767,7 @@ Each cites the scenario it serves (docs/README.md conventions).
 |---|---|
 | Exactly once for records (P3-N3) | One transaction per slot batch checks and inserts each identity with the append; range sets make 7 years of identities a few hundred MB (est.), so the check is in memory at 600,000 records/s; identity survives wraps and restarts by construction |
 | Every received record kept (P3-N7) | Every outcome, rejections, duplicates, corrections and superseding versions included, in a two-region insert-only table before the acknowledgement, sealed under retention lock; no head-of-line blocking; only the producing exporter corrects, and only measured fields, so a correction cannot move traffic between accounts, reservations or minutes |
-| No personal data outside the erasable store (P3-N7, X1-N11) | A non-conforming payload never reaches a log, topic or segment: only its identity, keyed digest and reason do; the payload is in the personal-data store, in an (exporter, hour) bucket, until an erasure request covering it or its receipt day's expiry, which reaches backups and escrow; ingestion's availability and its 1 s acknowledgement do not depend on the store |
+| No personal data outside the erasable store (P3-N7, X1-N11) | A non-conforming payload never reaches a log, topic or segment: only its identity, keyed digest and reason do; the payload, if kept, is in the personal-data store, in an (exporter, hour) bucket, until an erasure request covering it or its receipt day's expiry, which reaches backups and escrow; a dropped one is nowhere, counted and reported from the log; ingestion's availability and its 1 s acknowledgement do not depend on the store |
 | Exact charges in any order (P3-N3, P3-N5, POL-11) | Exact rational accumulation (ELA) and one rounding per line, by one `bigint` code path; amendments restate the total |
 | Exactly once for lines (P3-N2) | Deterministic source references fixed in rating's two-region log before emission; ledger deduplication per line; watermarks per reservation |
 | Amended, never rewritten (P3-N8) | Every change is a new amendment with one reason and, when downward and caused, its cause; late traffic only ever increases a line |
@@ -1657,7 +1795,7 @@ Each cites the scenario it serves (docs/README.md conventions).
 | **Kafka as the record of ingestion** (acknowledge on Kafka's acks; Kafka transactions or a stream processor's checkpoints for exactly once) | RFC-000 makes Kafka transport, not record (§5.5): a fact is durable when the database commits it. Acknowledging on Kafka would tie X2-S14's two-region durability to Kafka's in-sync replicas, and the 7-year identity check would still have to be atomic with the append somewhere. The database transaction does both at once |
 | **A per-partition transaction for every batch** | About 10⁵ transactions/s for these components alone (est.); slot batch transactions carry the same entries in about 24,000/s with the same single-writer and contiguity guarantees (AI3-11) |
 | **A separate outbox table for the metering hand-off** | Writes every accepted record twice; the insert-only `ingest_log` is already a committed feed row, so its changefeed is the outbox |
-| **Stage B to rating over Kafka** | One more hop (about 50 ms p99, about 1 s on the relay path) on the 10 s headroom path, for two owners whose slots placement keeps in one process anyway |
+| **Stage B to rating over Kafka** | One more hop (about 50 ms p99, about 1 s on the relay path) on the 10 s headroom path, for two owners whose slots form one slot group, held by one process, anyway (RFC-006 §7.1) |
 | **Unposted usage as a stream of deltas** | A lost or repeated delta would skew headroom permanently; absolute values at positions are idempotent and reproducible |
 | **Unposted usage without the ledger position X** | The account owner could apply a figure that has already dropped a line whose posting it has not applied, overstating headroom (AI3-3) |
 | **One mixed charge-line batch per tick** (revision 3) | Settlement posts reservation lines and usage lines in different movements, so the batch is never posted whole and the in-flight usage is counted twice every minute (F3-04); gating reservation lines on a figure also delayed them for nothing |
@@ -1699,7 +1837,8 @@ Each cites the scenario it serves (docs/README.md conventions).
 | R3-13 | **Usage margin.** The usage line's design point is about 258 s against 300 s; a regional failover or a slow Kafka hop consumes the margin | Measured; `usage_close_margin` can shrink toward `attribution_lag_max`; failover minutes in a declared disaster are outside the measure |
 | R3-14 | **Kafka consumer lag** on the attribution path turns into attribution-lag breaches | Consumer lag alerted per partition; hot standbys consume the same partitions; breaches are reported, never silent |
 | R3-15 | **Payload expiry depends on the store's keys.** A day expiry key that leaked into a backup would let a payload outlive `dispute_window` + 7 days | RFC-000 §8 (revision 4.2) and RFC-005 hold expiry keys only in the HSMs, never escrowed or backed up; the test of §9 restores a backup past the expiry |
-| R3-16 | **A misbehaving exporter's non-conforming flood** | RFC-005's caps (10 puts/s per exporter, 1,000/s overall): beyond them only the digest is kept and the supplier is alerted; a batch waits at most `pd_put_timeout` |
+| R3-16 | **A misbehaving exporter's non-conforming flood** | RFC-005's caps (10 puts/s per exporter, 1,000/s overall): beyond them the payload is dropped, its identity, keyed digest and reason kept, counted and reported to network operations (§3.3), and the store alerts the supplier; a batch waits at most `pd_put_timeout` |
+| R3-21 | **A withdrawal pending while the store is down**: a payload committed by a put whose answer was lost exists, in the erasable store only, until `withdraw_payload` is answered | Bounded by the store's recovery; retried until answered and rebuilt after a takeover from the log; alerted after 10 min; meanwhile under its day expiry and every covering erasure (POL-19's restriction holds). The earlier race (a store commit after the caller stopped waiting) is removed by `keep_by` (AI3-15) |
 | R3-17 | **A larger lateness bound** (430 s, was 370 s) deducts 60 s more of `usage_rate_cap` from every account's headroom (7,500 micro-USD at P3-S37's price) | Accepted by the requirements (Q-1 as decided in v1.8); finance can lower `usage_rate_cap` per account and product |
 | R3-18 | **Closure held by an open reduction**: a reservation in a POL-07 cut's affected set accrues no posted line from `T_eff` until the link's final step is applied | RFC-001's final step is normally seconds after `T_eff`; a hold older than 60 s is alerted; held minutes past the 2 min target count against X2-S13 and are visible |
 | R3-19 | **ELA size**: 450 B a line assumes about 50 denominators | Measured (§9); `amendment_hot_window` shrinks if larger; the worst case per line is about 1 MB |
@@ -1743,12 +1882,22 @@ decides all six ([review 22](../reviews/22-requirements-amendments-from-c3-revie
 | RQ-19-4 | Downward change of a cost Share has paid | **Resolved** (v1.8): final, except a supplier's own reduction when its exporter erred (POL-23; P4-S116) | §5.5 |
 | RQ-19-5 | Time span of the lateness bound's price | **Resolved** (v1.8): the highest price in force from the window less the enforcement target before now to the enforcement target after (POL-14, P3-N10) | §5.9 (RFC-004 computes) |
 
-New in this revision. It does not block the design; it is decided provisionally as stated
-and raised for the requirements owner.
+Revision 4 raised RQ3-17; `requirements-v1.9` decides it
+([review 28](../reviews/28-requirements-amendments-from-c3-round-2.md), RQ3-17 row and its
+decision 6).
 
-| # | Issue | Proposed amendment | Reading adopted meanwhile |
+| # | Issue | Resolution | Applied in |
 |---|---|---|---|
-| RQ3-17 | **Whether a non-conforming payload must be kept.** P3-S71 says "the payload itself is kept only in the erasable personal-data store", which reads as a restriction on where it is kept, but can be read as an obligation to keep every one. RFC-005's RD-1 keeps none beyond 10/s per exporter and 1,000/s overall, and this RFC keeps none when the store does not answer within `pd_put_timeout` | P3-N7 / POL-19: "a non-conforming payload, if kept, is kept only in the erasable personal-data store; beyond stated caps, or while the store is unavailable, only its identity, digest and reason are kept" | The restriction reading: the identity, keyed digest and reason are always kept, the payload within the caps and when the store answers; each payload not kept is counted and alerted |
+| RQ3-17 | Whether a non-conforming payload must be kept | **Resolved** (v1.9, review 28) as revision 4 read it, the restriction reading: identity, keyed digest and reason always kept, nothing more of the payload outside the erasable store; the payload, if kept, only there; keeping it not required, dropped beyond the design's caps (RFC-005 RD-1, review 28 decision 6) or when the store does not take it in time, never kept elsewhere, each drop counted and the count reported to network operations (POL-19, P3-N7; P3-S71 reworded, new P3-S75) | §1.1, §3.3, §3.4, §7, §8, §9 |
+
+No new requirements issue in this revision. The other `requirements-v1.9` changes were
+checked against these components: X2-N1's `slot_probe_limit` (1 s) applies to the slot
+rule of admission and the wallet only, not to usage ingestion, whose probe limit stays
+1 s (§3.6); POL-06's other text is unchanged for ingestion; POL-07's maintenance outside the
+committed rate, trimmed at a reduction's effect, and the cut rate counted after a notice's
+end are the link's (RFC-001), reaching rating only as affected marks and cut events (§5.2);
+POL-32's recovery hold (no exporter credentials issued in it) is RFC-005's, and an exporter
+credential, whenever issued, still names its owner as §3.3 needs.
 
 ## Architecture issues
 
@@ -1785,11 +1934,18 @@ resolves all three ("Revision 4.2 errata").
 | AI-19-1 | Charge-line batches and settlement's movements disagreed | **Resolved**: reservation batches and usage batches; usage batches at most the movement limit, posted whole; "whole" and the reduction over usage batches only (§6, §8) | §5.8, §5.9, §7 |
 | AI-19-2 | No route for a moved reservation's split | **Resolved**: moves carry the path's catalogue route ID and shown price; every offered path is a catalogue route with split weights (§8) | §5.2, §5.5, §6.1, §7 |
 
-New in this revision, raised for RFC-000's owner.
+Revision 4 raised AI3-14; RFC-000 revision 4.3 resolves it ("Revision 4.3 errata", AI3-14
+row, with AI-R5-5).
 
-| # | Issue | Proposed amendment | Reading adopted meanwhile |
+| # | Issue | Resolution in RFC-000 revision 4.3 | Used in |
 |---|---|---|---|
-| AI3-14 | **RFC-000 §8's personal-data store row names `put_payload` only for data sets rejected "no template"**, while this RFC also puts an `unparseable` remainder (whose content cannot be shown free of personal data, §3.3), and the row does not name the exporter argument RFC-005 revision 4 adds | RFC-000 §8, personal-data store row: "metering ingestion's `put_payload` of non-conforming payloads (rejected 'no template' or 'unparseable'), with the exporter, into a payload bucket per exporter and hour" | §3.3 puts both, with the exporter; RFC-005's interface accepts any payload from ingestion |
+| AI3-14 | RFC-000 §8 named `put_payload` only for data sets rejected "no template", without the exporter argument | **Resolved**: `put_payload(record_id, exporter, supplier, account?, received_at, payload) → kept(bucket) \| not kept(cap)` for non-conforming data (rejected "no template" or "unparseable"), into a payload bucket per exporter and hour; on `not kept(cap)` the log keeps identity, digest and reason only (§2, §3, §8) | §1.1, §3.3, §7 |
+
+Raised in this revision for RFC-000's owner, and decided during it.
+
+| # | Issue | Resolution | Used in |
+|---|---|---|---|
+| AI3-15 | **`put_payload` had no deadline**: P3-S75 requires a payload the store does not take in time to be kept nowhere, but the store could commit after ingestion stopped waiting | **Decided by the coordinator (binding)** and specified in RFC-005 revision 5 C12: `keep_by` with `not kept(late)` (no commit after `keep_by` − ε), plus `withdraw_payload(record_id)` for every put unanswered by `keep_by` + ε, which deletes any committed item and blocks a later put; RFC-000 §8's erratum is pending under RFC-005's AI-R5-6. Adopted here; the `late-kept` interim is withdrawn | §3.3 (steps 2, 3, 5), §3.4 (`withdrawn`), §7, §8, R3-21 |
 
 ## Traceability
 
@@ -1868,10 +2024,11 @@ mapped to the section of this RFC that satisfies it, or to the RFC that does.
 | P3-S68 | §2 (lateness), §5.6, §5.9 |
 | P3-S69 | §6.2 |
 | P3-S70 | §2 (`dispute_window`), §6.3 |
-| P3-S71 | §3.3 (non-conforming payloads: identity, keyed digest and reason in the log; payload put to the personal-data store in an (exporter, hour) bucket; erasure requests covering it; day-key expiry in every copy), §3.4, §3.7; the store's erasure and expiry RFC-005 |
+| P3-S71 | §3.3 (non-conforming payloads: identity, keyed digest and reason in the log and nothing more; the payload, if kept, put to the personal-data store in an (exporter, hour) bucket; erasure requests covering it; day-key expiry in every copy), §3.4, §3.7; the store's erasure and expiry RFC-005 |
 | P3-S72 | §3.1 (measured fields, attribution keys), §3.3 (supersession checks) |
 | P3-S73 | §4.2 (the original's disposition per minute: quarantined in its place), §4.4 |
 | P3-S74 | §5.4 (a booked window ending inside a minimum term: the fee shown on the offer) |
+| P3-S75 | §3.3 (dropped beyond RFC-005's count, byte and size caps, or when not taken by `keep_by` (`not kept(late)`) or unanswered and then withdrawn by `withdraw_payload`: identity, keyed digest and reason kept; drops counted from the log, alerted and reported hourly to network operations), §3.4 (`drop-alert`, `drop-count`), §7; the caps, `keep_by` and the withdrawal tombstone RFC-005 (RD-1, C12 revision 5) |
 | X2-S02 | §3.6 (ingestion may lag, loses nothing) |
 | X2-S04 | §1.2, §3.6, §4.5, §5.11; the load test is RFC-006's |
 | X2-S09, X2-S12, X2-S14 (accepted usage records) | §3.1, §3.5, §3.6; topology RFC-006 |
@@ -1971,3 +2128,28 @@ What changed from revision 3, and why. Driven by [review 19](../reviews/19-rfc-0
 | V-2 (review 24) | The kept answer naming the bucket marked as an interface point for RFC-005 C12 (completes F3-20) | §3.3 |
 | V-3 (review 24) | R3-13 design point 258 s | Risks |
 | RFC-001 revision 4 (§11.1 schedule feed) | Closure uses per-link `CLOSED(t, feed_seq)`, and the two holds per open reduction: every reservation on the link held at `T_eff` until every `REDUCTION_EFFECTIVE` chunk is held; the affected set held until `REDUCTION_FINAL` and its cut is applied; `CUT_DECIDED` as a check | §5.6 |
+
+## Revision 5 resolution
+
+What changed from revision 4, and why. Revision 4 was accepted at C3 (fix verification
+24); this revision reopens it as a draft because `requirements-v1.9` adds P3-S75, which
+revision 4 did not satisfy, and RFC-000 revision 4.3 and RFC-006 revision 4 change
+contracts this RFC uses. Driven by `requirements-v1.9`
+([review 28](../reviews/28-requirements-amendments-from-c3-round-2.md); impact P3-N7,
+P3-S71, P3-S75, X2-N1, POL-06, POL-07, POL-19, POL-32), RFC-000 revision 4.3 ("Revision 4.3
+errata", RFC-003 interface row) and RFC-006 revision 4.
+
+| Finding or issue | Change | Where |
+|---|---|---|
+| RQ3-17 (resolved, v1.9, review 28; POL-19, P3-N7; P3-S71 reworded) | Restriction reading confirmed: identity, keyed digest and reason always, nothing more; payload kept only if within caps and taken in time; RQ3-17 marked resolved | §1.1, §3.3, §7, Requirements issues |
+| P3-S75 (new, v1.9) | Drops (cap; not taken within `pd_put_timeout`) recorded per payload in the `batch` entry; counted from the log; an immediate `drop-alert` per (exporter, hour, reason) and an hourly `drop-count` report to network operations, derived by the relay from `ingest_log`, exactly once per (exporter, hour) across takeovers; crash points; parameters; test | §1.2, §3.3, §3.4, §7, §8, §9, Traceability |
+| AI3-14 (resolved, RFC-000 4.3, with AI-R5-5) | `put_payload … → kept(bucket) \| not kept(cap)` for `no template` and `unparseable`, cited as RFC-000 §8 states it; AI3-14 marked resolved | §1.1, §3.3, §7, Architecture issues |
+| RFC-000 4.3 AI-27-3 (per-destination closure) | Every closure (reservation, link, catalogue, stage A watermark) relies only on the destination partition's resolved marker, the minimum over every changefeed partition that can feed it, emitted after every such row is published; rating never combines raw changefeed timestamps | §1.1, §4.2, §5.6, §6.4, §7 |
+| RFC-000 4.3 AI-26-2 (cut targets as minute pieces) | Cut events carry (link, reduction), the applied target as minute pieces or `none`, and the resulting part rates; rating accrues the part rates, checks them against the `min` of the targets per minute, alerts on a mismatch; `hold_2` waits for the applied minute-piece target | §5.1, §5.2, §5.6, §7 |
+| RFC-000 4.3 AI4-12 (split reservation batches) | Already designed (several reservation batches per account minute above `L`, disjoint reservations); now cited, each batch one movement | §5.8, §7 |
+| RFC-000 4.3 B-AI-11 (price lead time) | Confirmed: every price version published at least 1 min before its effective minute, refused otherwise, with per-destination resolved markers on the catalogue feed | §6.2, §6.4 |
+| RFC-006 rev 4 §3.5 (self-outboxed log) | `ingest_log` declared self-outboxed with three named streams (hand-off, drop alert, drop report); 25 h GC; truncation outside the consumer window; delete events dropped; sealing by follower reads, not the changefeed | §1.1, §3.4, §3.6, §3.7, §7 |
+| RFC-006 rev 4 §7.1 (slot groups) | Stage B *i* and rating *i* are a slot group, acquired, handed off and taken over together; one standby process per role; in-process hand-off resumes from `attr_b_log` after a takeover | §1.1, §4.3, §5.12, §7 |
+| X2-N1, POL-06 (v1.9 `slot_probe_limit`) | Checked: the slot rule covers admission and the wallet; ingestion's probe limit stays 1 s | Requirements issues |
+| POL-07 (v1.9: maintenance outside the committed rate and trimmed at `T_eff`; the cut rate counted after a notice's end), POL-32 (v1.9 recovery hold) | Checked: the link's and RFC-005's; no effect on metering, attribution or rating beyond affected marks and cut events | §5.2, §7, Requirements issues |
+| AI3-15 (raised and decided in this revision); RFC-005 revision 5 C12 | `put_payload` with `keep_by` and `not kept(late)`; `withdraw_payload` for every put unanswered by `keep_by` + ε, recorded in a `withdrawn` entry, rebuilt and resent after a takeover; the `late-kept` interim withdrawn; byte caps (256 KB/s per exporter, 4 MB/s overall) and the 64 KB per-payload cap (over it: dropped, cap, counted); digest keys per (exporter, version) via `digest_key`, the version recorded with the digest; R3-21 restated as a pending withdrawal | §1.2, §3.3, §3.4, §7, §8, §9, R3-21, Architecture issues |
