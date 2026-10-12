@@ -2,7 +2,7 @@
 
 | | |
 |---|---|
-| Status | **Accepted, revision 5.** Accepted at C3 on [fix verification 29](../reviews/29-rfc-003-fix-verification.md) (W-1 … W-3 applied). Reopened from **Accepted, revision 4** (accepted at C3 on [fix verification 24](../reviews/24-rfc-003-fix-verification.md)) because its baseline moved under it: `requirements-v1.9` ([review 28](../reviews/28-requirements-amendments-from-c3-round-2.md)) decides this RFC's RQ3-17 (keeping a non-conforming payload is not required; caps and a slow store drop it, each drop counted and reported to network operations) and adds P3-S75, which revision 4 did not satisfy (drops were alerted, not counted and reported); and RFC-000 revision 4.3 ("Revision 4.3 errata", RFC-003 row) changes contracts this RFC consumes or provides (`put_payload … → kept(bucket) \| not kept(cap)`, AI3-14 resolved; cut targets as minute pieces, AI-26-2; per-destination feed closure, AI-27-3; split reservation batches, AI4-12; price lead time, B-AI-11), as does RFC-006 revision 4 (self-outboxed `ingest_log`; stage B and rating slots as slot groups). What changed is listed in "Revision 5 resolution" at the end. Revision 4 applied [review 19](../reviews/19-rfc-003-review.md) (F3-01 … F3-20; D-19-1, D-19-3 … D-19-8) on `requirements-v1.8` and RFC-000 revision 4.2; revision 3 rebased on `requirements-v1.7` and RFC-000 revision 4.1; revision 2 on `requirements-v1.6` and RFC-000 revision 4 (distributed SQL substrate, NestJS owners, Kafka); revision 1 was the rewrite on the accepted architecture (revision 3.2) |
+| Status | **Accepted, revision 5.** Accepted at C3 on [fix verification 29](../reviews/29-rfc-003-fix-verification.md) (W-1 … W-3 applied). Erratum 5.1: [review 32](../reviews/32-rfc-001-fix-verification.md) V-5 (late extension minutes already closed are amended), with V-3's closure note (offer-scoped cuts outside the holds). Reopened from **Accepted, revision 4** (accepted at C3 on [fix verification 24](../reviews/24-rfc-003-fix-verification.md)) because its baseline moved under it: `requirements-v1.9` ([review 28](../reviews/28-requirements-amendments-from-c3-round-2.md)) decides this RFC's RQ3-17 (keeping a non-conforming payload is not required; caps and a slow store drop it, each drop counted and reported to network operations) and adds P3-S75, which revision 4 did not satisfy (drops were alerted, not counted and reported); and RFC-000 revision 4.3 ("Revision 4.3 errata", RFC-003 row) changes contracts this RFC consumes or provides (`put_payload … → kept(bucket) \| not kept(cap)`, AI3-14 resolved; cut targets as minute pieces, AI-26-2; per-destination feed closure, AI-27-3; split reservation batches, AI4-12; price lead time, B-AI-11), as does RFC-006 revision 4 (self-outboxed `ingest_log`; stage B and rating slots as slot groups). What changed is listed in "Revision 5 resolution" at the end. Revision 4 applied [review 19](../reviews/19-rfc-003-review.md) (F3-01 … F3-20; D-19-1, D-19-3 … D-19-8) on `requirements-v1.8` and RFC-000 revision 4.2; revision 3 rebased on `requirements-v1.7` and RFC-000 revision 4.1; revision 2 on `requirements-v1.6` and RFC-000 revision 4 (distributed SQL substrate, NestJS owners, Kafka); revision 1 was the rewrite on the accepted architecture (revision 3.2) |
 | Satisfies | P3-S01 … P3-S75 (all 75). The metering, attribution and rating parts of X2-S02, X2-S04, X2-S09, X2-S10, X2-S11, X2-S12, X2-S13, X2-S14, X2-S19, X2-S20, X2-S22 and X2-S23 (the rest of each is RFC-006's). The validation parts of X1-S12 (finance: price corrections, quarantine attribution and its reversal, `usage_rate_cap`) and X1-S31 (commercial: prices, split weights, partner terms). The metering parts of X1-N11 (no personal data outside the erasable store: non-conforming payloads, P3-S71, P3-S75). Inputs to P4-S15 and P4-S16 (headroom itemised; the 430 s lateness bound is RFC-004's to compute, by the definition of §5.9), P4-S110 and P4-S115 (the dearer-path amount, against the buyer's charge as booked) and P4-S116 (a downward cost-line amendment with its cause); RFC-004 satisfies them. See the traceability table at the end |
 | Policies | POL-01, POL-06, POL-07, POL-08, POL-11, POL-12 (weights stored, applied by RFC-004), POL-13, POL-14, POL-15 (fee holds, by reference), POL-16, POL-17, POL-18, POL-19, POL-20, POL-23, POL-26 (by reference), POL-27, POL-28, POL-29, POL-30, POL-32, POL-33 |
 | Prior decisions | History log D10 (facts first), D18 (raw records, deduplicated by identity), D19 (amend, never edit; bound the exposure), D20 (price by usage time), D25 (amend by the line's new total), D27 (the bound covers the wait before charging). D26 (minute lock) and D28 (end-minute assignment) are **not** carried forward; see Competition. Review 19: D-19-1, D-19-3 … D-19-8 (binding) |
@@ -1250,11 +1250,24 @@ or after it. For each **open reduction** `R` of a link, known from its
 
 So no reservation closes past `T_eff` before the affected set is known, and no affected
 reservation closes past it before its cut is final and applied; the other reservations of
-the account and the link close as usual once `hold_1` is lifted. A late extension chunk
-(after `REDUCTION_SET_EXTENDED`) re-imposes `hold_2` on the reservations it adds; those
-cannot have closed past `T_eff`, since the extension precedes the link's next `CLOSED`
-marker past it. The held reservations' lines from `T_eff` are emitted when their hold is
-released, in minute order, in later reservation batches (§5.8).
+the account and the link close as usual once `hold_1` is lifted. **Offer-scoped cuts never hold closure** (RFC-001 review 32
+V-3): a reservation whose only cut parts on the link are parts kept for an open
+equivalent-path offer is not in `A_R` for the holds; its offer-scoped target is recorded by
+the account owner against the offer (`KEPT_FOR_OFFER`, no lifecycle **cut** event), so
+`hold_2` never waits on it. Its rate changes only through a move, which the lifecycle feed
+records before the move's minute and rating applies as any move (§5.2).
+
+**A late extension chunk** (after `REDUCTION_SET_EXTENDED`, a projection defect RFC-001
+alerts) re-imposes `hold_2` on the reservations it adds, but only from their current
+closure: those reservations were not in `A_R` when `hold_1` lifted, so minutes from
+`T_eff` may **already be closed and emitted at the uncut rate** (review 32 V-5; revision
+5's claim that they could not have closed is withdrawn). Rating does not assume them open:
+once the extension's cut for each added reservation is applied in its lifecycle, rating
+recomputes every already-closed minute from `T_eff` at the cut part rates and emits a
+reservation-line **amendment** for each line that changes (§5.7, reason "late POL-07 cut"),
+while minutes not yet closed are held by `hold_2` and emitted at the cut rate as originals.
+The held reservations' lines from `T_eff` are emitted when their hold is released, in
+minute order, in later reservation batches (§5.8).
 
 The closed times are the database's, not the owners': they advance while an account owner
 or a link schedule owner fails over, and stall only while a range moves its lease
@@ -1307,6 +1320,7 @@ order and grouping of the inputs (P3-S15).
 | A price correction (§6.3) | "price correction", with the correction's ID, the operator, the **cause** (Share, a named supplier, other) and the reason | Either way for a usage price (P3-S34: −50,000; P3-S55: +20,000); only down for a reservation price, applied as `min(corrected, effective)` (§5.2 rule 4; P3-S56) |
 | A finance attribution of quarantined traffic (§4.4) | "quarantine attribution", with the operator, the reason and the reference | Up |
 | Its reversal (§4.4) | "attribution reversed", with the operator, the reason and both references; cause **Share** | Down (P3-S65: −10,000) |
+| A late extension of a reduction's affected set (§5.6; RFC-001 `REDUCTION_SET_EXTENDED`, a projection defect, alerted) | "late POL-07 cut", with (link, reduction) and the extension chunk; no fault cause (settlement splits the new total less the shares posted, POL-12) | Down: the cut part rates replace the uncut ones from `T_eff`; the original stays |
 | An accepted correction of a rejected record (§3.3) | "corrected record", with the raw reference | Up |
 | A superseding record (§3.3) | "superseding record", with the original's identity and version; for a downward amendment, cause **the exporter's owner** (a named supplier, or Share) | Either way (P3-S66: −10,000) |
 
@@ -2168,3 +2182,5 @@ errata", RFC-003 interface row) and RFC-006 revision 4.
 | W-1 (review 29; coordinator's binding choice of the first option) | Digest key mandatory: versions fetched for every exporter of the slot at lease acquisition, the cached version used through a rotation; with no cached version and a failed fetch, the batch is neither committed nor acknowledged (the exporter retransmits), alerted, only that exporter partition waiting. Replaces the earlier "rejected with digest unavailable" path; crash row and R3-22 added | §3.3 (step 1, crash table), Risks |
 | W-2 (review 29) | Header "Builds on" cites RFC-005 revision 5 C12 (`keep_by`, `not kept(cap \| late)`, `withdraw_payload`, `digest_key`) and the pending RFC-000 §8 erratum | Header |
 | W-3 (review 29) | Crash row "after the commit, before the acknowledgement": the repeated put is answered as the store now holds it (kept with the first bucket; `not kept(late)` once withdrawn) and recorded with that outcome | §3.3 |
+| Erratum 5.1: review 32 V-5 (joint with RFC-001) | The claim that a late extension chunk's reservations cannot have closed past `T_eff` is withdrawn: minutes already closed at the uncut rate are amended (reason "late POL-07 cut", downward, no fault cause) once the extension's cuts are applied in the lifecycle; minutes still open are held by `hold_2` | §5.6, §5.7 |
+| Erratum 5.1: review 32 V-3 (RFC-001 change, being applied) | Noted: reservations whose only cut parts are offer parts are outside `A_R` for the holds, so `hold_2` never waits on an offer-scoped target (`KEPT_FOR_OFFER`, no lifecycle cut); their rate changes only by a move | §5.6 |

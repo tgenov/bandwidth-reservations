@@ -2,7 +2,7 @@
 
 | | |
 |---|---|
-| Status | Draft, revision 5 |
+| Status | **Accepted, revision 5.** Accepted at C3 on [fix verification 32](../reviews/32-rfc-001-fix-verification.md) (V-1 … V-4 applied; V-5 is RFC-003 erratum 5.1). Revision 5 applies [review 26](../reviews/26-rfc-001-review.md) on `requirements-v1.9` and RFC-000 revision 4.3; see "Revision 5 resolution" |
 | Satisfies | P1-S01 … P1-S83 (every P1 scenario, 83). Link-side part only, the primary RFC being another (§13): P2-S02, S13, S14, S15, S16, S17, S18, S19, S20, S21, S43, S44, S45, S46, S47, S48, S52, S55, S56, S58, S59, S60, S61, S62, S73, S74, S79, S80, S81, S84, S85, S87, S88, S92, S93, S94, S95, S97, S101, S104, S106, S107, S110, S114, S116 (RFC-002); X1-S22, X1-S23 (RFC-005); X2-S03, X2-S05, X2-S06, X2-S15, X2-S23 (RFC-006). Also the link-side rows of P2-S112, X1-S13 and X1-S31, whose needs are not allocated to this RFC (§13) |
 | Policies | POL-02, POL-04, POL-05, POL-06, POL-07, POL-08, POL-09, POL-10, POL-16, POL-19, POL-25, POL-26, POL-29, POL-30, POL-31, POL-32, POL-33 |
 | Prior decisions | History log D1, D5, D6, D7, D9, D10, D11, D12, D14, D15, D17, D30 (carried forward or rejected in Competition); review 17's decisions D1 … D5 (accepted by the coordinator; D1 and D3 are in `requirements-v1.8`, D2 and D4 in RFC-000 revision 4.2); review 26's decisions D1 … D5 (accepted by the coordinator; D1 and D2 are POL-07 in `requirements-v1.9`, D3 is RFC-000 revision 4.3's minute-piece cut target, D4 and D5 bind the RFC-001/RFC-002 interface) |
@@ -218,7 +218,7 @@ occupancies:
 |---|---|---|
 | `occ_firm(t)` | Confirmed leg parts at their current rates; Share's offer parts (counted as committed, POL-07); maintenance bookings (supplier occupancy, sold beside); the sellable deficit `C_ref − K_s(t)` | "Does it fit on committed capacity?" (no-fit rejections, P1-S37) |
 | `occ_all(t)` | `occ_firm` plus every capacity hold | "Does it fit beside every hold?" (holds, grants, offer holds, maintenance, P1-S05) |
-| `occ_commit(t)` | The **committed rate** (glossary, `requirements-v1.9`): each confirmed leg and each open offer on the link at its **capped contribution** `min(Σ its parts' rates at t, every decided cut cap in force at t)` (§5.4), **no maintenance and no capacity term** | Outage flags against `K_p` (§5.7) and a reduction's excess against its announced level (§5.4) |
+| `occ_commit(t)` | The **committed rate** (glossary, `requirements-v1.9`): each confirmed leg and each open offer on the link at its **capped contribution** `min(Σ its covered parts' rates at t, every decided cut cap covering them in force at t) + Σ its uncovered parts' rates at t` (§5.4; a cap binds only the parts its target covers, review 32 V-1), **no maintenance and no capacity term** | Outage flags against `K_p` (§5.7) and a reduction's excess against its announced level (§5.4) |
 
 The committed rate at a minute (glossary) is the confirmed parts plus the offer parts, and
 **never maintenance** (POL-07 as amended in `requirements-v1.9`, RQ-26-1, review 26 D1):
@@ -350,7 +350,7 @@ All of it is the link owner's own (RFC-000 §2), derived by applying its log:
 | Capacity profile | Registration level, permanent facts (level, record `ts`, sellable and physical effect), outages (level, range, attribution, principal, reason reference, restorations) as levels (§3.1); derived `A_s`, `A_p`, `A_now`, `K_s`, `K_p` | By kind and effect minute |
 | Occupancy trees | `occ_firm`, `occ_all`, `occ_commit` (§3.1, §3.2) | — |
 | Leg parts | Per confirmed part: reservation, part id, leg, account, rate pieces (uniform at admission; a `reduce_parts` lowers it from its minute), window, **age** (the decision timestamp of the admission that added it, or the original age it keeps after a move, POL-07 step 6; ties by request identity), cause flags (reduced under POL-07, with the (link, reduction) named) | By reservation; interval index by window; age order |
-| Cut caps | Per (leg or open offer, reduction): the cap `K_{L,R}(t)` from `T_eff`, as minute pieces, decided by the reduction's steps (§5.4); the leg's contribution to `occ_commit` is its rate capped by every cap in force | By leg; by reduction |
+| Cut caps | Per (leg or open offer, reduction): the cap `K_{L,R}(t)` from `T_eff`, as minute pieces, decided by the reduction's steps (§5.4), and the **covered parts** it binds (the leg's parts at the deciding entry, the target's `parts`); the leg's contribution to `occ_commit` is its covered parts' rate capped by every cap covering them, plus its other parts in full | By leg; by reduction |
 | Capacity holds | Per request: attempt, account, kind (booking, change), rate, window, `D`, commit fence `D_c` (§4.1), `request_age`, receipt minute, policy version, a digest of the command (for `MISMATCH`), waiting mark, displacement mark with the reduction that set it | By request; interval index; priority order |
 | Waiters | Per request: attempt, rate, window, `D`, `D_c`, `request_age`, account, latest blocker deadline notified, yield claim (§4.3) | Priority order (`priority_rule`, ties by request identity, RFC-000 §4.5); interval index |
 | Outstanding yield and displacement requests | (request, attempt) → the request or reduction they were raised for | — |
@@ -719,19 +719,21 @@ known-at, §6); each is acknowledged once durable and idempotent by change id (R
 | Command | Effect on the link | Used for |
 |---|---|---|
 | `end_leg(reservation, leg, change, from T)` | Every part of the reservation's leg: pulse `−b` over `[max(s, T), e)` in `occ_firm`, `occ_all`, `occ_commit` | Cancellation and shortening at the next minute boundary (P2-S43, P2-S44, P2-S84, P2-S85, P1-S72), revocation (P1-S32, P1-S36), release after suspension (POL-16), termination (POL-30), a move off the link (P1-S35, P1-S53) |
-| `reduce_parts(reservation, leg, change, [(part, Mbps)], from T)` (cause decrease) | Each named part reduced by its amount from `T`; the parts are listed newest first | Rate decrease, which RFC-002 applies last in, first out and names part by part (P2-S48) |
-| `reduce_parts(reservation, leg, change, [(part, [(from, rate)…])], applied [(link, reduction)…])` (cause POL-07) | Each named part's rate **set absolutely** as minute pieces (a rate, never a decrement); the parts listed newest first | A POL-07 cut target applied by RFC-002 (P1-S47, P1-S65, §5.4) |
+| `reduce_parts(reservation, leg, change, [(part, [(from, rate)…])], cause, applied [(link, reduction)…]?)` | Each named part's rate **set absolutely** as minute pieces (a rate, never a decrement), clipped to the part's current window; the parts listed newest first; `applied` for cause POL-07 only | Rate decrease (cause decrease, from `nb(ts)` of RFC-002's decision), which RFC-002 applies last in, first out and names part by part (P2-S48); a POL-07 cut target applied by RFC-002 (P1-S47, P1-S65, §5.4) |
 
-For cause POL-07 (RFC-002 revision 5's form, to be RFC-000 4.4's B-AI-13; RFC-000 §8
-revision 4.3, AI-26-3), `reduce_parts` sets each named part's rate absolutely, as minute
-pieces, and names **every (link, reduction) pair** whose target the result applies, this
-link's or another's (RFC-002 composes targets across links by `min` per minute); an
-`end_leg` with cause POL-07 (a revocation) names them likewise. Absolute rates make a
-repeat or a reordering harmless, and the link applies POL-07 changes of one (reservation,
-leg) **in change-id order**, refusing a lower change id after a higher one as stale
-(`STALE_CHANGE`, no effect). The link records the pairs with the change (history,
-`LEG_CHANGED` cause), and, for each of its own reductions named, checks that the leg's rate
-after the change is at or below that reduction's cap at every minute from `T_eff`,
+**Every** `reduce_parts`, of any cause, is in RFC-002 revision 5's absolute form (to be
+RFC-000 4.4's B-AI-13; review 32 V-2): each named part's rate set as minute pieces, clipped
+to the part's current window, never a decrement. For cause POL-07 (RFC-000 §8 revision
+4.3, AI-26-3) it also names **every (link, reduction) pair** whose target the result
+applies, this link's or another's (RFC-002 composes targets across links by `min` per
+minute); an `end_leg` with cause POL-07 (a revocation) names them likewise. The link
+applies **every leg change of one (reservation, leg)**, `end_leg` and `reduce_parts` of any
+cause, **in change-id order**, refusing a lower change id after a higher one as stale
+(`STALE_CHANGE`, no effect): a POL-07 cut relayed late after the holder's cancellation
+never brings the cancelled occupancy back (V-2). The link records the pairs with the change (history,
+`LEG_CHANGED` cause), and, for each of its own reductions named, checks that the rate of
+that reduction's **covered parts** after the change is at or below its cap at every minute
+from `T_eff` (parts added later are not checked, V-1),
 alerting `CUT_TARGET_UNMET` otherwise; a reduction of this link it does not know is
 refused `UNKNOWN_REDUCTION` (a violation). The cap, not a pending removal, is what
 `occ_commit` keeps (§5.4), so any change, of any cause, to a capped leg simply recomputes the
@@ -1041,7 +1043,11 @@ every rise in sellable capacity (§3.1; RQ-R1-13, resolved by `requirements-v1.7
   at `T_eff`) is `ReductionEffective(R, q, |C_q|, digest)`: it **freezes**, as the cut set
   `C_q`, the cut-set rows of `R` as written through position `q`, the latest projection
   output in a committed batch (§7.5), and adopts as its **affected set** `A_R` the
-  reservations owning those parts (offer parts count for the offer's reservation). The
+  reservations owning those parts, **except a reservation whose only parts in `C_q` are
+  offer parts** (review 32 V-3): its cut binds only a move (D5), its rate on its own path
+  is untouched, and a move is recorded by RFC-002 before `move_at`, so it needs no closure
+  hold; it still receives its offer-scoped `cut_target`, and `CUT_DECIDED` marks it
+  offer-scoped. The
   batch that carries it writes no further output of `R`'s projection, so `C_q` never
   changes after it, and the rows are durable before `T_eff`: a successor that takes over at
   any point after the entry reads the rest of `C_q` from them and checks the digest
@@ -1069,10 +1075,15 @@ every rise in sellable capacity (§3.1; RQ-R1-13, resolved by `requirements-v1.7
   any minute, which RFC-002 applies (review 26, JI-5).
 - **Decided cuts are caps, not pending removals** (review 26, R26-01; RFC-000 4.3 AI-26-3
   "RFC-001 may still use a per-part cap internally"). When a step decides the first cut on
-  a leg (or open offer) `L`, it sets the leg's cap for `R` to `K_{L,R}(t)` = the leg's
-  capped contribution at that entry, for `t ≥ T_eff`; each decided cut of one of `L`'s
-  parts lowers `K_{L,R}` by the pulse `(W', cut)`. `occ_commit` counts `L` at
-  `min(Σ its parts' current rates, every cap in force)` and is recomputed, over `[T_eff, ∞)`,
+  a leg (or open offer) `L`, it fixes the cap's **covered parts** `P_{L,R}`, the leg's parts
+  at that entry (the `parts` its target carries), and sets `K_{L,R}(t)` = their capped
+  contribution at that entry, for `t ≥ T_eff`; each decided cut of one of them lowers
+  `K_{L,R}` by the pulse `(W', cut)`. **A cap binds only its covered parts** (review 32
+  V-1; RFC-002 §9.7, B-AI-13 (a)): an increase or extension admitted later is a new part
+  on the leg, sold against the reduced `K_s`, and counts in full. `occ_commit` counts `L` at
+  `min(Σ covered parts' current rates, every cap covering them) + Σ uncovered parts' rates`
+  (with several caps, each over its own covered set, nested because a later cap covers the
+  parts present at its own decision) and is recomputed, over `[T_eff, ∞)`,
   by every entry that changes `L` (any `end_leg`, `reduce_parts`, `offer_release`,
   `offer_accept`, `offer_move_at`, and a later cap): `O(k log m)` for the `k` pieces. There
   is nothing to withdraw, and the removal `occ_commit` keeps is exactly what the target
@@ -1096,7 +1107,7 @@ every rise in sellable capacity (§3.1; RQ-R1-13, resolved by `requirements-v1.7
   rate covers (so RFC-002 sets exactly those parts' rates); the pieces are
   `K_{L,R}` from `T_eff` (the reservation's rate on this link after the per-part cuts, at
   every minute, the last piece open-ended or ending at the leg's end; `r = 0` revokes from
-  `from`), `none` means **no cut**; every reservation of `A_R` gets one, `none` included,
+  `from`), `none` means **no cut**; every reservation of `A_R` gets one, `none` included (and so does each reservation cut only in offer parts, offer-scoped, outside `A_R`, V-3),
   so rating can close its minutes from `T_eff` (RFC-003). It is **exact** for every
   reservation, including one whose newest part is an extension with a later window, so
   the link never removes more than POL-07 requires (P1-N8), and the `CUT_TARGET_INEXACT`
@@ -1131,8 +1142,11 @@ every rise in sellable capacity (§3.1; RQ-R1-13, resolved by `requirements-v1.7
   `M := occ_commit + remaining maintenance − L_R` on a speculative generation:
   `trim := min(m, peak(M, W ∩ [T_eff, ∞)))`, the largest excess the booking meets from the
   notice's end; if positive, its rate is lowered by `trim` over `W ∩ [T_eff, ∞)` (uniform,
-  as a part's) in `occ_firm` and `occ_all`, or the booking cancelled from `T_eff` if `trim`
-  is its whole rate, and the waiter scan runs over the freed range. Each trim is a
+  as a part's), or the booking cancelled from `T_eff` if `trim` is its whole rate. That is
+  the fact; the capacity it frees for sales is released from `occ_firm` and `occ_all` from
+  `max(T_eff, ceil_minute(ts))`, as a **pending capacity effect** like `cancel_maintenance`
+  (§5.3; POL-07 *Every rise in sellable capacity*; review 32 V-4), and the waiter scan runs
+  then; the minutes between `T_eff` and that boundary change only in history. Each trim is a
   `CAPACITY_CHANGED(maintenance cut)` feed event with a supplier notice due at the
   deciding entry's `ts`, which the notifier tells the supplier within
   `affected_notice_time` (RFC-006). P1-S81: committed 8, reduction to 9: no part cut,
@@ -1727,8 +1741,8 @@ the time an account received a request.
 | `convert` | request, **attempt**, reservation, part, `T_dec` | `CONVERTED(part)` | `NO_HOLD`, `TOMBSTONED` (protocol violations, alerted); `MISMATCH` (another attempt than the hold's) | By request |
 | `release` | request, `D`, reason, decision time | `RELEASED`, sent once durable: the acknowledgement "releases durable" collects. Ends every hold, waiter registration and grant of the request, whatever the attempt, and tombstones it until `D + release_grace`, also for a request not seen | common | By request; a repeat is acknowledged again |
 | `query` | request | Its state here and its tombstone expiry | common | Read |
-| `end_leg` | reservation, leg, change id, effective minute, cause (cancel, shorten, revoke, release, terminate, move, POL-07), **(link, reduction)** for cause POL-07 (RFC-000 4.3, AI-26-3), decision time | `CHANGED`, once durable; for this link's reduction, `CUT_TARGET_UNMET` alerted if the rate left is above its cap | `UNKNOWN_RESERVATION`, `UNKNOWN_REDUCTION` (violations) | By change id |
-| `reduce_parts` | reservation, leg, change id, decision time; cause decrease: `[(part, Mbps)]` newest part first and effective minute; cause POL-07: `[(part, [(from, rate)…])]` absolute minute pieces and the **applied (link, reduction) pairs** (AI-26-3, B-AI-13) | `CHANGED`, once durable; as `end_leg` for POL-07 | `UNKNOWN_PART`, `UNKNOWN_REDUCTION` (violations); `STALE_CHANGE` (a POL-07 change id below one applied for the leg) | By change id; POL-07 changes of a (reservation, leg) in change-id order |
+| `end_leg` | reservation, leg, change id, effective minute, cause (cancel, shorten, revoke, release, terminate, move, POL-07), **(link, reduction)** for cause POL-07 (RFC-000 4.3, AI-26-3), decision time | `CHANGED`, once durable; for this link's reduction, `CUT_TARGET_UNMET` alerted if the covered parts' rate left is above its cap | `UNKNOWN_RESERVATION`, `UNKNOWN_REDUCTION` (violations); `STALE_CHANGE` (a change id below one applied for the leg) | By change id; every change of a (reservation, leg) in change-id order |
+| `reduce_parts` | reservation, leg, change id, decision time, cause (decrease, POL-07); `[(part, [(from, rate)…])]` absolute minute pieces, newest part first, for every cause (V-2); for cause POL-07 the **applied (link, reduction) pairs** (AI-26-3, B-AI-13) | `CHANGED`, once durable; as `end_leg` for POL-07 | `UNKNOWN_PART`, `UNKNOWN_REDUCTION` (violations); `STALE_CHANGE` (a change id below one applied for the leg) | By change id; every change of a (reservation, leg) in change-id order |
 | `cut_target_answer` | link, reduction, reservation, revision, `APPLIED` \| `NOT_APPLIED(ended \| left_link \| unknown)` \| `KEPT_FOR_OFFER`, decision time (RFC-002 revision 5, B-AI-13) | `RECORDED` once durable; a cap not applied is withdrawn (§5.4) | `UNKNOWN_REDUCTION` | By (link, reduction, reservation, revision) |
 | `offer_hold` | offer, reservation, account, **offer parts** `[(part, rate, original age, end)]`, `from`, `lapse_at`, decision time | `HELD`; `REFUSED(NO_FIT \| IN_FLIGHT, retry_after?)` | common | By offer |
 | `offer_accept` | offer, `move_at`, decision time; sent once the move is final (every leg of the new path booked), normally before `move_at` (review 26 D4) | `ACCEPTED`: the offer parts, and any cut cap on the offer, are the reservation's on this link from `move_at`, with their original ages; a late one applied as decided | `UNKNOWN_OFFER`, `TOMBSTONED`, `INVALID` (`move_at` before `nb(decision time)`, the first boundary strictly after it, B-AI-13) | By offer |
@@ -1826,7 +1840,9 @@ R26-13; RFC-000 A-3 alerts the delay); (ii) cut targets and maintenance cuts, ef
 reduction** `R` of the link, known from its
 `CAPACITY_CHANGED(reduction announced, R, T_eff)` event: (1) until it holds every chunk of
 `REDUCTION_EFFECTIVE(R)`, it closes no reservation on the link past `T_eff`; (2) then, until
-`REDUCTION_FINAL(R)`, it closes no reservation of `A_R` past `T_eff`. Rating takes each
+`REDUCTION_FINAL(R)`, it closes no reservation of `A_R` past `T_eff` (`A_R` never includes a
+reservation whose only cut parts are offer parts, so an offer-scoped `CUT_DECIDED` holds
+nothing, V-3). Rating takes each
 reservation's closure as the least of its lifecycle closure, each of its links' closed
 times, and these holds (RFC-000 §4.5).
 
@@ -1839,7 +1855,7 @@ times, and these holds (RFC-000 §4.5).
 | `REDUCTION_AFFECTED` | Reduction, `T_eff`, `[(reservation, part, cut Mbps)]`, as-of sequence: the projection during the notice (§5.4) | RFC-002 (equivalent-path offers) |
 | `REDUCTION_EFFECTIVE` | Reduction, `T_eff`, `L_R`, as-of position `q` (the frozen cut set's), chunk `i` of `n`, up to 1,000 reservations of the affected set `A_R` (fixed at `T_eff`); a late extension chunk only after `REDUCTION_SET_EXTENDED` | RFC-002, RFC-003 (closure held for `A_R`), RFC-006 (history) |
 | `CUT_DECIDED` | Reduction, reservation, the parts covered, minute pieces `[(from, r)…]` from `T_eff` or `none`, the offer if offer-scoped, and a revision (2 for a lower target after `REDUCTION_SET_EXTENDED`): the same decision the `cut_target` command carries | RFC-003 (closure; minute-piece targets, as its revision 5 expects), RFC-006 (history); RFC-002 takes the command |
-| `REDUCTION_FINAL` | Reduction, `T_eff`, count of targets sent | RFC-002, RFC-003 (closure released for `A_R` once each target is applied in the lifecycle), RFC-006 |
+| `REDUCTION_FINAL` | Reduction, `T_eff`, count of targets sent (offer-scoped ones included) | RFC-002, RFC-003 (closure released for `A_R` once each target is applied in the lifecycle), RFC-006 |
 | `CLOSED` | Closed time `t`, `feed_seq` | RFC-002, RFC-003, RFC-006 |
 | `ALERT` | `CONFIRMED_AFTER_REDUCTION` (with the reduction, its record timestamp and `T_dec`), `NO_HOLD`, `UNDECIDED_PAST_DEADLINE`, `CUT_TARGET_UNMET`, `REDUCTION_SET_EXTENDED`, `REDUCTION_DEFERRED`, outcome mismatch on replay, cold rebuild, batch retries by cause | RFC-006 (alerting) |
 
@@ -1887,13 +1903,13 @@ it reflects.
 | T-11 | **Outages**: flags at exactly the overcommitted minutes, all alike, open-ended, from the minute of the record to the boundary of the restoration; due times; recomputation and notices when a reservation ends inside an outage; notices written within the link's 10 s budget with a webhook endpoint down; maintenance never flagged nor causing a flag (P1-S83); a reduction to 6 then an outage to 9 open across `T_eff`: nothing flagged at any minute, before or after the cut is decided (P1-S82, R26-02); overlapping outages name only the binding ones (R26-11); a late leg change re-notifies past minutes (R26-13) | P1-S24 … S27, S40, S48 … S51, S72, S75, S82, S83 |
 | T-12 | **Displacement**: a hold that has not begun committing is rejected or turned into a waiter; one that had begun completes, flagged and alerted; a confirm racing the reduction's transaction both ways on a real 2 + 2 + 1 cluster (reduction first: the confirm sees the marker and does not confirm; confirm first: the reduction's transaction is pushed, re-decided, and the later `convert` is flagged and alerted); **on the hottest link's design load and in a flash crowd**, the capacity-decrease transaction's retries counted (target: at most one, the restart keeping its intents) and the confirms' lock waits measured; markers deleted with the attempt they mark; a second reduction leaves an earlier marker and its displaced hold out of its test (R26-08); the owner killed inside a capacity-lowering transaction after its first statement (confirms wait, are answered `pending`, the decrease is re-decided once, R26-14) | P1-S41, S42, S63, S78 |
 | T-13 | **Maintenance**: notice by calendar date, beside committed and held capacity, `retry_after` when only holds block it, cancellation free from the boundary; never in `occ_commit`; cut to fit at a reduction's `T_eff` with the supplier's notice | P1-S28 … S30, S66, S67, S81, S83 |
-| T-14 | **Permanent reductions**: newest part first, own ages, the largest excess per part against `L_R`, the affected set fixed at `T_eff` from the projection and published in chunks, cuts decided in steps over `C_q` only, equal to the full greedy at `T_eff` (oracle), the final step's excess check, one `cut_target` per reservation of `A_R` (`none` included), `REDUCTION_FINAL`, the closed-time holds, recomputation when the schedule changes during the notice, a projection deliberately short (`REDUCTION_SET_EXTENDED`, a second lower target); **minute-piece targets** equal to a per-minute oracle, including an extension part with a later window (R26-04); caps: cancel before and after the target is applied, an offer released after its cut, a late move `end_leg`, two reductions on one reservation, a target composed lower elsewhere (R26-01); maintenance cut to fit newest first after the parts, P1-S81's two rows, and a reduction to 0 with maintenance that finishes (R26-03); the projection's later runs over the previous cut set equal a full run (R26-06) | P1-S31, S32, S35, S36, S43 … S47, S52, S64, S65, S81 |
-| T-15 | **Offer holds and moves**: counted as committed, no waiting on them, offer parts with original ages, accept, earlier move (refused if in the past), decline, lapse, failed partner leg, an outage on the offered path; the old link's `end_leg` from `move_at` recorded once the move is final and before `move_at`, so its `T_eff` cuts nothing of the moved reservation; a failed partner booking leaves the reservation on the old link, cut only by what does not fit (D4); a reduction on the offered link meeting the offer parts by age, its target offer-scoped (D5); `offer_hold` with parts of different ends fitting by segment (R26-15); `offer_accept`/`offer_move_at` checked against `nb(decision time)`, a decision exactly on a boundary refusing that boundary, and a late `offer_accept` applied as decided (JI-7, B-AI-13); cut-target answers `APPLIED`, `NOT_APPLIED(ended \| left_link \| unknown)`, `KEPT_FOR_OFFER`, with the cap kept or withdrawn; POL-07 `reduce_parts` with absolute rates applied in change-id order, a stale one refused | P1-S53, S55 … S61, S68, S71 |
+| T-14 | **Permanent reductions**: newest part first, own ages, the largest excess per part against `L_R`, the affected set fixed at `T_eff` from the projection and published in chunks, cuts decided in steps over `C_q` only, equal to the full greedy at `T_eff` (oracle), the final step's excess check, one `cut_target` per reservation of `A_R` (`none` included), `REDUCTION_FINAL`, the closed-time holds, recomputation when the schedule changes during the notice, a projection deliberately short (`REDUCTION_SET_EXTENDED`, a second lower target); **minute-piece targets** equal to a per-minute oracle, including an extension part with a later window (R26-04); caps: cancel before and after the target is applied, an offer released after its cut, a late move `end_leg`, two reductions on one reservation, a target composed lower elsewhere (R26-01); an increase and an extension on a capped leg after `APPLIED` counted in full, `CUT_TARGET_UNMET` on covered parts only (V-1); a reservation cut only in offer parts outside `A_R`, its offer-scoped target sent (V-3); maintenance cut to fit newest first after the parts, P1-S81's two rows, and a reduction to 0 with maintenance that finishes (R26-03); the projection's later runs over the previous cut set equal a full run (R26-06) | P1-S31, S32, S35, S36, S43 … S47, S52, S64, S65, S81 |
+| T-15 | **Offer holds and moves**: counted as committed, no waiting on them, offer parts with original ages, accept, earlier move (refused if in the past), decline, lapse, failed partner leg, an outage on the offered path; the old link's `end_leg` from `move_at` recorded once the move is final and before `move_at`, so its `T_eff` cuts nothing of the moved reservation; a failed partner booking leaves the reservation on the old link, cut only by what does not fit (D4); a reduction on the offered link meeting the offer parts by age, its target offer-scoped (D5); `offer_hold` with parts of different ends fitting by segment (R26-15); `offer_accept`/`offer_move_at` checked against `nb(decision time)`, a decision exactly on a boundary refusing that boundary, and a late `offer_accept` applied as decided (JI-7, B-AI-13); cut-target answers `APPLIED`, `NOT_APPLIED(ended \| left_link \| unknown)`, `KEPT_FOR_OFFER`, with the cap kept or withdrawn; POL-07 `reduce_parts` with absolute rates applied in change-id order, a stale one refused; a decrease in the absolute form, and a POL-07 cut relayed after the holder's cancelling `end_leg` refused `STALE_CHANGE` (V-2) | P1-S53, S55 … S61, S68, S71 |
 | T-16 | **Known-at**: rebuild `schedule_as_known_at` from sealed segments and compare with the state at each position | P1-S33 |
 | T-17 | **Determinism**: replay the same log on two builds and on a standby; every entry's outcome equal; checkpoint digests equal | All (I5) |
 | T-18 | **Load**: the design mix at 2,500 requests/s on one link for one hour on the 2 + 2 + 1 database, one NestJS owner and two standbys fed by push; p99 of the link step with `W_l`, event-loop utilisation and GC pauses, batch size, projection lag, share answered `pending`, **batch retries by cause** (§7.2 step 5: none from standbys, history or audit); a reduction to half announced on the hottest link at design load: projection on the standby, owner p99 unchanged, pinned memory within its cap (R26-06) | X2-S03, S05, S15 |
 | T-19 | **Supply and registry authorisation**: every principal and role against every supply and registry command | X1-S13, S22, S23, S31 |
-| T-20 | **Every rise in sellable capacity** (restoration, increase, maintenance cancellation): effective from the boundary at or after the record, including a record exactly on a boundary (the timestamp controlled), with the recording entry and later commands of its batch seeing it; no reservation changed by an increase, during an outage and during a reduction's notice; a maintenance cancellation under way frees only `[b, e)` | P1-S27, S40, S67, S69, S76 |
+| T-20 | **Every rise in sellable capacity** (restoration, increase, maintenance cancellation): effective from the boundary at or after the record, including a record exactly on a boundary (the timestamp controlled), with the recording entry and later commands of its batch seeing it; no reservation changed by an increase, during an outage and during a reduction's notice; a maintenance cancellation under way frees only `[b, e)`; a maintenance trim decided after `T_eff` frees sales from `max(T_eff, ceil_minute(ts))` (V-4) | P1-S27, S40, S67, S69, S76 |
 | T-21 | **Capacity levels** (review 17, R1-01; R26-07): every pair, and random sequences, of overlapping capacity facts (outages, partial restorations, reductions with their notices, increases) in every order, cross-checked after every entry against a **level oracle** that recomputes `A_s`, `A_p`, `K_s`, `K_p` and each reduction's `L_R` from the facts alone; review 17's cases (a) … (d); an increase pending and a reduction recorded after it in the same minute (no minute raised); a reduction to 6 then an outage to 9 across `T_eff`; validity of reductions and increases against `A_now` whatever the outages | P1-S24, S27, S43, S44, S49, S69, S79, S80, S82 |
 | T-22 | **Retirement**: a sale attempted between `closing` and the report is refused `LINK_CLOSING`; retirement only on an empty report | P1-S32, X1-S31 |
 
@@ -2370,3 +2386,7 @@ and RFC-000 revision 4.3, and the RFC-006 revision 4 contract points of
 | RFC-006 rev. 4 / review 27 R27-12 (a) (b) (c), R27-03, §3.6, §12.11 | Deletes declared (`link_displacement`, `link_reduction_cut` only; `link_request` by 24 h TTL); retry on the same transaction keeping intents; audit `chain` in log and head rows; per-destination `CLOSED`; checkpoint store `putCheckpoint`/`getCheckpoint` (§5.1, §7.1, §7.6, §11.1, §11.2) |
 | Coordinator interface update (RFC-005 rev. 5, RFC-003 rev. 5) | Deletable projections listed explicitly (§7.1); `CUT_DECIDED` with minute pieces and `CLOSED` per RFC-000 4.3's closure rule (§11.1) |
 | Coverage | P1: 83 of 83; `impact.py coverage S-LINK`: 0 uncited, 0 dangling |
+| Review 32 V-1 (binding) | Caps bind only their covered parts (the target's `parts`); uncovered parts count in full; `CUT_TARGET_UNMET` on covered parts only (§3.1, §3.3, §4.5, §5.4, §11.1, T-14) |
+| Review 32 V-2 (binding) | Absolute minute-piece form for every `reduce_parts`, clipped to the part's current window; every change of a (reservation, leg) in change-id order, `STALE_CHANGE` otherwise (§4.5, §11.1, T-15) |
+| Review 32 V-3 (binding, preferred fix) | Reservations cut only in offer parts left out of `A_R` and its closure holds; offer-scoped target and `CUT_DECIDED` still sent (§5.4, §11.1 rule (2), T-14) |
+| Review 32 V-4 (binding) | Maintenance trim releases sales capacity from `max(T_eff, ceil_minute(ts))` as a pending effect (§5.4, T-20) |
