@@ -3,8 +3,8 @@
 | | |
 |---|---|
 | Contract ID | C12 |
-| Version | 1.1 (revised per [review 38](../../reviews/38-contract-C12-review.md); candidate for freeze) |
-| Status | **Draft**, for contract re-review. No open mismatch. S1 is settled (amended by review 38's D1). The provider and consumer RFCs take the errata listed under "Settled" and "Review 38 resolution". Requirements issue RQ-2 is open with the requirements owner (see "Review 38 resolution") |
+| Version | 1 (from draft 1.1, revised per [review 38](../../reviews/38-contract-C12-review.md), with V1–V7 of [fix verification 50](../../reviews/50-contract-C12-fix-verification.md) applied) |
+| Status | **Frozen.** Frozen at C4 on fix verification 50; errata owed listed below (S1 consumer obligations, "Settled"; and "Review 38 resolution"). Requirements issue RQ-2 is still open with the requirements owner; C12 already behaves as its amendment would |
 | Provider | **Partner port** and **partner reconciliation feed**: the partner adapters of RFC-002 §10 (Share side). There is one adapter per partner link, the single writer of that partner link's partition. **Partner driver interface**: each per-partner driver, inside its adapter. **Equivalent-path source**: routing (external input, out of scope) |
 | Consumers | **Partner port**: the account owner's booking module (RFC-002 §5, §9). **Partner driver interface**: the partner adapter (RFC-002 §10.2); counterparties are the external partner networks, reached only through drivers. **Reconciliation feed**: operator console and notifier (RFC-006). The account owner is not a consumer of the feed: it receives `partner_leg_affected` on the reservation command port (§3.4, review 38 m12). **Equivalent-path source**: RFC-002 only (RFC-000 AI-R1-5); RFC-003's catalogue is a precondition party, not a consumer |
 | Transport | **Partner port**: gRPC command between NestJS owners, routed by the adapter's partition (slot) through the placement cache (RFC-002 §13; RFC-000 §8 "adapter interface, per partner"). Results from the adapter are **point-to-point state messages** (gRPC push, Kafka relay; RFC-000 §4.4). **Partner driver**: in-process call inside the adapter process; the driver speaks the partner's own API (wire format out of scope). **Reconciliation feed**: Kafka event through the adapter's transactional outbox. **`partner_leg_affected`**: a gRPC command from the adapter to the account owner on RFC-002's reservation command port. **Equivalent-path source**: synchronous query to routing (external input, RFC-000 §8) |
@@ -381,8 +381,8 @@ resolves it before reporting anything:
 
 | Operation | Preconditions | Outcomes | Errors and refusals |
 |---|---|---|---|
-| `classify(partnerLinkId, asOf)` | None | The classification in force at `asOf`, built from the catalogue's partner terms and the onboarding test. **`with_holds`** requires all four: `maxHoldS ≥ route_deadline_max + commit_margin` (70 s); `acceptsAbsoluteExpiry` (POL-26, P2-S36, P2-S102); **`expiryGranularityMs + partnerClockBoundMs + transitMs ≤ commit_margin − τ − 1 s`**; and **`σ_p ≤ σ_p_max`** (500 ms, est.) (F11, D6). A partner failing any of them is classified `without_holds` and alerted at onboarding. `decreaseAllowed` is the commercial term, which is the source of record (m13). If that term allows a decrease and the driver cannot amend, **onboarding fails** and alerts. The owner caches classifications by `termsVersion`, refreshed from the catalogue feed. Intake uses the cache and is refused only when no version is cached (m5) | `UNAVAILABLE` if the terms are not loaded |
-| Owner intake checks (RFC-002 §3.2, erratum) | — | Rejected at intake: a route with two `without_holds` legs (P2-S34); a deadline for which `D − commit_margin − σ_p` is earlier than the intake `ts + expectedAnswerMs` (F11); a **decrease** over a partner leg whose shown terms do not allow one (`decreaseAllowed = false`; P2-S115). **A shorten is never rejected for partner reasons** (POL-08 "any time"; F1, D1) | — |
+| `classify(partnerLinkId, asOf)` | None | The classification in force at `asOf`, built from the catalogue's partner terms and the onboarding test. **`with_holds`** requires all four: `maxHoldS ≥ route_deadline_max + commit_margin` (70 s); `acceptsAbsoluteExpiry` (POL-26, P2-S36, P2-S102); **`expiryGranularityMs + partnerClockBoundMs + transitMs ≤ commit_margin − τ − 1 s`**; and **`σ_p ≤ σ_p_max`** (500 ms, est.) (F11, D6). A partner failing any of the first three is classified `without_holds` and alerted at onboarding. **`σ_p ≤ σ_p_max` is a listing condition for every partner** (V7): a partner, with or without holds, that fails it is not listed. `decreaseAllowed` is the commercial term, which is the source of record (m13). If that term allows a decrease and the driver cannot amend, **onboarding fails** and alerts. The owner caches classifications by `termsVersion`, refreshed from the catalogue feed. Intake uses the cache and is refused only when no version is cached (m5) | `UNAVAILABLE` if the terms are not loaded |
+| Owner intake checks (RFC-002 §3.2, erratum) | — | Rejected at intake: a route with two `without_holds` legs (P2-S34); a deadline for which `D − commit_margin − σ_p ≤` the intake `ts`, so that no confirm could ever be sent (F11 as amended by V7; every listed partner has σ_p ≤ `σ_p_max`, so an 11 s deadline is never rejected, P2-S86); a **decrease** over a partner leg whose terms shown at booking, as recorded on the reservation (RFC-002 E1), do not allow one (P2-S115; V4). `expectedAnswerMs` never rejects: it only triggers RFC-002 §5.5 step 3's parallel send. **A shorten is never rejected for partner reasons** (POL-08 "any time"; F1, D1) | — |
 | `hold` | Partner with holds; not tombstoned; the J1 intent's `ts` before `D_c` and before `D` | J1 intent, then driver `hold(expiresAt = D)`. Answers: (a) `HELD(attempt, partnerExpiry)`, with `D − expiryGranularityMs ≤ partnerExpiry ≤ D`. (b) A definite refusal while a Share position overlaps (another Share request holding, or partner-booked and undecided): with `wait = true` the request is registered as a waiter (J9) and the answer is `WAITING(attempt, latest blocker deadline)` (P2-S89, P2-S96); with `wait = false` the answer is `REFUSED(IN_FLIGHT, retryAfter)` with a tombstone and no waiter (m6, as the link does, AI-17-1). (c) A definite refusal with no Share position overlapping: tombstone, `REFUSED(NO_FIT)` (P2-S31). (d) Transient: retried until `D_c`, then `FAILED(partner_fault)`. (e) Unknown: query at once (J6) and follow the answer (P2-S90) | `REFUSED(TOMBSTONED)`, `REFUSED(PAST_DEADLINE)`. A partner expiry outside the bound above: release at once, `FAILED(expiry_mismatch)`, alert |
 | `confirm` | Leg `held` at `attempt`; not tombstoned; sender not stale; J2 intent commits with `ts < D_c − σ_p` | J2 intent; its `ts` is the **send time**, the request's begin-committing time (POL-26). The call is sent within `h_s` of that commit. **If the send would leave later than `h_s` (F12):** nothing is sent, the J2 is journaled as not sent, and a **fresh J2 intent** with the same partner key is written, as long as its `ts < D_c − σ_p`. The begin-committing time is the `ts` of the intent actually sent. Late sends are counted and alerted on rate. Answers: `CONFIRMED(attempt, ref, sendTime)`. `UNKNOWN_HOLD` → `REFUSED(HOLD_LAPSED)`. Unknown → query by the same key. Still unknown at the owner's `D − τ` → the owner decides not confirmed and sends `release`; the adapter keeps querying and cancels any booking it later finds, at Share's cost (F6) | `REFUSED(FENCE_PASSED)` (never sent), `REFUSED(TOMBSTONED)`, `STALE_SENDER`, `MISMATCH` (attempt ≠ held attempt) |
 | `book_final` | Partner without holds; not tombstoned; J3 intent `ts < D_c − σ_p` | As `confirm`, with J3 and the same F12 rule. `BOOKED(attempt, ref, sendTime)`. A definite refusal gives `WAITING` (or `REFUSED(IN_FLIGHT)` with `wait = false`) if a Share position overlaps, and `REFUSED(NO_FIT)` otherwise. Unknown → query at once, with F10's second query before `NOT_BOOKED` is final (P2-S35) | As `confirm` |
@@ -406,15 +406,16 @@ strictly in `changeSeq` order:
 - change n+1 is not sent to the partner until change n is confirmed or superseded;
 - a later change, being absolute, supersedes the outstanding parts of an earlier one, which
   then report `CHANGED{superseded: true}`;
-- a `cancel` supersedes every outstanding amend with a lower `changeSeq`: their retries
-  stop, and they report `CHANGED{superseded: true}`;
+- a `cancel` supersedes an outstanding amend with a lower `changeSeq` only for bookings
+  whose remaining effect lies at or after the cancel's `effectiveMinute`; those retries stop
+  and report `CHANGED{superseded: true}`. Other amends continue (V2);
 - a change with a higher `changeSeq` than a scheduled cancel is still applied before the
   cancel's effective minute.
 
 | Operation | Preconditions | Outcomes | Errors and refusals |
 |---|---|---|---|
-| `cancel` | Booking set known for (reservation, leg) | **Scheduled (F4).** J5 is journaled as a **scheduled cancel** for every booking in the set. The schedule is a timer in the adapter's log, re-armed on takeover and on `adopt`. The driver is called at `effectiveMinute − cancelLeadMs`, or earlier with `cancel(…, effectiveAt)` if `supportsFutureCancel`. Bookings whose window starts at or after `effectiveMinute` are cancelled at once. **One J5 per `partnerBookingRef`** (F6): a cancel for a ref already being cancelled, or cancelled, returns that J5's result, whatever its `cancelId`. A cancel is retried until the partner confirms, without bound (P2-S82). `NOT_FOUND`, or a query state of `cancelled` or `absent` for the known ref, counts as confirmed (F5). Answer: `CANCELLED(cancelId, refs)`. The cancel takes effect for the buyer whatever the partner answers (owner side) | `MISMATCH` for an invalid (reason, `costBearer`) pair (table below) |
-| `change` (shorten) | Reservation leg `confirmed` | **If `supportsAmend`:** the booking straddling `newEnd` is amended to end at `newEnd` (J11 amend intent and result). Bookings lying wholly at or after `newEnd` are cancelled at once (allowed by S1: nothing is rebooked). Answer: `CHANGED(changeId, refs)`. **Otherwise (D1):** the owner does not send `change`. It writes E11 as for any shorten, and sends `cancel(reason = 'shortened', effectiveMinute = newEnd, costBearer = 'payer_per_terms')`, which is deferred to `newEnd` (F4). The buyer pays only a minimum-term fee shown at booking that `newEnd` falls inside (POL-08). Share bears any plain cancellation fee the partner charges for this cancel, as a cost line (RFC-002 §9.5, POL-23). This is not cancel-and-rebook | A `change` sent for a leg without `supportsAmend` is a protocol defect: alert, nothing sent |
+| `cancel` | Booking set known for (reservation, leg) | **Scheduled (F4).** J5 is journaled as a **scheduled cancel** for every booking in the set. The schedule is a timer in the adapter's log, re-armed on takeover and on `adopt`. The driver is called at `effectiveMinute − cancelLeadMs`, or earlier with `cancel(…, effectiveAt)` if `supportsFutureCancel`. Bookings whose window starts at or after `effectiveMinute` are cancelled at once. **One J5 per `partnerBookingRef`** (F6): a cancel for a ref already being cancelled, or cancelled, returns that J5's result, whatever its `cancelId`. **A cancel for a ref whose J5 is still scheduled, with an earlier `effectiveMinute`, moves that J5's effective minute earlier and re-arms its timer. It is never moved later. Its result lists both `cancelId`s** (V1). A cancel is retried until the partner confirms, without bound (P2-S82). `NOT_FOUND`, or a query state of `cancelled` or `absent` for the known ref, counts as confirmed (F5). Answer: `CANCELLED(cancelId, refs)`. The cancel takes effect for the buyer whatever the partner answers (owner side) | `MISMATCH` for an invalid (reason, `costBearer`) pair (table below) |
+| `change` (shorten) | Reservation leg `confirmed` | **If `supportsAmend`:** the booking straddling `newEnd` is amended to end at `newEnd` (J11 amend intent and result). Bookings lying wholly at or after `newEnd` are cancelled at once (allowed by S1: nothing is rebooked). Answer: `CHANGED(changeId, refs)`. **Otherwise (D1):** the owner does not send `change`. It writes E11 as for any shorten, and sends `cancel(reason = 'shortened', effectiveMinute = newEnd, costBearer = 'payer_per_terms')`, which is deferred to `newEnd` (F4). For **a shorten to a later end (after `nb(ts)`)**, the buyer pays only a minimum-term fee shown at booking that `newEnd` falls inside (POL-08), and Share bears any plain cancellation fee the partner charges for this cancel, as a cost line (RFC-002 §9.5, POL-23). **A shorten to or before `nb(ts)` is a cancellation** (with or without amend): `cancel(reason = 'buyer_cancel', effectiveMinute = nb(ts), costBearer = 'payer_per_terms')`, and the buyer pays the plain fee shown (POL-08; V5). This is not cancel-and-rebook | A `change` sent for a leg without `supportsAmend` is a protocol defect: alert, nothing sent |
 | `change` (decrease) | Reservation leg `confirmed`; shown terms allow a decrease (else rejected at intake, P2-S115); `supportsAmend` | Per part, newest first (last in, first out, POL-08; RFC-002 §9.7's absolute form): if the part's booking started before `fromMinute`, it is amended to `rate` from `fromMinute` (`rate = 0` amends its end to `fromMinute`); if it starts at or after `fromMinute`, `rate = 0` cancels it. Answer: `CHANGED(changeId, refs)` | As above |
 | `change` (cause `cut`, m8) | A POL-07 cut on a Share leg of the route | Sent to a partner leg only when `supportsAmend`, at Share's initiative, because it lowers Share's cost. Otherwise nothing is sent, and Share keeps paying for the partner capacity (POL-07, POL-23) | — |
 | Amend answers | — | Retried until the partner confirms, without bound. **`NOT_ALLOWED` is terminal**: `CHANGE_FAULT`, alert, Share bears the difference, no retry (F5) | — |
@@ -473,8 +474,11 @@ listing time**:
 
 - **Deferred, never actioned.** A ref or key the journal knows in a non-terminal state:
   `hold_sent`, `confirm_sent`, `final_sent`, `querying`, `partner_booked` undecided,
-  `amending`, `cancel_scheduled`, `cancelling`. The run publishes `DEFERRED` and re-checks
-  the ref once its work resolves.
+  `amending`, `cancelling`. The run publishes `DEFERRED` and re-checks the ref once its
+  work resolves.
+- **Scheduled cancels are compared, not deferred (V3).** A ref with a scheduled cancel whose
+  driver call has not been sent is compared as `confirmed` for the minutes before its
+  `effectiveMinute`. It is deferred only once `cancelling`.
 - **`PARTNER_ONLY`.** A ref unknown to the journal, or one belonging to a tombstoned request
   (the latter takes the POL-28 residue path). It is cancelled at Share's cost with
   `cancelId = hash(partnerLinkId, ref)`: one action per ref, across days.
@@ -482,9 +486,11 @@ listing time**:
   `partner_leg_affected` with `delivered = null`.
 - **`PARTNER_SHORT`.** The partner has a lower rate or a shorter window. It is sent as
   `partner_leg_affected` carrying the partner's figures (D5).
-- **`PARTNER_EXCESS`.** The partner has more than the journal's last confirmed state. The
+- **`PARTNER_EXCESS`.** The partner has more than the leg's **intended** state: the
+  latest change not answered `CHANGE_FAULT`, whether or not the partner has confirmed it
+  (V2). The
   outstanding amend or cancel is re-driven at Share's cost; if none is outstanding, a fresh
-  amend or cancel to the journal's state is sent with `changeId = hash(partnerLinkId, ref,
+  amend or cancel to the intended state is sent with `changeId = hash(partnerLinkId, ref,
   day)`. Operations is alerted.
 
 Every mismatch alerts operations.
@@ -601,7 +607,7 @@ shows one reference per partner leg.
 | Driver call timeout | `callTimeoutMs` per partner (from the terms; default 2,000 ms, est.), never beyond the operation's fence | Each partner call. A timeout after sending is `unknown` → query at once |
 | Hold retry fence | `D_c` | Transient hold answers are retried with exponential backoff and jitter (base 50 ms, cap 1 s, est.). Still failing at the fence → `FAILED(partner_fault)` (P2-S30, P2-S62) |
 | Confirm / final booking fence | The J2/J3 intent `ts < D_c − σ_p`, sent within `h_s` (20 ms, est., p99.9) of its commit. A late send is re-journaled while the fence allows (F12) | P2-S55, P2-S109 |
-| `σ_p_max` | 500 ms (est.; D6) | Listing condition for `with_holds` |
+| `σ_p_max` | 500 ms (est.; D6) | Listing condition for **every** partner (V7) |
 | Expiry granularity bound | `expiryGranularityMs + partnerClockBoundMs + transitMs ≤ commit_margin − τ − 1 s` (about 8.58 s, est.; F11) | Listing condition for `with_holds` |
 | Owner's confirm wait | Until `D − τ`. The partner has at least `commit_margin − τ` (about 9.58 s, est.) | After it, the owner decides not confirmed and sends `release` |
 | Partner hold expiry | `D`, at the partner's granularity, never later, and no earlier than `D − expiryGranularityMs` | P2-S100, P2-S101 |
@@ -629,7 +635,9 @@ shows one reference per partner leg.
 - **Drivers** are versioned independently. A driver change that alters answer
   classification, `supportsAmend` or `supportsFutureCancel` re-runs the driver conformance
   suite (§10.3) and re-classification before deployment. A capability that would disagree
-  with the commercial `decreaseAllowed` blocks the deployment (m13).
+  with the commercial `decreaseAllowed` blocks the deployment (m13). **A driver change
+  removing `supportsAmend` is blocked while any live reservation on the link has a shown
+  term allowing a decrease** (V4).
 - **Classification changes** apply only to requests whose intake `ts ≥ effectiveFrom`.
 
 ## 9. Scenarios relied on
@@ -658,23 +666,23 @@ All IDs at `requirements-v1.10`:
 10. **Yield.** On `yield_answer(accept)`, the hold is released at the partner before `WAITING(newAttempt)` is sent.
 11. **Cancel.** A `cancel` answered transient forever keeps retrying and raises the outstanding-cancellation alert (P2-S82). `NOT_FOUND` for a known ref counts as cancelled.
 12. **Booking set (F3).** Base booking plus one extension, then a shorten into the base window: the extension is cancelled and the base amended. Then a cancel: every remaining booking is cancelled, and `CANCELLED` lists all refs. A decrease reduces the newest part first.
-13. **Deferred cancel (F4).** A revocation with `effectiveMinute` = `T_eff` + 2 days sends no driver call before `T_eff − cancelLeadMs`. The timer survives takeover and `adopt`. A shorten over a non-amend partner cancels at `newEnd`, not before (D1).
-14. **Change order (F5).** Change 1 (shorten to 14:00) is answered unknown while change 2 (shorten to 12:00) is issued: the partner never ends at 14:00 after 12:00 is confirmed. A cancel supersedes an outstanding amend. `NOT_ALLOWED` on an amend gives `CHANGE_FAULT` with no retry.
+13. **Deferred cancel (F4, V1).** A revocation with `effectiveMinute` = `T_eff` + 2 days sends no driver call before `T_eff − cancelLeadMs`. If a buyer cancel then arrives, the driver is called at `nb(ts) − cancelLeadMs`, and the result lists both `cancelId`s; a later cancel with a later minute never postpones it. The timer survives takeover and `adopt`. A shorten over a non-amend partner cancels at `newEnd`, not before (D1).
+14. **Change order (F5).** Change 1 (shorten to 14:00) is answered unknown while change 2 (shorten to 12:00) is issued: the partner never ends at 14:00 after 12:00 is confirmed. A deferred cancel supersedes an outstanding amend only where the amend's remaining effect lies at or after the cancel's minute; a decrease effective earlier continues (V2). `NOT_ALLOWED` on an amend gives `CHANGE_FAULT` with no retry.
 15. **Takeover (F10).** Pause the adapter between the `h_s` check and the send, then take over. The new owner releases the hold before reporting `NOT_BOOKED`, and a confirm landing later fails at the fake partner. For `book_final`, `NOT_BOOKED` comes only after the second query, and a late booking is cancelled at Share's cost.
 16. **Chaos (P2-S28).** The fake driver fails before work, times out after work and is slow, at random. Run any interleaving of commands, adapter crashes and lease moves. After daily reconciliation, Share's records equal the fake partner's.
-17. **Reconciliation (F13, F14, m11).** Seeded PARTNER_ONLY and SHARE_ONLY differences produce one `MISMATCH` each, with the right action. A booking of an undecided request created at 23:59:50 is `DEFERRED`, never cancelled. The same ref mismatching on D and D + 1 produces one action. PARTNER_SHORT produces `partner_leg_affected` carrying the partner's figures; PARTNER_EXCESS re-drives the amend. `RUN_COMPLETED` arrives before 12:00 UTC on D + 1, or the console alerts (P2-S32, P2-S91).
+17. **Reconciliation (F13, F14, m11).** Seeded PARTNER_ONLY and SHARE_ONLY differences produce one `MISMATCH` each, with the right action. A booking of an undecided request created at 23:59:50 is `DEFERRED`, never cancelled. A booking with a scheduled cancel not yet sent, which the partner has reduced, gives PARTNER_SHORT (V3). A decrease not superseded and not yet applied by the partner, found with the higher rate, gives PARTNER_EXCESS against the intended state (V2). The same ref mismatching on D and D + 1 produces one action. PARTNER_SHORT produces `partner_leg_affected` carrying the partner's figures; PARTNER_EXCESS re-drives the amend. `RUN_COMPLETED` arrives before 12:00 UTC on D + 1, or the console alerts (P2-S32, P2-S91).
 18. **Classification (F11, m13).** A partner with minute expiry granularity, or with σ_p > 500 ms, is classified `without_holds`. A commercial `decreaseAllowed = true` with a driver lacking `amend` fails onboarding.
 
 ### 10.2 Account owner (consumer of the partner port), against a fake adapter
 
 1. A route is never confirmed unless every partner leg answered `CONFIRMED` or `BOOKED` (P2-S03, P2-S29).
-2. `book_final` is sent only after every other leg is held, the funds hold is taken and Share's checks have passed. Two `without_holds` legs are rejected at intake (P2-S33, P2-S34). A deadline violating F11's intake rule is rejected; an 11 s deadline at a partner meeting σ_p_max is accepted (P2-S86).
+2. `book_final` is sent only after every other leg is held, the funds hold is taken and Share's checks have passed. Two `without_holds` legs are rejected at intake (P2-S33, P2-S34). A deadline for which `D − commit_margin − σ_p ≤` intake `ts` is rejected. An 11 s deadline is accepted at every listed partner (P2-S86; V7).
 3. Results are applied idempotently by `ResultIdentity`, including reservation-scoped results (F9). A lost result is recovered by re-sending the command. `STALE_SENDER` deposes the owner.
 4. A `CONFIRMED` arriving after the owner's `D − τ` leads the owner to send **`release`** and nothing else. The adapter cancels the booking (P2-S105, R17; F6).
 5. `HoldCmd.wait = false` is sent for such requests. A `REFUSED(IN_FLIGHT)` gives E7 rejected with `retry_after`.
 6. A `partner_leg_affected` produces exactly one E14 for (reservation, leg, partner link). A PARTNER_SHORT records the delivered rate and window, so the buyer is not charged for the shortfall (P2-S91; D5).
 7. Offer acceptance with a partner leg uses `request = {kind: 'offer'}`, `D` = acceptance `ts` + 60 s. A failure releases the offer holds and offers the next candidate (P1-S60, P1-S61).
-8. **Decrease and shorten (S1, D1).** A decrease over a partner leg whose `decreaseAllowed` is false is rejected at intake, stating the rule (P2-S115). A shorten over any partner leg is accepted (P2-S44, P2-S85, P2-S94): with amend it sends `change`; without amend it sends `cancel(reason = 'shortened', effectiveMinute = newEnd)`. Neither path ever sends a new booking.
+8. **Decrease and shorten (S1, D1).** A decrease over a partner leg whose terms shown at booking (recorded on the reservation) forbid one is rejected at intake, stating the rule, whatever the current terms say (P2-S115; V4). A shorten over any partner leg is accepted (P2-S44, P2-S85, P2-S94): with amend it sends `change`; without amend it sends `cancel(reason = 'shortened', effectiveMinute = newEnd)`. A shorten to or before `nb(ts)` sends `cancel(reason = 'buyer_cancel', effectiveMinute = nb(ts), costBearer = 'payer_per_terms')` (V5). Neither path ever sends a new booking.
 9. `cancel` and `change` carry `changeSeq` equal to their E11's log sequence, and a valid (reason, `costBearer`) pair. A buyer cancel carries `effectiveMinute = nb(ts)` (P2-S43).
 
 ### 10.3 Driver conformance suite (every driver, against the partner's sandbox)
@@ -726,14 +734,19 @@ amends it.
   `book_final` as a request of their own. Each addition is a separate booking in the leg's
   booking set (P2-S83, F3).
 - **Decrease** uses `change` → the driver's `amend`, retried until the partner confirms. It
-  is applied newest part first. Where the partner's shown terms forbid a decrease, it is
-  rejected at intake (P2-S115). The shown term is the commercial `decreaseAllowed`, and
-  onboarding fails if that term allows a decrease the driver cannot amend.
+  is applied newest part first. Where the partner's terms shown at booking, as recorded on the
+  reservation (RFC-002 E1), forbid a decrease, it is rejected at intake (P2-S115; V4). The
+  shown term is the commercial `decreaseAllowed` at booking. Onboarding fails if that term
+  allows a decrease the driver cannot amend, and a driver cannot drop amend while a live
+  reservation's shown term allows a decrease.
 - **Shorten** is **always accepted** (POL-08 "any time"; review 38 D1, which overrides the
   first settlement's rejection). With `supportsAmend`, it uses `change` → `amend`. Without
-  it, the owner sends a cancel at the partner deferred to `newEnd`. The buyer pays only a
-  minimum-term fee shown at booking that `newEnd` falls inside; Share bears any plain
-  cancellation fee as a cost line.
+  it, the owner sends a cancel at the partner deferred to `newEnd`. For a shorten to a later
+  end (after `nb(ts)`), the buyer pays only a minimum-term fee shown at booking that
+  `newEnd` falls inside, and Share bears any plain cancellation fee as a cost line. A
+  shorten to or before `nb(ts)` is a cancellation: `cancel(reason = 'buyer_cancel',
+  effectiveMinute = nb(ts), costBearer = 'payer_per_terms')`, and the buyer pays the plain
+  fee shown (POL-08; V5).
 - **Never** cancel-and-rebook at Share's risk.
 
 **Consumer obligations (errata), F2:**
@@ -753,6 +766,11 @@ amends it.
 | RFC-002 §13.1 | `change` carries shorten and decrease, not additions. `outcome_confirmed` carries `partId`. `cancel` is reservation-scoped and has no residue reasons. The reconciliation feed's consumers are the console and notifier |
 | RFC-003 §6.1 | Partner terms: "whether a leg can be decreased" must agree with the driver's capability. Onboarding fails otherwise |
 | RFC-005 (line 1133; X1-S31) | The commercial action recording "whether a leg can be decreased" remains the source of record. A driver deployment cannot change the shown term |
+| RFC-002 E14, §9 input row, §13 (V6 a) | E14 gains `delivered {rate, window} \| null` and the replacement rule (less delivered capacity replaces the record). The "Partner leg affected … Partner reconciliation feed" input becomes `partner_leg_affected` on the reservation command port (m12, D5) |
+| RFC-002 §13.1 reconciliation feed (V6 b) | Identity across days, (partner link, ref) (F13). Kinds PARTNER_SHORT, PARTNER_EXCESS, DEFERRED and RUN_COMPLETED added |
+| RFC-002 §9.7 (V6 c) | A cut sends `change(cause = 'cut')` to a partner leg with amend (m8); today it covers Share legs only |
+| RFC-003 (V6 d) | Rating charges a partner leg marked affected only for the delivered figures (D5). Share's cost line for the plain fee on a shorten to a later end without amend (D1, V5) |
+| RFC-006 (V6 e) | Console alert at 12:00 UTC on D + 1 when `RUN_COMPLETED` is missing (m11). The new event kinds for the console and notifier |
 
 ### Readings reconciled without a disagreement
 
@@ -785,7 +803,7 @@ All findings are applied. Decisions D1–D6 are adopted as binding.
 | Finding | Resolution | Where |
 |---|---|---|
 | F1 (D1) | A shorten is always accepted. Without amend, it is carried out by a cancel deferred to `newEnd`, with fees as D1 states. Only a decrease may be forbidden | §3.2 intake row, §3.3, S1, §10.2 test 8 |
-| F2 | The S1 errata list is completed: RFC-000 §8 and V-03; RFC-002 §3.2, §9.3, §9.5, §10.1–§10.4, §10.6, §10.7, §13.1; RFC-003; RFC-005. J11 is added, and `amending` and `cancel_scheduled` statuses | S1 obligations, §2.1, §3.1 |
+| F2 | The S1 errata list is completed: RFC-000 §8 and V-03; RFC-002 §3.2, §9.3, §9.5, §10.1–§10.4, §10.6, §10.7, §13.1; RFC-003; RFC-005; and, per fix verification 50 V6, RFC-002 E14 / §9 / §13 (`partner_leg_affected`, `delivered`), §13.1 feed identity and kinds, §9.7 (cut to a partner leg), RFC-003 (rating of delivered figures; Share's plain-fee cost line) and RFC-006 (missing-run alert, event kinds). J11 is added, and `amending` and `cancel_scheduled` statuses | S1 obligations, §2.1, §3.1 |
 | F3 | Reservation-leg booking set. `outcome_confirmed` carries `reservationId` and `partId`. `cancel` acts on every booking. `change` is mapped per booking (straddling booking amended, later ones cancelled, last in first out for a decrease). Results list refs | §2.1, §3.3, §10.1 test 12 |
 | F4 | `effectiveMinute` is required. Cancels are scheduled in the adapter's log, re-armed on takeover and `adopt`. `supportsFutureCancel` and `cancelLeadMs` added | §2.1, §2.2, §3.3, §7, §10.1 test 13 |
 | F5 | `changeSeq` is the E11's log sequence. Changes are applied strictly in order per (reservation, leg); a later absolute change and a cancel supersede. For a cancel, `NOT_FOUND`/`absent` counts as confirmed. For an amend, `NOT_ALLOWED` is terminal | §2.1, §3.3, §4, §10.1 test 14 |
@@ -817,3 +835,17 @@ All findings are applied. Decisions D1–D6 are adopted as binding.
 | RQ-1 | Resolved by D1; no requirements change | — |
 | RQ-2 | **Open with the requirements owner:** extend P2-S91 row 2 to a partner that has the reservation only in part. C12 already behaves this way (D5), so no contract change follows from it | — |
 | AR-1, AR-2, AR-3 | Listed as errata | S1 obligations |
+
+## Fix verification 50 resolution
+
+Applied exactly as proposed; C12 frozen at C4.
+
+| Defect | Resolution | Where |
+|---|---|---|
+| V1 | A later cancel with an earlier minute moves a scheduled J5 earlier and re-arms it; never later; both `cancelId`s listed | §3.3 `cancel`, §10.1 test 13 |
+| V2 | A cancel supersedes only amends whose remaining effect lies at or after its minute. PARTNER_EXCESS compares against the intended state | §3.3 Ordering, §3.5, §10.1 tests 14, 17 |
+| V3 | A scheduled cancel not yet sent is compared as confirmed before its minute; deferred only once `cancelling` | §3.5, §10.1 test 17 |
+| V4 | The decrease check reads the terms shown at booking, recorded on the reservation. A driver cannot drop amend while a live reservation's shown term allows a decrease | §3.2, §8, S1, §10.2 test 8 |
+| V5 | Share bears a plain fee only for a shorten to a later end. A shorten to or before `nb(ts)` is a cancellation, and the buyer pays the plain fee shown | §3.3, S1, §10.2 test 8 |
+| V6 | Five erratum groups added (RFC-002 E14/§9/§13, §13.1 feed, §9.7; RFC-003; RFC-006) | S1 obligations, F2 row |
+| V7 | Intake rejects only when no confirm could ever be sent. `σ_p ≤ σ_p_max` is a listing condition for every partner | §3.2, §7, §10.2 test 2 |
