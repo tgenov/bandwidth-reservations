@@ -15,7 +15,8 @@ What changed from revision 3 (the full mapping is in [Revision 4 resolution](#re
 
 1. **Queued changes funded for the worst case of the changes ahead** (J-01, D-1): `admit`
    sizes a change's hold against the per-minute envelope of every outcome of the changes
-   ahead of it in the reservation's queue, and the deciding entry releases the excess; the
+   ahead of it in the reservation's queue, with minutes after a recorded price step priced
+   at the stepped price (V-3), and the deciding entry releases the excess; the
    failed-roll-forward path is kept only for posting drift (§A5.2, §A5.3, §A10 `Ask`).
 2. **Key spending per segment** (J-02, D-2; POL-25 and P2-N8 as amended by Q-2,
    P2-S117): every part and every extension interval records the key that added it; `KS_k`
@@ -308,9 +309,9 @@ admission and the wallet is probed at least 3 times a minute from at least two l
 re-slotting that would leave a slot without one: about **16,384** probe accounts at the
 design load (est.). RFC-006 provisions each before use with KYB passed (an F4 from identity
 and access) and then a credit limit (F5), since F5 is refused without KYB (J-11). A probe
-account's funds state is a few rows; if every probe of admission books, the probes add
-about 3 × 16,384 / 60 ≈ 820 entries/s across all slots (est., about 3% of the 25,000/s
-design throughput), nothing to settlement, receivables or statements. There is also a
+account's funds state is a few rows; X2-S27 asks for 3 probes per slot per minute in each serving
+region, so the probes add about 820 probe bookings a second per serving region, 1,640 in
+all, about 3,800 account-log entries a second (est., RFC-002 §14), nothing to settlement, receivables or statements. There is also a
 designated **probe supplier** owning the probe links (§B7.2); each probe account is
 flagged by its own F9, and none is a buyer's account. Which slots exist and the probing
 itself are RFC-006's (X2-S27 primary).
@@ -325,7 +326,7 @@ itself are RFC-006's (X2-S27 primary).
 | E1′ Intake, decided at intake (rejected for standing, limits or funds) | The `Ask`, the verdict (`Refuse` with its reason and amounts: `RA` itemised, the limit reached, `x − h` and `x − h + LBW`), and the headroom and key headroom it was checked against (J-13: what replay needs) | Nothing held |
 | E5 Confirm | Request `q` → reservation `r`; new `H_r`; the segments added, with their key (§A2) | Removes `h_q`, `mbps_q`; sets `H_r = R_r` (new reservation) or the change's hold, releasing any excess of `h_q` (§A5.3, §A6) |
 | E4 Withdraw, E6 Expire, E7 End (rejected, failed, withdrawn, key revoked, suspended, expired) | Request `q` released | Removes `h_q` and `mbps_q` (P4-S12) |
-| E11 Reservation change (decrease or shorten effective, cancellation effective, revocation, cut under POL-07, move to an equivalent path, termination, release after grace, price change) | The reservation's new schedule with its segments and **effective minute**, which may be in the future (RFC-000 §8 lifecycle feed, A-3: revocation due, a move at the offer's move time, a price change on its announcement; never before the entry's `ts`), end cause, fee due from the buyer (`fee_state_r → due`). A price-change E11 is **one per (account, price version)**, written in the F11 entry at the announcement (below), and carries `PriceTookEffect` for each affected reservation | Resizes or ends the hold (§A6); a future end or cheaper schedule lowers `R_r` at once, since `cov_r` follows the recorded schedule; a price increase counts only from its effective minute (§A6). `PriceTookEffect` records the step in `sched_price_r` when the E11 commits; the hold grows only at F7 *price effective* |
+| E11 Reservation change (decrease or shorten effective, cancellation effective, revocation, cut under POL-07, move to an equivalent path, termination, release after grace, price change) | The reservation's new schedule with its segments and **effective minute**, which may be in the future (RFC-000 §8 lifecycle feed, A-3: a move at the offer's move time, a price change on its announcement; never before the entry's `ts`, except a POL-07 cut or revocation, effective at its `T_eff`, RFC-000 §8 (2), whose minutes rating has not closed), end cause, fee due from the buyer (`fee_state_r → due`). A price-change E11 is **one per (account, price version)**, written in the F11 entry at the announcement (below), and carries `PriceTookEffect` for each affected reservation | Resizes or ends the hold (§A6); a future end or cheaper schedule lowers `R_r` at once, since `cov_r` follows the recorded schedule; a price increase counts only from its effective minute (§A6). `PriceTookEffect` records the step in `sched_price_r` when the E11 commits; the hold grows only at F7 *price effective* |
 
 **Funds entry kinds** (this Part defines them; RFC-002 registers them). Feed events arrive
 through Kafka from the producer's outbox (RFC-000 §5.5) and are applied once, by the
@@ -423,7 +424,13 @@ which may be confirmed or fail:
    hold is released.
 3. For an **increase** by `Δ` Mbps at locked price `π` over its interval `I`, the added
    charge at `m` is at most `Δ·π` for `m ∈ I ∩ [start_r, e⁺)`. For an **extension** to
-   `E`, it is at most `ρ⁺(m)` for `m ∈ [e⁻, E)`.
+   `E`, it is at most `ρ̂ = max ρ⁺` over `[e⁻ − 1 min, e⁺)` (the highest rate any outcome
+   can carry past its end, since an extension continues every part active at the end)
+   for every `m ∈ [e⁻, E)` (V-1).
+   In both, and in the first two rows of the table above, a minute at or after the
+   effective minute of a **recorded price step** (`sched_price_r`, recorded by a
+   `PriceTookEffect`) is priced at the stepped price when that is higher (V-3): so a step
+   whose F7 *price effective* commits between intake and decision is already funded.
 4. `x` is the coverage of that per-minute bound over the hold window `[p_r, p_r + CW)`,
    rounded as `cov` is (POL-11), plus any fee part the change adds.
 
@@ -446,7 +453,9 @@ left. The deciding entry **releases `h_q − (R_r(after) − R_r(before))` when 
 the excess of the envelope over what this outcome needs (D-1).
 
 A shortfall, where `R_r(after) − R_r(before)` exceeds `h_q`, can now come only from
-**posting drift**. As minutes are posted between intake and decision, the hold window
+**posting drift**: a recorded price step taking effect between intake and decision is
+already funded, since `admit` prices the minutes after it at the stepped price (§A5.2,
+V-3), and the excess is released here. As minutes are posted between intake and decision, the hold window
 slides and the added segments gain minutes at its far end. That is one or two minutes at
 the usual posting lag, since the deadline is at most 60 s, and more only while rating
 catches up. If headroom cannot cover that difference, it is a failed roll-forward (§A7)
@@ -455,9 +464,9 @@ refused or suspended at its decision because of its own queue (P2-S70, P4-S66, i
 A-2). Every other outcome releases `h_q` in the deciding entry itself (P4-S12); its
 reporting follows RFC-002's "releases durable" rule.
 
-**Example (J-01's trace).** Open-ended `r`: 100 Mbps at 2 µ, `H_r = 288,000`. An increase
-by 50 Mbps at 2 µ is queued (`h = 144,000`). Behind it, an extension of a 2 h window
-`[10:00, 12:00)` to 14:00 is submitted at 10:00:
+**Example (J-01's trace).** `r`: 100 Mbps at 2 µ over `[10:00, 12:00)`, `H_r = 24,000`.
+An increase by 50 Mbps at 2 µ over the window is queued (`h = 12,000`). Behind it, an
+extension to 14:00 is submitted at 10:00:
 
 | Quantity | Value |
 |---|---|
@@ -511,7 +520,7 @@ stateDiagram-v2
 | Confirmed increase or extension | §A5.3 | Not possible |
 | Price change takes effect (POL-27): the F7 *price effective* tick at the effective minute of a step recorded by the price-change E11's `PriceTookEffect` (written in the F11 entry at the announcement, A-3); the new price applies to every part, parts added later included (P3-S64). Until the tick, `cov_r` prices every minute at the current price (an increase counts only once in effect) | `H_r = R_r` at the new price; if the growth cannot be covered, §A7 (P4-S62, P4-S101); the buyer had the F11 notice with its top-up quote `price_notice` earlier (P4-S108) | `H_r` unchanged; the higher charges are taken from it |
 | F7 fee term ended | `R_r` drops to the coverage alone (P4-S96) | `H_r = min(H_r, cov(p_r, Wend_r))` |
-| Reservation ends (cancelled, shortened to an end, revoked, released, terminated, or at its window's end; P4-S11, P4-S61). An end recorded ahead of its minute (revocation due, A-3) lowers `R_r` at once, the window being clipped to the recorded end | **Draining**: `H_r = min(H_r, cov(p_r, end_r) + fee_due)`, where `fee_due` is the shown fee if the buyer pays it (own cancellation within the minimum term, a booked window ending inside the minimum term (RQ-19-2, P3-S74), release after grace, termination; not on revocation or a cut, POL-08) and `fee_state_r` is not `charged`; no funds are held for its charges from the minute it ends. A reservation is Draining from `end_r` without an entry of its own, because its `R_r` already equals this | Same |
+| Reservation ends (cancelled, shortened to an end, revoked, released, terminated, or at its window's end; P4-S11, P4-S61). An end recorded ahead of its minute (a move or a future shorten, A-3) lowers `R_r` at once, the window being clipped to the recorded end | **Draining**: `H_r = min(H_r, cov(p_r, end_r) + fee_due)`, where `fee_due` is the shown fee if the buyer pays it (own cancellation within the minimum term, a booked window ending inside the minimum term (RQ-19-2, P3-S74), release after grace, termination; not on revocation or a cut, POL-08) and `fee_state_r` is not `charged`; no funds are held for its charges from the minute it ends. A reservation is Draining from `end_r` without an entry of its own, because its `R_r` already equals this | Same |
 | Shortened to a later end `end'` (POL-08 as amended by RQ-19-1) | A **plain cancellation fee** (no minimum term) is not incurred: `H_r = R_r` from the new schedule, the fee part kept until `end'` (it is still due on a cancellation). A shorten to or before the next minute boundary is a cancellation (above) (P3-S63 row 3) | `H_r = min(H_r, cov(p_r, min(Wend_r, end')) + fee part)` |
 | Shortened, the new end `end'` inside a partner leg's minimum term (POL-08 as amended by RQ3-4, RQ-19-1) | The shown fee is due as for a cancellation (`fee_state_r → due`) and posted as M10 at the change's effective minute (P3-S63 row 1): `H_r = min(H_r, C'_r + fee_due)` with `C'_r` the coverage to `end'`, so the hold never grows at a shorten; the F1 that posts the fee takes it from the hold and sets `charged`, then `H_r = R_r` from the new schedule, with no fee part, as for any posted minute (J-09) | `H_r = min(H_r, cov(p_r, min(Wend_r, end')) + fee_due)`; the fee is taken from it when posted |
 | F1 in Draining | `H_r` falls by what is posted, to 0 (**Closed**) | Same |
@@ -836,7 +845,7 @@ one batch sharing it (§A10, "Time"); and RFC-002's "no followers" reading is th
 | F2 entries | Rating publishes each account's figure at most every 2 s (`exposure_publish_interval`, decided; R4-A3 closed), within `attribution_lag_max` (10 s) end to end: at most about 50,000 entries/s across all partitions (est.), each about 70 B with the in-flight usage batch and `Δ_b`; the owner applies only the latest figure per account in each batch |
 | F3 and F7 *exposure step* | One F3 per account-product term change and per announced `usage_price` change; two steps per announced change (entering and leaving the span); rare |
 | F11 and F7 *price effective* | One each **per (account, price version)**, listing the account's affected open-ended reservations, so a product-wide change costs one entry per affected account at announcement and one at the effective minute: at most about 100,000 entries within that minute, about 1,700/s (est.), plus one price-change E11 per (account, price version) in the F11 entry (RFC-002 JR-4), so a product-wide change is about one entry per affected account at the announcement and one F7 at the effective minute (R4-A6) |
-| Probe accounts | One per account slot (X2-S27, B-AI-10): about 16,384 at design load, up to about 820 probe entries/s in all (est.); never rated, invoiced or settled (§A3) |
+| Probe accounts | One per account slot (X2-S27, B-AI-10): about 16,384 at design load, up to about 1,640 probe bookings/s (about 3,800 entries/s) in all (est.); never rated, invoiced or settled (§A3) |
 | Admission envelope | `admit` for a queued change is O(changes ahead × parts) (§A5.2); queues are short |
 | Cost per F1 | O(reservations in the movement): slide or consume each window by one minute (one subtraction and one addition) |
 | Admission cost | `admit` is O(parts of the requested reservation) plus O(1) for the totals, which are maintained incrementally; within entry 1's budget (RFC-000 §3) |
@@ -1582,7 +1591,7 @@ cut records and the external-kind movement lists.
 | Order independence: random flow-record arrival with duplicates and lateness gives identical balances | P4-S38, P4-S39 |
 | Per-line dedup: re-composed batches after injected crashes post every line once; a changed line is excluded and reported | P4-S57, P3-S12, P3-S13 |
 | Funds replay determinism: every account log replayed on the current and previous rules version reproduces every recorded outcome and every answer | P4-S72, §A4 |
-| Hold invariant A-1 checked after every entry in a randomized simulation of bookings, changes, postings with lag, price changes and suspensions; **queued changes behind increases, decreases, extensions and shortens**, each outcome of the changes ahead: never a shortfall at a decision beyond posting drift, never a suspension from a change's own queue (J-01) | P4-S66, P4-N3, P2-S70 |
+| Hold invariant A-1 checked after every entry in a randomized simulation of bookings, changes, postings with lag, price changes and suspensions; **queued changes behind increases, decreases, extensions and shortens**, each outcome of the changes ahead: never a shortfall at a decision beyond posting drift, including when a price step takes effect between intake and decision (V-3), never a suspension from a change's own queue (J-01) | P4-S66, P4-N3, P2-S70 |
 | Key spending by segment: K1 books, K2 increases and extends, an administrator increases; `KS` per key equals the sum over its segments, rounding never understates a key (J-02) | P2-S117, P4-S68, P2-S71 |
 | Commit-timestamp evaluation: a batch pushed across 00:00 UTC, across a fee-term end and across an `LB` step re-evaluates every entry; replay equals the record (J-03) | P4-S72 |
 | `LB` span: random `usage_price` schedules; `LB(ts)` equals the brute-force maximum over `[ts − 370 s, ts + 60 s]` at every instant, and every step is an F7 entry (F3-08) | P4-S16, P4-S19 |
@@ -1931,6 +1940,11 @@ F4** already followed in §A4 and §A10.
 | J-03 (Major) | §A10 "Time" (provisional composition, whole batch re-evaluated on a push, E1 ↔ E1′), JR-7, §B13 |
 | J-04 (Major) | §A4 (F11 and one price-change E11 with `PriceTookEffect` per (account, price version)), §A10 (`PriceTookEffect` kept, JR-4 revised, call sites); P4-S108 traceability |
 | RFC-002 rev. 4 §2.4 items 8–15 (reconcile pass) | §A10 (`Ask.change`, `Ask.ahead` with adding keys, `Schedule` segments with principal and price steps, `PriceTookEffect` on the E11), §A4 (E11, F4 resolved or read timestamp, F11), §A11, R4-A6, JR-5, JR-11, AI4-11 (remaining difference noted) |
+| Review 23 V-1 | §A5.2 item 3: an extension is funded at `ρ̂ = max ρ⁺` over `[e⁻ − 1 min, e⁺)` for every minute it adds |
+| Review 23 V-2 | §A5.2 example restated on a fixed window `[10:00, 12:00)` (`H_r = 24,000`, increase `h = 12,000`); table unchanged |
+| Review 23 V-3 (option a, binding) | §A5.2 (minutes after a recorded price step priced at the stepped price at intake, first two rows and item 3), §A5.3 (shortfall only from posting drift), §B13 simulation row |
+| Review 23 V-4 | §A4 E11 row (the POL-07 cut or revocation exception at `T_eff`, RFC-000 §8 (2)), §A6 "Reservation ends" row (a move or a future shorten) |
+| Review 23 V-5 | §A3 probe paragraph and §A11 row: about 820 probe bookings/s per serving region, 1,640 in all, about 3,800 entries/s (RFC-002 §14) |
 | J-05 (Major); A-1 | §A4 (ledger-position gate, F5 variants, F6), §A7 (resuming), §B5, §B9, §B12 (invoice-status feed, credit-limit command), JR-8 |
 | J-06 (Major), D-4 | §A4 (F1 removes the M19's invoice from `OD`; F6 *written off*), §B5 (written-off invoice closed; `I`), §A7 (P4-S94 e1) |
 | J-07 (Major), D-3; A-3 | §A4 (E11 effective minute), §A6 (price change by F7 *price effective*; recorded ends), Invariant A-1 note, §A10 |
@@ -1954,7 +1968,7 @@ F4** already followed in §A4 and §A10.
 | RQ-19-1, RQ-19-2; P3-S63, P3-S74 | §A3 (fee part), §A6 (shorten rows; Draining), §B2 (M10), §B3.4; traceability |
 | Unposted-usage publish interval 2 s (decision) | §A4 (F2), §A11, §B12; R4-A3 closed |
 | Lateness bound 430 s; P4-S15, P4-S16, P3-S37 | §A3, §A7 (53,750 / 55,750 / 656,250 µ), Risks R4-A5 |
-| X2-S27, POL-06 as amended; B-AI-10 | §A3 (one probe account per slot, about 16,384; about 820 entries/s), §A11; traceability |
+| X2-S27, POL-06 as amended; B-AI-10 | §A3 (one probe account per slot, about 16,384; about 1,640 probe bookings/s, about 3,800 entries/s, V-5), §A11; traceability |
 | AI-R5-4 | §A2 (`id_ts`), §A4 (F4 resolved timestamp, catch-up), §B12; AI4-11 raised |
 | POL-04 (RQ-R6-2: many notices per delivery) | §A7 ("told") |
 | POL-07 (B-RQ-10: displaced partner route cancelled at Share's cost) | §B2 (M11 reason) |
