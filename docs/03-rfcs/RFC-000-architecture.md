@@ -2,7 +2,7 @@
 
 | | |
 |---|---|
-| Status | Draft, revision 3.1: revision 3 revised per the [second adversarial review](../reviews/08-rfc-000-review-2.md) (A0R-01 … A0R-14, R2-D1 … R2-D7), then corrected per its [verification](../reviews/10-rfc-000-verification.md) (V-01 … V-08), after revision 2 applied the [first](../reviews/06-rfc-000-review.md) (A0-01 … A0-21); see "Review resolution" at the end |
+| Status | **Accepted**, revision 3.2 (W-01, W-02 from the verification's confirmation). History: revision 3.1: revision 3 revised per the [second adversarial review](../reviews/08-rfc-000-review-2.md) (A0R-01 … A0R-14, R2-D1 … R2-D7), then corrected per its [verification](../reviews/10-rfc-000-verification.md) (V-01 … V-08), after revision 2 applied the [first](../reviews/06-rfc-000-review.md) (A0-01 … A0-21); see "Review resolution" at the end |
 | Satisfies | All — structural. Allocates every need (P1-N1 … X2-N6, 66 in all) to an owning component and to the detailed RFC that specifies it; the scenarios themselves are satisfied by RFC-001 … RFC-006 |
 | Policies | POL-01 … POL-33 (every entry of the register; §7 names the component that applies each need, and §2 the policies each component serves) |
 | Prior decisions | History log D3, D12, D13, D21 (carried forward in Competition) |
@@ -694,8 +694,15 @@ decision relies on (A9).
   owner's log, never through the leader's write path. The leader publishes two positions,
   piggybacked on its heartbeats: a **closed position** every 200 ms or so (everything up to
   it has been applied as of a stated time), and a **report position**. Status replicas hold
-  **read leases** from the leader, renewed on heartbeats and lasting at most
-  `status_staleness` − ε (V-01). The leader advances the report position to P only once a
+  **read leases** from the leader, renewed on heartbeats (W-01). A lease lasts at most
+  `read_lease` ≈ 500 ms (est.), chosen so that the worst decision-to-report path plus one
+  lease plus ε fits within `status_staleness`. The replica times its lease from when it
+  *sent* the request, and treats it as expired ε before the leader does, so clock skew
+  cannot let a replica answer from an expired lease. The leader does not renew the lease
+  of a replica that is behind the report position it is trying to reach. Leases are granted
+  only within the leader's own leadership lease, so a new leader, which cannot know its
+  predecessor's leases, starts reporting only after the old leadership lease (and with it
+  every read lease it granted) has expired. The leader advances the report position to P only once a
   majority of voters knows P is committed **and** every replica with a live read lease has
   acknowledged applying the log through P (or its lease has expired). That costs one
   majority round trip after the commit: about 10 ms steady, about 65 to 70 ms with a region
@@ -791,13 +798,17 @@ recorded in RFC-006 (A0R-05, R2-D2); the cut analysis below depends on it.
   disaster lasts. **The change is made one voter at a time** (V-07), never as a one-step
   switch, whose old and new majorities could be disjoint ({B1, B2, C1} and {A1, A2, C2})
   and unsafe if the declared-lost region is only isolated. With A the surviving region,
-  B the lost one and C the R3 voters: (1) add C2 as a non-voting learner until it has
-  caught up; (2) promote C2 to voter (6 voters, majority 4); (3) remove B1 (5 voters,
-  majority 3); (4) remove B2 (4 voters, majority 3). Each step is one committed
+  B the lost one and C the R3 voters (W-02): (1) remove B1 (4 voters A1, A2, B2, C1,
+  majority 3); (2) add C2 as a non-voting learner until it has caught up; (3) promote C2
+  to voter (5 voters, majority 3, four of them live); (4) remove B2 (4 voters A1, A2, C1,
+  C2, majority 3). The group never needs 4 of 4. Each step is one committed
   configuration entry whose majority overlaps the previous one's. Restoration reverses it
   the same way (add B1 and B2 as learners, promote them one at a time, then remove C2).
   Joint consensus is an equivalent alternative; RFC-006 picks one. Until step 3 commits,
-  all three survivors are needed for every commit, so the change starts immediately on
+  all three surviving voters are needed for every commit; from then on the group tolerates
+  one more fault. As usual for single-server changes, a new leader commits an entry in its
+  own term before proposing any configuration change (RFC-006). Because all three
+  survivors are needed until step 3, so the change starts immediately on
   declaration, the placement log first, then every group in a staggered order.
 - **Leaders** of the admission tier are all in one Kenyan region while it is healthy
   (R1 until measured otherwise, R2-D7), failed over region by region (§3). Stateless services (edge, workflow workers co-located with account
@@ -1216,5 +1227,7 @@ in revision 3.1 (last table).
 | V-04 | Payments state partitioned per kind: payment events, reference bindings and orphan reversals by (provider, transaction reference); invoices, invoice payments as applied and write-offs by account; reconciliation runs by day. Transfer confirmations and failures moved to payouts (their only writer), keyed by the instruction reference with the provider reference recorded. §2, §4.4. |
 | V-05 | The binding is made only by the first authenticated **and well-formed** event; malformed events are recorded and rejected without a binding (P4-S05). §2, §4.4. |
 | V-06 | Worst case restated: `δ_x` ≈ 70 + 10 + 70 = 150 ms (R1 lost), `ε + δ_x` ≈ 190 ms, a 10 ms margin to `τ`; RFC-006 alarms on the monitored invariant before the margin is used up. §4.3. |
-| V-07 | The 2 + 2 change is specified as single-voter steps (add C2 as learner, promote, remove B1, remove B2; reversed on restoration), with joint consensus as an equivalent alternative for RFC-006; all survivors are needed until step 3, so the change starts at once on declaration, the placement log first. §5.1. |
+| W-01 | Read lease bounded by `read_lease` ≈ 500 ms so decision-to-report + lease + ε ≤ `status_staleness`; replica-side expiry ε early; no renewal for lagging replicas; leases only within the leader's leadership lease |
+| W-02 | Membership steps reordered (remove B1 first) so the group never needs 4 of 4; new leader commits an own-term entry before a configuration change |
+| V-07 | The 2 + 2 change is specified as single-voter steps (W-02 reorders: remove B1, add C2 as learner, promote, remove B2; reversed on restoration), with joint consensus as an equivalent alternative for RFC-006; all survivors are needed until step 3, so the change starts at once on declaration, the placement log first. §5.1. |
 | V-08 | §4.2 adds the account partition failing over before the deadline (RQ-12, bounded by the 1 min RTO); RQ-12 moved to Resolved (v1.5, review 09); P2-S107 cited in §4.3 and §4.2, P2-S108 in §4.6, P2-S109 and P2-S110 in the fence bullet and §3, P2-S111 in §4.2 and §4.6. Header rebased on `requirements-v1.5`. |

@@ -94,3 +94,57 @@ a late partner confirm. None of the defects is a Blocker. Each has a local fix.
   then decision) is kept without the mark; only its recovery needs V-03. A0-11's exact
   buyer balance still holds under A0R-09's homing. A0-06 is superseded by A0R-06, subject
   to V-01 and V-02. The other first-round fixes are unchanged in revision 3.
+
+## Confirmation (revision 3.1)
+
+| | |
+|---|---|
+| Under review | [RFC-000](../03-rfcs/RFC-000-architecture.md) revision 3.1 (commit `e398824`), rebased on `requirements-v1.5` |
+| Checked | Each V-01 … V-08 fix against its "Review resolution" row; crash-point traces for V-01, V-02, V-03 and V-07; the latency figures |
+
+### Verdict
+
+**ACCEPT WITH CHANGES.** V-02 … V-06 and V-08 hold as written. Two defects remain:
+
+- **W-01:** the V-01 read lease is not bounded tightly enough, and its expiry is not
+  specified.
+- **W-02:** one sentence of the V-07 membership sequence is wrong, and the step order
+  leaves the group with no fault tolerance for longer than necessary.
+
+Both are local to §4.6 and §5.1.
+
+| Fix | Status | Trace or check |
+|---|---|---|
+| V-01 | **Holds in shape; defect W-01** | C9 again: replica X holds a live lease, so the report position cannot pass P until X has acknowledged P. A report elsewhere therefore implies X has applied P. Closed |
+| V-02 | **Verified** | C10 again. The edge answers final only at the report position, so a majority of voters knows P is committed. During an outage, rule 3 queries any majority, which holds a voter that knows P, and finds the outcome. Rule 1 answers it. Closed. P2-S108 and P2-S111 hold |
+| V-03 | **Verified** | C8 again. (a) A stale confirm arrives after the termed resume entry: it carries a lower term, so it is refused. (b) It arrives before: it is journaled, so the query shows it outstanding and the new leader waits for the answer until `D − τ`, then expires and cancels. (c) It arrives after the release: the tombstone refuses it. (d) The partner answers after the release: the booking is cancelled at once at Share's cost. (e) A confirm past `D − commit_margin` less the skew budget is refused, so the journaled send time never exceeds the fence (POL-26, P2-S109). Book-final for a partner without holds follows the same rules. No path leaves a residue for daily reconciliation |
+| V-04 | **Verified** | Payments, invoices and runs each have one partition key. Payouts is the only writer of transfer confirmations, so P4-S87 and P4-S95 are judged locally |
+| V-05 | **Verified** | A malformed first event is rejected without a binding, so the correct event that follows is credited (P4-S04, P4-S05) |
+| V-06 | **Verified** | `δ_x` 70 + 10 + 70 = 150 ms; `ε + δ_x` 190 ms; margin 10 ms; alarm in RFC-006 |
+| V-07 | **Safe; defect W-02** | Every step's majority overlaps the previous one's: 3 + 4 > 6, 4 + 3 > 6, 3 + 3 > 5. No configuration has more than 2 voters in one region, so every majority spans two regions. The change is safe if R2 is only isolated (C12). Restoration is likewise safe |
+| V-08 | **Verified** | §4.2 has the RQ-12 row. RQ-12 is under Resolved. P2-S107 … S111 are cited and match v1.5 POL-04 ("before or at the deadline") |
+
+**Latency consistency.** The figures are internally consistent:
+
+- **Single-link from R1:** 10 + 5 + 27 + 27 + 25 + 10 ≈ 105 ms.
+- **Other single-link variants:** R2 edge about 115 ms; drift about 135 ms; rejection
+  about 105 ms; not confirmed after a hold about 160 ms.
+- **Route not confirmed:** 5 + 27 + 25 + 10 ≈ 70 ms steady; about 215 ms degraded.
+- **After a region loss:** R2 lost 3 × 65 + 20 + 65 = 280 ms; R1 lost
+  3 × 70 + 20 + 70 = 300 ms; `pending` still within about 90 ms.
+- **Two-write lever (R13):** 10 + 5 + 2 × 65 + 65 = 210 ms.
+- **Margin:** about 95 ms in steady state.
+
+§3, §5.1 (failure and cut rows), Benefits and R13 agree with each other. RQ-3 covers the
+280–300 ms only for a declared disaster. The double-cut and isolated rows say they count
+against availability unless declared, which is consistent with POL-06. The admission
+probe accepts `pending` within 200 ms, which the edge still gives, so in those rows only
+R2 (or R1 when isolated) is unavailable. The A0R-02 resolution row still says "145 ms
+degraded", but it records revision 3 and is superseded by V-06. It is not a defect.
+
+### Remaining defects
+
+| # | Fix | Defect | Fix |
+|---|---|---|---|
+| W-01 | V-01 | **The read lease is too long, and its expiry is not specified.** (a) Leases last up to `status_staleness` − ε, and "a slow replica delays a report by at most its lease". A lagging replica can therefore hold the report position back until about 35 ms + (1 s − ε) after the decision, or longer on the degraded path. A fresh replica has the outcome but may not report it, so P2-S99 ("from `status_staleness` after the decision") fails. (b) The leader drops a replica on lease expiry, but the replica must stop using its lease first; otherwise, with clock skew, it answers `pending` after the leader has reported without it (C9 reopens). (c) After a leader change, the new leader does not know the old leader's leases. If it advances the report position while one is still live, C9 reopens again | (a) Bound the lease so that the worst decision-to-report path + lease + ε ≤ `status_staleness`. The degraded path is about 215 ms, so a lease of about 500 ms (est.) fits. The leader does not renew the lease of a replica that has not acknowledged the current report position. (b) The replica times its lease from when it sent the renewal request; the leader times it from when it granted it, plus the drift bound. (c) A leader grants read leases only within its own leadership lease. A new leader then needs no knowledge of old leases, because it already waits out the old leadership lease; alternatively, it waits one maximum read lease before its first report. State these in §4.6 and in the RFC-006 platform contract (§8) |
+| W-02 | V-07 | **One sentence of the sequence is wrong, and the order delays fault tolerance.** "Until step 3 commits, all three survivors are needed" is wrong for step 2: with 6 voters the majority is 4, so all **four** live voters are needed, including the just-promoted C2. The group tolerates no fault through steps 1–3 | Reorder: (1) remove B1, leaving 4 voters, majority 3, all three survivors needed; (2) add C2 as a learner, then promote it, giving 5 voters, majority 3 of 4 live, so one fault is tolerated; (3) remove B2. Each majority still overlaps the previous one's, and no configuration has more than 2 voters in one region. The group never needs 4 of 4, and it tolerates a fault one step earlier. Correct the sentence to match. RFC-006 also requires the usual single-server-change guard: a new leader commits an entry in its own term before it proposes a configuration change |
