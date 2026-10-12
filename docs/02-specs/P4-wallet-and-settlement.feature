@@ -871,26 +871,30 @@ Feature: Wallet, funds holds, ledger and supplier settlement
 
       Examples:
         | difference                                                                                                                              |
-        | the funds held at the payment partner differ from the signed sum of buyer balances and supplier balances, plus Share's own balance there, less payouts the partner has executed that the ledger has not yet confirmed |
+        | the funds held at the payment partner differ from the signed sum of buyer balances and supplier balances, plus Share's own balance there, less payouts the partner has executed that the ledger has not yet confirmed, plus payments the partner has received and reported that the ledger has not yet posted |
+        | a payment counted as received by the partner and not yet posted by the ledger matches no credit in the partner's report                  |
         | a provider transaction in the partner's report matches no ledger top-up, invoice payment, reversal, payout, supplier-debt payment or movement of Share's own funds |
         | a ledger top-up, invoice payment, reversal, payout, supplier-debt payment or movement of Share's own funds matches no provider transaction in the partner's report |
         | a provider transaction matches more than one ledger movement                                                                            |
 
     @P4-S90 @need-P4-N14 @POL-24 @POL-21 @POL-15 @POL-22
-    Scenario Outline: Funds at the partner equal the signed balances, less payouts executed but not yet confirmed, and no alert is raised
+    Scenario Outline: Funds at the partner equal the signed balances, less payouts executed but not yet confirmed, plus payments received but not yet posted, and no alert is raised
       Given at the end of day D the payment partner holds <partner> USD
       And buyer balances sum to <buyers> USD, supplier balances to <suppliers> USD and Share's own balance there is <share> USD, each signed
-      And payouts the partner has executed that the ledger has not yet confirmed total <in flight> USD
+      And payouts the partner has executed that the ledger has not yet confirmed total <in flight> USD, each matched to its partner debit
+      And payments the partner has received and reported that the ledger has not yet posted total <received> USD, each matched to its partner credit
       When the reconciliation of day D runs
-      Then it finds <partner> = <buyers> + <suppliers> + <share> - <in flight>
+      Then it finds <partner> = <buyers> + <suppliers> + <share> - <in flight> + <received>
       And no alert is raised
 
       Examples:
-        | partner    | buyers     | suppliers  | share     | in flight  | case                                                                                    |
-        | 4.250000   | -5.000000  | 4.250000   | 5.000000  | 0.000000   | a spent 5.000000 USD top-up reversed; Share's 0.750000 commission plus 4.250000 it added cover the 5.000000 owed |
-        | 8.500000   | -10.000000 | 8.500000   | 10.000000 | 0.000000   | a credit-limit account mid-cycle with 10.000000 USD posted; Share's 1.500000 commission plus 8.500000 it added cover it |
-        | 0.000000   | 0.000000   | 120.000000 | 0.000000  | 120.000000 | a 120.00 USD payout the partner has executed, not yet confirmed                          |
-        | 100.000000 | 50.000000  | 35.000000  | 15.000000 | 0.000000   | supplier balances of 50.000000 and -15.000000, a supplier debt that Share's balance covers |
+        | partner    | buyers     | suppliers  | share     | in flight  | received  | case                                                                                    |
+        | 4.250000   | -5.000000  | 4.250000   | 5.000000  | 0.000000   | 0.000000  | a spent 5.000000 USD top-up reversed; Share's 0.750000 commission plus 4.250000 it added cover the 5.000000 owed |
+        | 8.500000   | -10.000000 | 8.500000   | 10.000000 | 0.000000   | 0.000000  | a credit-limit account mid-cycle with 10.000000 USD posted; Share's 1.500000 commission plus 8.500000 it added cover it |
+        | 0.000000   | 0.000000   | 120.000000 | 0.000000  | 120.000000 | 0.000000  | a 120.00 USD payout the partner has executed, not yet confirmed                          |
+        | 100.000000 | 50.000000  | 35.000000  | 15.000000 | 0.000000   | 0.000000  | supplier balances of 50.000000 and -15.000000, a supplier debt that Share's balance covers |
+        | 25.000000  | 0.000000   | 0.000000   | 0.000000  | 0.000000   | 25.000000 | a 25.00 USD top-up the partner received just before the cut, posted by the ledger after it |
+        | 95.000000  | 50.000000  | 120.000000 | 0.000000  | 100.000000 | 25.000000 | a 100.00 USD payout executed, not yet confirmed, and a 25.00 USD invoice payment received, not yet posted |
 
     @P4-S91 @need-P4-N14 @POL-24 @POL-21 @POL-23
     Scenario: Share's own balance below the receivables it funds is an alert, even when the sums agree

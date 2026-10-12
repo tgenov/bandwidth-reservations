@@ -49,11 +49,13 @@ stated otherwise.
 | 100 KB of traffic per flow record, 1,000 payment notifications/s peak, the admission mix. | *Decided* as provisional (POL-06), to be replaced by measurement |
 | Seven-year retention needs legal confirmation per market. | *Decided* (POL-06, POL-24), pending legal confirmation |
 | Topology: two serving regions, R1 in Nairobi and R2 in Mombasa, both Share's own data centres, and a third region, R3 in GCP Johannesburg, that votes on and keeps copies of state but answers no buyer, supplier, exporter or payment provider, so has no targets of its own (POL-06). Every per-region target applies to R1 and R2. The design depends on this, notably for durability in two regions and for latency after a region is lost. | *Assumed* |
+| Go-live condition on the topology (a production gate, not a design target): R1 (Nairobi) has at least two physically diverse fibre paths, one of them to R3 (Johannesburg) not via Mombasa; R2 (Mombasa) likewise has at least two physically diverse fibre paths, one of them to R3 not via Nairobi. Production does not start until Share verifies this. The design may rely on it but does not have to provide it; without it, one fibre cut could isolate a serving region from both others (POL-06). | *Assumed*; a production gate |
 
 ## Out of scope
 
 - How the targets are met (replication, partitioning, placement within the regions): the
-  RFCs. The regions themselves are the assumed topology above.
+  RFCs. The regions themselves, and the fibre paths between them, are the assumed
+  topology and its go-live condition above.
 - Provisioning latency on the network (Problem 5 in the company profile).
 
 ## Open questions

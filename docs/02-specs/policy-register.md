@@ -13,7 +13,9 @@ finding), and later questions from the requirements gates (`GA-nn`, `GB-nn`, gat
 `D-nn`, gate B `Dn`) and the final gates (final gate A `D-n`, final gate B `Dn`), and
 issues the [architecture overview](../03-rfcs/RFC-000-architecture.md) raised against the
 requirements (`RI-n`), and the requirements issues raised by the
-[review of that overview](../reviews/06-rfc-000-review.md) (`RQ-n`, with its decision D3), continued by the revised overview (RQ-5, RQ-6).
+[review of that overview](../reviews/06-rfc-000-review.md) (`RQ-n`, with its decision D3), continued by the revised overview (RQ-5, RQ-6) and by
+the [second review of that overview](../reviews/08-rfc-000-review-2.md) (RQ-7 to RQ-11,
+finding A0R-05).
 
 **How to read an entry.** Each entry states the **current** rule, self-contained: the
 decision as rules, its parameters with their current defaults, why, and the alternatives
@@ -45,9 +47,9 @@ the provenance line under each heading lists the questions it answers.
 | POL-01 | Pricing model | Pay per reservation: per Mbps-minute reserved, accrued per minute, no minimum term; usage pricing only for best-effort, burst and traffic outside a reservation |
 | POL-02 | Contention | The oldest request wins; a waiting younger holder yields; contention alone never makes every competitor lose, for waiters whose deadline less their completion margin outlasts the outcome ahead; refusals caused by Share's own holds or undecided partner bookings are contention |
 | POL-03 | Interrupted route requests | Resume within the deadline; otherwise fail, release, notify |
-| POL-04 | Buyer interaction | An answer within `ack_budget`: final if ready, otherwise `pending`, then poll or webhook; each outcome is decided at one point, and a status read lags it by at most `status_staleness` (pending up to `release_grace` past the deadline while the decision record is unavailable), never contradicting it; capacity is free from the moment the outcome is reported |
+| POL-04 | Buyer interaction | An answer within `ack_budget`: final if ready, otherwise `pending`, then poll or webhook; each outcome is decided at one point, and a status read lags it by at most `status_staleness`, never contradicting it; an outcome other than confirmed is reported only once its Share-link releases are durable, within `status_staleness` of the decision (`release_grace` while a link's schedule owner is failing over); pending up to `release_grace` past the deadline while the decision record is unavailable, unless the outcome was already reported; capacity is free from the moment the outcome is reported |
 | POL-05 | Authority over a link | One schedule owner per link; a single-link booking is a one-leg route; contended requests wait unless `wait = false` |
-| POL-06 | Non-functional targets | 99.99% admission and ingestion, 99.9% wallet, payouts, reporting, in each serving region; funds holds and headroom checks for bookings held to admission's targets; ×50 design load; RPO 0; RTO per capability (1 min to 30 min on node or zone loss, 1 h on region loss); a declared region disaster is outside the availability, latency and timeliness measurements, while RPO 0 still applies; probes use a designated account, on a credit limit set by finance, with no business side effects |
+| POL-06 | Non-functional targets | 99.99% admission and ingestion, 99.9% wallet, payouts, reporting, in each serving region; funds holds and headroom checks for bookings held to admission's targets; ×50 design load; RPO 0; RTO per capability (1 min to 30 min on node or zone loss, 1 h on region loss); a declared region disaster is outside the availability, latency and timeliness measurements, while RPO 0 still applies; the assumed topology, and its go-live condition of diverse fibre paths, are in X2's constraints; probes use a designated account, on a credit limit set by finance, with no business side effects |
 | POL-07 | Loss of supply | Never revoke silently; stop new sales at once; an outage affects only the minutes it overcommits, all holders alike; maintenance on free capacity only; permanent reductions by notice, newest Mbps first, with a firm equivalent-path offer at the lower price, all-Share paths first, its Share-leg capacity held for `offer_window` and any partner leg booked at acceptance |
 | POL-08 | Changing a reservation | Cancel or shorten any time; extend or increase by a new admission of the difference; decrease last in, first out; partner fees go wholly to the partner; Share pays to cancel a partner booking left without its confirmation |
 | POL-09 | Selling horizon | Rolling 12 months; open-ended bookings guaranteed as the horizon rolls |
@@ -65,9 +67,9 @@ the provenance line under each heading lists the questions it answers.
 | POL-21 | Reversals and refunds | Reversals in scope now; write-offs stay owed and keep the account suspended until repaid; withdrawals later; SLA credits are service credit |
 | POL-22 | Payouts | Weekly, on confirmed transfer, with a minimum amount; never instructed twice; a transfer the provider executes twice is recovered as debt |
 | POL-23 | Bad debt | Share bears buyer credit risk and its own errors; supplier earnings are final once charged |
-| POL-24 | Regulation | Hold funds through a licensed payment partner; daily signed reconciliation matching every partner transaction, Share's own deposits and withdrawals included; Share's own balance covers the receivables it funds (a treasury obligation, never a gate on movements) |
+| POL-24 | Regulation | Hold funds through a licensed payment partner; daily signed reconciliation matching every partner transaction, Share's own deposits and withdrawals included, payments received but not yet posted and payouts executed but not yet confirmed each counted in flight; Share's own balance covers the receivables it funds (a treasury obligation, never a gate on movements) |
 | POL-25 | AI-agent controls | Administrator-set per-key spending and in-flight limits, rate limits; funds held before capacity |
-| POL-26 | Route deadline | Chosen per request, 1 s to 60 s (11 s with a partner leg), default 30 s; failed as of the deadline if not confirmed; confirmed only by a decision timestamped before the deadline less the completion margin, which may become known up to `release_grace` after the deadline if the decision record was unavailable; Share-link holds released at the deadline, or within `release_grace` after it if the decision record is unavailable then; a partner's hold expires at the deadline by itself |
+| POL-26 | Route deadline | Chosen per request, 1 s to 60 s (11 s with a partner leg), default 30 s; failed as of the deadline if not confirmed; committing begins no later than the deadline less the completion margin (`commit_margin` with a partner leg, `ack_budget` otherwise); confirmed only by a decision timestamped before the deadline, which may become known up to `release_grace` after the deadline if the decision record was unavailable; Share-link holds released at the deadline, or within `release_grace` after it if the decision record is unavailable then or a link's schedule owner is failing over; a partner's hold expires at the deadline by itself |
 | POL-27 | Price changes | On minute boundaries only; a booked reservation keeps its price; open-ended ones change with notice |
 | POL-28 | Partners without holds | Includes partners whose holds are too short or cannot be set to expire at the deadline; booked last; at most one per route; any partner booking left without Share's confirmation, with or without holds, is cancelled at once at Share's cost; reconciled at once and daily |
 | POL-29 | Idempotency | Per account; a different principal is refused; 24 h for bookings, 7 years for money |
@@ -115,7 +117,7 @@ metering); minimum charges per period (a commitment by another name); idle-relea
 
 ## POL-02. Contention: the oldest request wins
 
-*Answers D-02 (R-04); gate A D-01, D-02, D-12; final gate A D-1, D-2; RFC-000 review RQ-2.*
+*Answers D-02 (R-04); gate A D-01, D-02, D-12; final gate A D-1, D-2; RFC-000 review RQ-2; RFC-000 review 2 RQ-7.*
 
 **Decision.**
 - When requests compete for the same capacity, the request that arrived first has
@@ -136,9 +138,10 @@ metering); minimum charges per period (a commitment by another name); idle-relea
 - **Guarantee: contention alone never makes every competitor lose.** It covers requests
   that wait (`wait` = true, the default) and whose deadline, less their completion
   margin, outlasts the outcome of the request ahead of them.
-  - A request's **completion margin** is the time it needs, after the outcome ahead, to
-    take its holds and be confirmed: `commit_margin` (POL-26) for a request with a
-    partner leg, `ack_budget` (POL-04) otherwise. It is not a parameter of its own.
+  - A request's **completion margin** is the time it keeps inside its deadline to be
+    confirmed: it may not begin committing later than its deadline less its completion
+    margin (POL-26). It is `commit_margin` (POL-26) for a request with a partner leg,
+    `ack_budget` (POL-04) otherwise. It is not a parameter of its own.
   - A request that opts out (`wait = false`), or whose deadline, less its completion
     margin, ends before the outcome it waits on, has excluded itself.
 - **Partner refusals.** When a partner definitely refuses a leg while another Share
@@ -199,7 +202,7 @@ stays in flight.
 
 ## POL-04. Buyer interaction: synchronous when ready, otherwise pending
 
-*Answers D-04 (R-06); architecture review RI-3; RFC-000 revision RQ-5, RQ-6.*
+*Answers D-04 (R-06); architecture review RI-3; RFC-000 revision RQ-5, RQ-6; RFC-000 review 2 RQ-7, RQ-8, RQ-10.*
 
 **Decision.**
 - Every booking request gets an answer, final or `pending`, within `ack_budget`.
@@ -218,13 +221,26 @@ stays in flight.
   other answer that reports a request's status) may lag the decision by at most
   `status_staleness`. Within that time it may still report `pending`; it never reports
   an outcome other than the one decided, and from `status_staleness` after the decision
-  it reports the outcome. The one exception: while a request's decision record is
-  unavailable at its deadline, a status read reports `pending` until the record is
-  available again, at most `release_grace` after the deadline (POL-26).
+  it reports the outcome. There are two exceptions, below. Both apply only to a request
+  whose outcome has not yet been reported:
+  - **Releases not yet durable.** An outcome other than confirmed is reported only once
+    its Share-link releases are durable (next bullet). While the schedule owner (POL-05)
+    of a Share link the request holds is failing over, that may take longer than
+    `status_staleness`: the outcome is then reported within `release_grace` (POL-26)
+    of the decision, and status reads report `pending` until then.
+  - **Decision record unavailable at the deadline.** While a request's decision record
+    is unavailable at its deadline, a status read reports `pending` until the record is
+    available again, at most `release_grace` after the deadline (POL-26).
+- **A reported outcome stays reported.** Once a request's outcome has been reported,
+  every later status read reports it, whatever the state of its decision record or of
+  its links' schedule owners; neither exception above ever turns it back into
+  `pending`.
 - **Capacity is free once the outcome is reported.** An outcome other than confirmed is
-  reported only once the release of the Share-link capacity it frees is durable. That
-  capacity is free for other buyers from the moment the outcome is reported, not from
-  the instant of the decision.
+  reported only once the release of the Share-link capacity it frees is durable: within
+  `status_staleness` of the decision, or within `release_grace` of it while the schedule
+  owner of a Share link the request holds is failing over. That capacity is free for
+  other buyers from the moment the outcome is reported, not from the instant of the
+  decision.
 
 | Parameter | Default |
 |---|---|
@@ -240,7 +256,13 @@ decision by a bounded second, never contradicting it, lets the decision and the 
 a buyer reads be kept apart without making any answer wrong. Reporting an outcome only
 once its releases are durable means no buyer or competitor sees an outcome while the
 capacity it frees is still held; the release follows the decision by milliseconds, so
-nothing measurable is lost.
+nothing measurable is lost. While a link's schedule owner is failing over, its release
+cannot be durable within `status_staleness`, so reporting waits for it, for at most
+`release_grace` (admission's 1 min recovery time, POL-06); nobody can book that link
+meanwhile, so nothing is lost commercially, and the alternative, reporting before the
+release is durable, would show a buyer free capacity that is still held. A reported
+outcome never reverts to `pending`, because a buyer or agent may already have acted on
+it (POL-29 retries return the same answer).
 
 ## POL-05. Authority over a link: one schedule owner
 
@@ -266,7 +288,7 @@ wins").
 
 ## POL-06. Non-functional targets
 
-*Answers D-06 (R-10); GB-23, GB-39; gate B D6, D7; round 6; final gate B D1, D9; architecture review RI-2, RI-4, RI-5; RFC-000 review RQ-3, D3.*
+*Answers D-06 (R-10); GB-23, GB-39; gate B D6, D7; round 6; final gate B D1, D9; architecture review RI-2, RI-4, RI-5; RFC-000 review RQ-3, D3; RFC-000 review 2 A0R-05.*
 
 **Availability.**
 
@@ -290,7 +312,8 @@ wins").
   suppliers, exporters or payment providers. A region that only keeps copies of state
   and answers none of them has no targets of its own. The topology assumed today (two
   serving regions and a third region that only keeps copies) is stated in X2's
-  constraints. Node or zone loss is transparent and counts against availability. Region
+  constraints, with its go-live condition: physically diverse fibre paths between the
+  regions, verified before production. Node or zone loss is transparent and counts against availability. Region
   loss is a declared disaster, outside the availability measurement. A **declared region
   disaster** lasts from its declaration until the lost region is restored or replaced.
 - **Funds holds and headroom checks for bookings are part of admission.** The funds
@@ -1007,7 +1030,7 @@ movements.
 
 ## POL-24. Regulation
 
-*Answers D-24 (R-37); GB-19; gate B D1; final gate B D2, D3, D6, D7.*
+*Answers D-24 (R-37); GB-19; gate B D1; final gate B D2, D3, D6, D7; RFC-000 review 2 RQ-11.*
 
 **Decision.**
 - Share holds buyer funds through a licensed payment partner (safeguarded or trust
@@ -1021,12 +1044,15 @@ movements.
      + Share's own balance at the partner (commission and Share's own deposits, less
      costs, write-offs, withdrawals and FX differences, POL-20) − payouts the partner
      has executed and the ledger has not yet confirmed (each matched to its partner
-     debit). Funds at the partner are taken in USD as the partner reports them (POL-20).
+     debit) + payments the partner has received and reported and the ledger has not yet
+     posted (top-ups and invoice payments, each matched to its partner credit). Funds at
+     the partner are taken in USD as the partner reports them (POL-20).
   2. Every provider transaction in the partner's report matches exactly one ledger
      movement of one of these kinds, and the reverse: a top-up, an invoice payment, a
      reversal, a payout, a supplier-debt payment, or a movement of Share's own funds (a
      deposit or a withdrawal). Each is recorded in the ledger with its source reference
-     (POL-29).
+     (POL-29). A payment counted in (1) as received and not yet posted is matched to its
+     partner credit there, and to its ledger movement once posted.
 - Provider settlement reports and bank statements are reconciled daily under the same
   rule. Any difference is an operational alert.
 - Day D is reconciled by 12:00 UTC on D + 1; a reconciliation not completed by then is
@@ -1034,7 +1060,8 @@ movements.
 - **Safeguarding rule.** Share's own balance must never be below zero, and must always
   cover the receivables it funds (negative buyer balances and supplier debts), so the
   funds at the partner always cover every positive buyer and supplier balance, less
-  payouts the partner has executed and the ledger has not yet confirmed.
+  payouts the partner has executed and the ledger has not yet confirmed, plus payments
+  the partner has received and the ledger has not yet posted.
   - It is an obligation on Share's treasury, checked by the daily reconciliation, where
     a breach is an operational alert. No movement owed to a buyer or supplier is ever
     refused or delayed because of it, and the system never cures it: only Share adding
@@ -1050,7 +1077,9 @@ another buyer's debt. The cost is that Share must pre-fund its own losses: charg
 and up to two months of credit-account charges. Matching Share's own deposits and
 withdrawals, invoice payments and supplier-debt payments makes them auditable movements
 rather than unexplained differences. An in-flight payout is money that has already left,
-not a shortfall. Making the rule a treasury obligation, not a gate, keeps supplier
+not a shortfall; symmetrically, a payment the partner has received and the ledger has not
+yet posted (a top-up near the cut is posted up to 10 s later, POL-06) is money that has
+arrived, not a surplus, so neither makes a daily cut show a difference. Making the rule a treasury obligation, not a gate, keeps supplier
 earnings final and never blocks a buyer on Share's treasury; a breach is visible within a
 day.
 
@@ -1117,40 +1146,45 @@ capacity.
 
 ## POL-26. Route deadline
 
-*Answers D-26 (R-42); GA-36; gate A D-11; final gate A D-1; architecture review RI-1; RFC-000 review RQ-1, RQ-2.*
+*Answers D-26 (R-42); GA-36; gate A D-11; final gate A D-1; architecture review RI-1; RFC-000 review RQ-1, RQ-2; RFC-000 revision RQ-5; RFC-000 review 2 RQ-7, RQ-8.*
 
 **Decision.**
 - A route request carries a deadline chosen by the buyer, from `route_deadline_min` to
   `route_deadline_max`, `route_deadline_default` if none is given. A request with a
   partner leg needs a deadline of at least `route_deadline_min` + `commit_margin`
   (11 s). A shorter, zero or negative deadline is invalid.
-- Every outcome exists by the request's deadline. For a request with a partner leg,
-  `commit_margin` is reserved inside the deadline: it does not begin committing later
-  than deadline − `commit_margin`. `commit_margin` applies only to requests with a
-  partner leg.
+- Every outcome exists by the request's deadline. Each request keeps its completion
+  margin (POL-02) inside its deadline for committing:
+  - a request with a partner leg does not begin committing later than deadline −
+    `commit_margin`;
+  - a request without one does not begin committing later than deadline −
+    `ack_budget` (POL-04).
+
+  `commit_margin` applies only to requests with a partner leg.
 - A request not confirmed by its deadline has failed as of its deadline, whatever
   Share's state, and later status reports that.
 - **When a confirmation can be decided.** A request is confirmed only by a decision
-  whose entry in its decision record is timestamped before its deadline less its
-  completion margin (POL-02: `commit_margin` with a partner leg, `ack_budget`
-  otherwise). No confirmation is ever decided after the deadline. A confirmation decided
-  in time may become known (reported) after the deadline only if the decision record was
+  whose entry in its decision record is timestamped before its deadline. No
+  confirmation is ever decided at or after the deadline. A confirmation decided in time
+  may become known (reported) after the deadline only if the decision record was
   unavailable at the deadline, and at most `release_grace` after it; until then status
   reads report `pending` (POL-04).
 - **Holds end at the deadline.** For a request not confirmed by its deadline:
   - On a Share link, the capacity held for it is released at the deadline. If Share's
-    record of the request's decision (POL-04) is unavailable at the deadline, the
-    capacity is released within `release_grace` after the deadline instead. The request
-    has still failed as of its deadline, unless a confirmation was decided in time (as
-    above), in which case the capacity is the reservation's. Either way the case is an
-    operational alert.
+    record of the request's decision (POL-04) is unavailable at the deadline, or the
+    link's schedule owner (POL-05) is failing over then, the capacity is released
+    within `release_grace` after the deadline instead, and the failed outcome is
+    reported once that release is durable (POL-04). The request has still failed as of
+    its deadline, unless a confirmation was decided in time (as above), in which case
+    the capacity is the reservation's. When the decision record is unavailable at the
+    deadline, the case is an operational alert.
   - At a partner, its hold lapses at the deadline by itself (below).
   - A partner booking for it (a leg the partner has confirmed, at a partner with or
     without holds) is cancelled at once, at Share's cost (POL-28).
 - A request still pending at its deadline is an operational alert: by design it cannot
   happen.
-- `commit_margin` is also the completion margin that scopes the contention guarantee
-  for a waiter with a partner leg (POL-02).
+- The completion margin is also what scopes the contention guarantee for a waiter
+  (POL-02): `commit_margin` with a partner leg, `ack_budget` otherwise.
 
 | Parameter | Default |
 |---|---|
@@ -1169,7 +1203,8 @@ capacity.
   at a partner lapses at the deadline by itself, even if Share is unavailable then.
   Share also releases, at the request's deadline, every hold the request still has,
   partner holds included (a Share-link hold within `release_grace` if the decision
-  record is unavailable then, as above).
+  record is unavailable then, or the link's schedule owner is failing over then, as
+  above).
 
 **Why.** Fast single-link agents keep short deadlines; nobody can choose a deadline that
 could never be met. Failing as of the deadline means capacity is never stranded by an
@@ -1186,11 +1221,20 @@ proposed before the deadline becomes durable, so a confirmation decided in time 
 become known only after the deadline, while the decision record is unavailable; it is
 kept rather than voided, because voiding it could contradict a confirmation already
 reported (POL-04), and status reads say `pending`, never a wrong outcome, meanwhile.
+The completion margin bounds when committing may begin, not when the confirmation is
+decided: a partner route that begins committing by deadline − `commit_margin` has that
+margin for the partner's confirmation, and is confirmed by any decision timestamped
+before the deadline. Fencing the confirmation at deadline − `commit_margin` as well would
+leave the margin no purpose. A Share-link release can be durable only once its link's
+schedule owner can record it, so while that owner is failing over the release, like the
+report of the failed outcome (POL-04), waits for it, for at most `release_grace`.
 A partner booking confirmed for a
 request that is then not confirmed is the same residue POL-28 accepts for partners
 without holds, and is handled the same way.
 
-**Rejected.** A margin after the deadline (deadline plus `commit_margin`), which left
+**Rejected.** A confirmation fence at the deadline less the completion margin (a
+partner route could begin committing at deadline − `commit_margin` but never be
+confirmed after it); a margin after the deadline (deadline plus `commit_margin`), which left
 outcomes undecided at the deadline; releasing a Share-link hold at the deadline whatever
 the state of the decision record (a confirmation could follow the release).
 
@@ -1462,3 +1506,8 @@ administrator, keeps disclosure a deliberate account decision that an agent cann
 | 2026-10-12 | RFC-000 review: RQ-4 follow-up (POL-07): all-Share equivalent paths are offered first, as firm offers; a path with a partner leg is offered only when no all-Share path exists, firm on its Share legs, its partner leg booked only at acceptance (the buyer told so at offer time); if that booking fails, the outcome is as for a declined offer and any other equivalent path still available is offered | Coordinator decision on the open point of review 07: no partner hold lasts `offer_window` |
 | 2026-10-12 | RFC-000 revision: RQ-5 (POL-26, POL-04): a request is confirmed only by a decision whose entry is timestamped before its deadline less its completion margin; no confirmation is decided after the deadline; one decided in time may become known up to `release_grace` after the deadline if the decision record was unavailable, status reads reporting `pending` until then | RFC-000 revision RQ-5: no consensus log bounds when a proposed entry becomes durable, so "never confirmed after the deadline" read as "never known after it" could not be guaranteed |
 | 2026-10-12 | RFC-000 revision: RQ-6 (POL-04): an outcome other than confirmed is reported only once the release of the Share-link capacity it frees is durable; that capacity is free from the moment the outcome is reported, not from the instant of the decision | RFC-000 revision RQ-6: with the decision in the account's log and holds in other links' logs, the release cannot be the same instant as the decision |
+| 2026-10-12 | RFC-000 review 2: RQ-7 (POL-26, POL-02, POL-04): a request is confirmed only by a decision whose entry is timestamped before its deadline; the completion margin bounds when committing may begin: a request with a partner leg does not begin committing later than deadline − `commit_margin`, one without a partner leg not later than deadline − `ack_budget`; this replaces "timestamped before the deadline less the completion margin" | RFC-000 review 2 RQ-7: a partner route could begin committing at deadline − `commit_margin` yet had to be confirmed before it, leaving no time for the partner's confirmation |
+| 2026-10-12 | RFC-000 review 2: RQ-8 (POL-04, POL-26): an outcome other than confirmed is reported only once its Share-link releases are durable, within `status_staleness` of the decision normally and within `release_grace` of it while the schedule owner of a Share link it holds is failing over; a Share-link hold is likewise released within `release_grace` after the deadline while that link's schedule owner is failing over then | RFC-000 review 2 RQ-8: while a link's schedule owner fails over, its release cannot be durable within `status_staleness`, so the requirement forbade both reporting the outcome and not reporting it |
+| 2026-10-12 | RFC-000 review 2: RQ-10 (POL-04): the exception "status reads report `pending` while the decision record is unavailable at the deadline" never applies to an outcome already reported; a reported outcome is reported by every later status read | RFC-000 review 2 RQ-10: a `pending` answer could follow a reported outcome, against "an outcome never changes once reported" |
+| 2026-10-12 | RFC-000 review 2: RQ-11 (POL-24): the reconciliation invariant adds payments the partner has received and reported and the ledger has not yet posted, each matched to its partner credit, symmetric with payouts executed but not yet confirmed; the safeguarding rule likewise | RFC-000 review 2 RQ-11: a top-up near the cut, posted seconds later, would have made every daily cut show a difference and alert |
+| 2026-10-12 | RFC-000 review 2: A0R-05 (POL-06, X2 constraints): the assumed topology gains a go-live condition, *Assumed*: R1 Nairobi has at least two physically diverse fibre paths, one of them to R3 Johannesburg not via Mombasa, and R2 Mombasa likewise, one of them to R3 not via Nairobi; a go-live condition (production gate), not a design target | RFC-000 review 2 A0R-05: one Nairobi–Mombasa cut could isolate Nairobi from Johannesburg too |

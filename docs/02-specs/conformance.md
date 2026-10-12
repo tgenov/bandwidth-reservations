@@ -13,7 +13,8 @@ and [03](../reviews/03-requirements-gate-resolution.md), the final-gate resoluti
 record [04](../reviews/04-requirements-final-resolution.md), the amendments from the
 architecture review [05](../reviews/05-requirements-amendments-from-architecture.md), and
 the amendments from the RFC-000 review
-[07](../reviews/07-requirements-amendments-from-rfc-000-review.md)). Rows are in file order, which is Rule order; new IDs are numbered after each
+[07](../reviews/07-requirements-amendments-from-rfc-000-review.md) and from its second round
+[09](../reviews/09-requirements-amendments-from-rfc-000-review-2.md)). Rows are in file order, which is Rule order; new IDs are numbered after each
 file's previous highest ID.
 
 The `.feature` files never carry verification status, test names or defect notes; they
@@ -53,6 +54,7 @@ plan, not in the scenario.
 | P1-S38 | When nothing fits, the rejection says so | TBD | — | not assessed |
 | P1-S18 | A request that was not confirmed leaves the link as if it had never been made | TBD | `test/sql.test.ts` › "SQL: touching intervals and the A/B example" *(prior evidence, to be re-validated)*<br>`test/sql.test.ts` › "property: tree, SQL and brute-force array agree on every decision" *(prior evidence, to be re-validated)* | not assessed |
 | P1-S54 | A request failed at its deadline while its decision record is unavailable frees its capacity on the link within release_grace | TBD | — | not assessed |
+| P1-S62 | A request ended while the link's schedule owner is failing over frees its capacity once its outcome is reported, within release_grace | TBD | — | not assessed |
 | P1-S19 | A malformed request is invalid, not a capacity answer | TBD | — | not assessed |
 | P1-S20 | A window that reaches the edge of what is sold is valid | TBD | — | not assessed |
 | P1-S39 | A rate above the link's capacity is rejected with a counter-offer, not invalid | TBD | — | not assessed |
@@ -103,11 +105,15 @@ plan, not in the scenario.
 | P2-S09 | A buyer who registered a webhook is sent the outcome | TBD | — | not assessed |
 | P2-S10 | An outcome never changes once reported | TBD | — | not assessed |
 | P2-S99 | A status read never contradicts the decided outcome, and reflects it within status_staleness | TBD | — | not assessed |
+| P2-S107 | An outcome other than confirmed is reported once its Share-link releases are durable, within release_grace while a link's schedule owner is failing over | TBD | — | not assessed |
+| P2-S108 | A reported outcome is reported by every later status read, even while the decision record is unavailable at the deadline | TBD | — | not assessed |
 | P2-S11 | A request without a deadline gets the default deadline | TBD | — | not assessed |
 | P2-S12 | A deadline outside its bounds is invalid | TBD | — | not assessed |
 | P2-S86 | A deadline at the edge of its bounds is valid | TBD | — | not assessed |
 | P2-S13 | A request whose partner never answers has failed by its deadline and holds nothing | TBD | — | not assessed |
 | P2-S55 | A request with a partner leg does not begin committing later than its deadline less commit_margin | TBD | — | not assessed |
+| P2-S109 | A request with a partner leg that begins committing by its deadline less commit_margin is confirmed by a decision before its deadline | TBD | — | not assessed |
+| P2-S110 | A request without a partner leg does not begin committing later than its deadline less ack_budget | TBD | — | not assessed |
 | P2-S14 | Capacity held for a request that is not confirmed is free on Share links once the outcome is reported, and at a partner by the deadline | TBD | — | not assessed |
 | P2-S93 | Share releases every hold of a request at its deadline, a partner hold included | TBD | — | not assessed |
 | P2-S100 | Share sets a partner hold to expire at the request's deadline | TBD | — | not assessed |
@@ -359,7 +365,7 @@ plan, not in the scenario.
 | P4-S92 | An account suspended for an overdue invoice stays suspended whatever its headroom | TBD | — | not assessed |
 | P4-S93 | Paying every overdue invoice resumes the account, if the headroom rule also holds | TBD | — | not assessed |
 | P4-S54 | The daily reconciliation proves what must agree, and reports every difference | TBD | — | not assessed |
-| P4-S90 | Funds at the partner equal the signed balances, less payouts executed but not yet confirmed, and no alert is raised | TBD | — | not assessed |
+| P4-S90 | Funds at the partner equal the signed balances, less payouts executed but not yet confirmed, plus payments received but not yet posted, and no alert is raised | TBD | — | not assessed |
 | P4-S91 | Share's own balance below the receivables it funds is an alert, even when the sums agree | TBD | — | not assessed |
 | P4-S104 | Every kind of partner transaction is matched to one ledger movement, and raises no alert | TBD | — | not assessed |
 | P4-S80 | Provider settlement reports and bank statements are reconciled daily by the same rule | TBD | — | not assessed |

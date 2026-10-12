@@ -202,9 +202,9 @@ Feature: Selling capacity on one link without overselling
       And it is 09:00
       And the link has no reservations
 
-    @P1-S18 @need-P1-N7 @POL-15 @POL-26
+    @P1-S18 @need-P1-N7 @POL-15 @POL-26 @POL-04
     Scenario Outline: A request that was not confirmed leaves the link as if it had never been made
-      Given a booking request for 4 Mbps on the link for [10:00, 11:00) ended <outcome>, its decision record being available when it ended (POL-26)
+      Given a booking request for 4 Mbps on the link for [10:00, 11:00) ended <outcome>, its decision record being available when it ended (POL-26), and its outcome was reported (POL-04)
       When a buyer books 10 Mbps on the link for [10:00, 11:00)
       Then the booking is confirmed at once
 
@@ -217,10 +217,19 @@ Feature: Selling capacity on one link without overselling
     @P1-S54 @need-P1-N7 @need-P1-N3 @POL-26
     Scenario: A request failed at its deadline while its decision record is unavailable frees its capacity on the link within release_grace
       Given a pending booking request holds 4 Mbps on the link for [10:00, 11:00)
+      And no confirmation of the request was decided before its deadline (POL-26)
       And its decision record becomes unavailable before its deadline and stays unavailable until after it
       When its deadline arrives
       Then the request has failed as of its deadline (POL-26), and it is never confirmed
       And from `release_grace` (POL-26: 1 min) after its deadline at the latest, a buyer's booking of 10 Mbps on the link for [10:00, 11:00) is confirmed at once
+
+    @P1-S62 @need-P1-N7 @need-P1-N3 @POL-04 @POL-26 @POL-08
+    Scenario: A request ended while the link's schedule owner is failing over frees its capacity once its outcome is reported, within release_grace
+      Given a pending booking request holds 4 Mbps on the link for [10:00, 11:00)
+      And the link's schedule owner is failing over
+      When the buyer withdraws the request
+      Then its outcome, failed with the reason "withdrawn", is reported only once its capacity hold on the link is durably released, and no later than `release_grace` (POL-26: 1 min) after the withdrawal was decided (POL-04)
+      And from the moment that outcome is reported, a buyer's booking of 10 Mbps on the link for [10:00, 11:00) is confirmed at once
 
   Rule: A request must be well formed: its window within the selling horizon, its rate a whole number of Mbps
 
