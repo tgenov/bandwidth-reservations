@@ -54,7 +54,8 @@ Feature: Non-functional targets
 
       Examples:
         | capability        | what                                                                                                                         | counted     |
-        | the admission API | 99% of its probes succeed, and account slot 17 had 3 probes, from two locations, all of which failed                          | unavailable |
+        | the admission API | 99% of its probes succeed, and account slot 17 had 3 probes, from two locations, none of which got a correct answer within `slot_probe_limit` (POL-06: 1 s) | unavailable |
+        | the admission API | 99% of its probes succeed, and account slot 17 had 3 probes, from two locations, each answered correctly in 400 ms, slower than the 200 ms per-probe limit but within `slot_probe_limit` | available |
         | the wallet        | 99% of its probes succeed, and account slot 17 had 3 probes, from two locations, 2 of which failed                            | available   |
         | the admission API | 99% of its probes succeed, and account slot 17 had only 2 probes, both failing, so it is not a measured failing slot-minute    | available   |
         | the admission API | 11 probes are made, all from one location, and all succeed                                                                   | unavailable |

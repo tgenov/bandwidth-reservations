@@ -87,6 +87,7 @@ plan, not in the scenario.
 | P1-S51 | Works carried out on sold capacity anyway are an unplanned outage attributed to the supplier | TBD | — | not assessed |
 | P1-S66 | Maintenance blocked only by capacity held for a request in flight is rejected with retry_after | TBD | — | not assessed |
 | P1-S67 | The supplier may cancel its own maintenance booking, and the capacity is free from the first minute boundary at or after the cancellation's record | TBD | — | not assessed |
+| P1-S83 | Maintenance never makes a reservation affected during an outage | TBD | — | not assessed |
 | P1-S31 | Only the buyer who would otherwise not fit is offered an equivalent path, on the terms of POL-07 | TBD | — | not assessed |
 | P1-S35 | An accepted offer moves the reservation to the equivalent path, at the lower of its original price and the path's price, when the notice ends | TBD | — | not assessed |
 | P1-S36 | A declined offer means revocation when the notice ends | TBD | — | not assessed |
@@ -110,6 +111,8 @@ plan, not in the scenario.
 | P1-S68 | An outage on a link of an open equivalent path leaves the offer open and firm, and its holder is told | TBD | — | not assessed |
 | P1-S71 | A reservation moved to an equivalent path keeps its original age there | TBD | — | not assessed |
 | P1-S79 | An outage still open when a reduction's notice ends removes nothing beyond what the reduction needs | TBD | — | not assessed |
+| P1-S81 | A reduction never cuts a reservation for the supplier's own maintenance; the maintenance is cut to fit instead | TBD | — | not assessed |
+| P1-S82 | From a reduction's notice end, reservations count at the rate the reduction leaves them, so an outage that leaves room for that affects nothing | TBD | — | not assessed |
 | P1-S69 | A permanent increase recorded by the link's supplier is sellable from the first minute boundary at or after its record | TBD | — | not assessed |
 | P1-S76 | A rise in sellable capacity recorded exactly on a minute boundary takes effect from that boundary | TBD | — | not assessed |
 | P1-S80 | A permanent increase recorded during an outage raises the announced capacity, not what is sold while the outage lasts | TBD | — | not assessed |
@@ -286,6 +289,7 @@ plan, not in the scenario.
 | P3-S29 | A record that cannot be used does not delay the records behind it | TBD | — | not assessed |
 | P3-S30 | A kept record that is corrected by its own exporter is charged once | TBD | — | not assessed |
 | P3-S71 | A payload that does not conform to the record template is rejected, and outside the erasable store only its identity, digest and reason are kept | TBD | — | not assessed |
+| P3-S75 | A non-conforming payload that is not kept still leaves its identity, keyed digest and reason, and is counted | TBD | — | not assessed |
 | P3-S31 | An accepted record is never altered or removed | TBD | — | not assessed |
 | P3-S66 | A corrected version of an accepted record, from its own exporter within dispute_window, supersedes it for charging | TBD | — | not assessed |
 | P3-S72 | A superseding record may change only measured fields, never the record's identity or attribution keys | TBD | — | not assessed |
@@ -440,6 +444,8 @@ plan, not in the scenario.
 | X1-S33 | Only a supplier administrator manages the supplier's users, credentials and endpoints | TBD | — | not assessed |
 | X1-S38 | An account always keeps at least one account administrator | TBD | — | not assessed |
 | X1-S40 | An account none of whose administrators can act is recovered only by onboarding, and an existing administrator can object for recovery_hold | TBD | — | not assessed |
+| X1-S44 | What a held administrator does during recovery_hold is held too, and a cancellation undoes the rights it granted but keeps the users it added | TBD | — | not assessed |
+| X1-S45 | A supplier administrator held in a recovery cannot issue the supplier's credentials | TBD | — | not assessed |
 | X1-S21 | An account cannot have more than account_max_keys keys | TBD | — | not assessed |
 | X1-S08 | The same idempotency key used by two accounts gives two independent requests | TBD | — | not assessed |
 | X1-S09 | An idempotency key reveals nothing about another account's request | TBD | — | not assessed |

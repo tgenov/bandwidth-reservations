@@ -482,6 +482,13 @@ Feature: Selling capacity on one link without overselling
       When the supplier cancels the maintenance booking
       Then from 09:01 on day D - 3 a buyer's booking of 2 Mbps on the link for [10:00, 12:00) on day D is confirmed
 
+    @P1-S83 @need-P1-N8 @POL-07
+    Scenario: Maintenance never makes a reservation affected during an outage
+      Given the link's supplier booked planned maintenance taking 2 Mbps for [10:00, 12:00) on day D
+      When an unplanned outage reduces the link's capacity to 9 Mbps at 09:00 on day D, and is not restored before 12:00
+      Then the reservation of 8 Mbps is not flagged as affected, the committed rate, 8 Mbps, leaving out maintenance and fitting the 9 Mbps in force (POL-07)
+      And no holder is told of an affected reservation
+
   Rule: A permanent reduction keeps the capacity for the notice, then moves, reduces or revokes only what no longer fits, newest first
 
     Background:
@@ -680,6 +687,30 @@ Feature: Selling capacity on one link without overselling
       Then only 2 Mbps of B are removed, the reduction's need, so B is 2 Mbps and A is still 4 Mbps
       And A and B are flagged as affected while the outage lasts, the 6 Mbps committed exceeding the 5 Mbps in force
       And once the outage is restored, neither is affected, the 6 Mbps committed fitting the announced 6 Mbps
+
+    @P1-S81 @need-P1-N8 @POL-07
+    Scenario Outline: A reduction never cuts a reservation for the supplier's own maintenance; the maintenance is cut to fit instead
+      Given no equivalent path exists for A or B
+      And the link's supplier booked planned maintenance taking 2 Mbps for [10:00, 14:00) on day D + 31
+      When the link's supplier announces a permanent reduction of its capacity to <level>
+      Then neither A nor B is affected, the 8 Mbps committed fitting <level> (POL-07)
+      And when `revocation_notice` (POL-07) after the announcement has passed, A and B are still 4 Mbps each
+      And the maintenance booking <maintenance>, and the supplier is told within `affected_notice_time` (POL-07)
+
+      Examples:
+        | level  | maintenance                                                         |
+        | 9 Mbps | is cut to 1 Mbps for [10:00, 14:00) on day D + 31, the room left beside A and B |
+        | 8 Mbps | is cancelled, no room being left beside A and B                     |
+
+    @P1-S82 @need-P1-N8 @need-P1-N1 @POL-07
+    Scenario: From a reduction's notice end, reservations count at the rate the reduction leaves them, so an outage that leaves room for that affects nothing
+      Given no equivalent path exists for A or B
+      And the link's supplier announced a permanent reduction of its capacity to 6 Mbps on day D
+      And an unplanned outage reducing the link's capacity to 9 Mbps was recorded on day D + 29 and is still open
+      When `revocation_notice` (POL-07) after the announcement has passed
+      Then B is 2 Mbps and A is still 4 Mbps
+      And neither A nor B is flagged as affected at any minute, the committed rate counting B at its 2 Mbps from the notice's end, 6 Mbps within the 6 Mbps in force, and 8 Mbps within the 9 Mbps in force before it
+      And no holder is told of an affected reservation
 
   Rule: Every rise in a link's sellable capacity takes effect from the first minute boundary at or after its record
 

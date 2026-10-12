@@ -505,9 +505,24 @@ Feature: Rating reservations and metered traffic
       Given an exporter sends a payload that does not conform to the record template, declaring fields the template does not accept
       When usage ingestion receives it
       Then it is rejected, and nothing is charged for it
-      And the logs and the record kept of it hold only its identity, its digest and the reason "does not conform to the record template"
-      And the payload itself is kept only in the erasable personal-data store (POL-19)
+      And the logs and the record kept of it hold its identity, its keyed digest and the reason "does not conform to the record template", and nothing more of it
+      And the payload itself, if it is kept, is kept only in the erasable personal-data store, keeping it not being required (POL-19)
       And it can no longer be recovered from any copy Share holds, backups and escrowed copies included, by `dispute_window` (POL-17) + 7 days after its receipt, or earlier, once an erasure request covering it is executed (POL-19)
+
+    @P3-S75 @need-P3-N7 @need-X1-N11 @POL-19
+    Scenario Outline: A non-conforming payload that is not kept still leaves its identity, keyed digest and reason, and is counted
+      Given an exporter sends a payload that does not conform to the record template
+      And <condition>
+      When usage ingestion receives it
+      Then it is rejected, and nothing is charged for it
+      And the payload is not kept anywhere (POL-19)
+      And the logs and the record kept of it hold its identity, its keyed digest and the reason "does not conform to the record template"
+      And it is counted among the payloads not kept, and the count is reported to network operations
+
+      Examples:
+        | condition                                                                      |
+        | keeping it would exceed the caps the design states on payloads kept from that exporter |
+        | the erasable personal-data store does not take it in time                      |
 
     @P3-S31 @need-P3-N7
     Scenario: An accepted record is never altered or removed

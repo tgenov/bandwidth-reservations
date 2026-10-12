@@ -243,6 +243,29 @@ Feature: Security, tenancy and audit
         | "u1", having regained its authentication, objects through the marketplace at 20:00                 | the recovery is cancelled: "u2" no longer has the administrator right, every user of "b1" is told, and it is recorded |
         | no administrator who held the right before objects by 10:00 the next day                          | the recovery is final, and "u2" may take every administrator action                                     |
 
+    @X1-S44 @need-X1-N9 @need-X1-N11 @POL-32 @POL-25 @POL-19
+    Scenario Outline: What a held administrator does during recovery_hold is held too, and a cancellation undoes the rights it granted but keeps the users it added
+      Given the only account administrator of "b1", "u1", has lost its means of authentication
+      And onboarding re-verified "b1"'s business and granted the administrator right to user "u2" of "b1" at 10:00, every user of "b1" being told at once (POL-32)
+      When <event>
+      Then <result>
+
+      Examples:
+        | event                                                                                                              | result                                                                                                                                                  |
+        | "u2" grants the administrator right to user "u3" of "b1" at 11:00, and "u3" issues an agent key at 12:00           | the grant takes effect, held (POL-32); the key is refused, "u3" being held like "u2" until `recovery_hold` ends, and nothing else changes               |
+        | "u2" grants the administrator right to user "u3" at 11:00, and "u1", having regained its authentication, objects at 20:00 | the recovery is cancelled: neither "u2" nor "u3" has the administrator right, every user of "b1" is told, and it is recorded                     |
+        | "u2" adds user "u4" to "b1" at 11:00, and "u1", having regained its authentication, objects at 20:00               | the recovery is cancelled, and "u4" remains a user of "b1", named in the cancellation notice, so that "u1" may remove it                                 |
+        | "u2" passes on user "u5"'s request to erase its personal data at 11:00, and nobody objects by 10:00 the next day   | the request is held until 10:00 the next day, then opened, nothing being erased before; `erasure_max` (POL-19) runs from 11:00                          |
+        | "u2" passes on user "u5"'s request to erase its personal data at 11:00, and "u1", having regained its authentication, objects at 20:00 | the request is refused and "u5" is told, nothing being erased, and the refusal is recorded                                    |
+
+    @X1-S45 @need-X1-N9 @POL-32
+    Scenario: A supplier administrator held in a recovery cannot issue the supplier's credentials
+      Given the only supplier administrator of supplier "s1" has lost its means of authentication
+      And onboarding re-verified "s1"'s business and granted the supplier administrator right to user "v2" of "s1" at 10:00
+      When "v2" issues a credential for an exporter of "s1" at 11:00
+      Then it is refused, the recovery being within `recovery_hold` (POL-32), and nothing changes
+      And the attempt is recorded
+
     @X1-S21 @need-X1-N9 @POL-25
     Scenario: An account cannot have more than account_max_keys keys
       Given account "b1" has `account_max_keys` (POL-25: 100) agent keys that are not revoked
