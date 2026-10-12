@@ -3,12 +3,12 @@
 | | |
 |---|---|
 | Contract ID | C08 |
-| Version | 1.1 |
-| Status | **Frozen.** v1.1 erratum: aligned with C01 on restore role and stop acknowledgement (CC-2). Frozen at C4 on fix verification 56 ([review 56](../../reviews/56-contract-C08-fix-verification.md)); errata owed listed below ("Consumer obligations"). History: 1.0-draft, 1.1-draft (review 46), 1 (V56-1 … V56-7 applied; see "Fix verification 56 resolution"), 1.1 (CC-2 erratum; see "Errata") |
+| Version | 1.2 |
+| Status | **Frozen.** v1.2: four-eyes credit limits (requirements-v1.11). v1.1 erratum: aligned with C01 on restore role and stop acknowledgement (CC-2). Frozen at C4 on fix verification 56 ([review 56](../../reviews/56-contract-C08-fix-verification.md)); errata owed listed below ("Consumer obligations"). History: 1.0-draft, 1.1-draft (review 46), 1 (V56-1 … V56-7 applied; see "Fix verification 56 resolution"), 1.1 (CC-2 erratum), 1.2 (four-eyes credit limits); see "Errata" |
 | Provider | Identity and access, with the operator console, audit and webhook signing (RFC-005 revision 5: §2, §3.1–§3.3, §3.6, §3.7 erasure requests, §3.8, §4, §6, §7, §8.3, §9, §10, §11 C1–C6, C8, C10, C14, C15); the **key service** (RFC-005 §10) for the key-certification stream (§N). Integrity stop: semantics RFC-005, honoured by RFC-006's owner runtime and placement |
 | Consumers | **Edge gateway** (RFC-005 specifies it: C1 issuer, C14, erasure intake and recovery objection). **Account owner** (RFC-002 rev. 5 booking module; RFC-004 rev. 5 Part A funds module): C1, C2, C3 push and catch-up, envelope, operator check, target summary, read grant (status replicas), audit field set. **Link schedule owner and link registry** (RFC-001 rev. 5): C1, C2, envelope, operator check, target summary, read grant, audit field set. **Catalogue, rating, metering ingestion, attribution** (RFC-003 rev. 5 + erratum 5.1): C1, envelope, operator check, target summary, read grant, audit field set. **Payments, payouts, ledger, reconciliation, reporting** (RFC-004 rev. 5 + erratum 5.1): C1, envelope, operator check, target summary, read grant, audit field set, supplier visibility (reporting). **RFC-006 rev. 6**: owner runtime and placement (integrity stop and resume, restore role, `chain`, audit changefeed, placement's target summaries), notifier (endpoint feed and query, signed webhook), history and retention (audit changefeed, sealed segments), provisioning feed (supplier visibility), status replicas (read grants). **Operator console** (RFC-005): envelope issuer, `cancel`, `open_requests`, target-summary relay. **Buyers and suppliers**: signed webhook receivers |
 | Transport | In-process library: principal context, `decide`, reference functions. gRPC metadata over mTLS: principal context. **Kafka event** (from identity's transactional outbox through the changefeed relay, RFC-000 §5.5): identity status push, endpoint feed, policy feed; audit changefeed `cdc.audit.<kind>` (CDC projection). **gRPC query**: `catch_up`, `visibility`, `target_summary`, `open_requests`, `get_endpoint`, `get_policy`. **gRPC server stream**: `edge_stream`; `cert_stream` (key service). **gRPC command**: `operator_check`, `cancel`, `record_erasure_request`, `object_to_recovery`, every operator command carrying an envelope, `integrity_stop`, `integrity_resume`, `integrity_report`, `audit_append`. **Outbound HTTPS POST**: signed webhook. **No database read across owners** (RFC-000 A1): nobody reads identity's tables; the restore role's row-level-security predicate over audit's `integrity_stops` is a database-enforced policy, not an owner read |
-| Pinned to | `requirements-v1.10`; RFC-000 revision 4.4 (§8 rows: principal and authorisation context; identity status push and catch-up; identity edge stream; supplier visibility; operator check; target summary; read grant; erasure-request intake and recovery objection; operator action envelope; audit record; integrity stop; webhook endpoints and signing secrets; signed webhook; "Revision 4.4 errata" AI-R5-7); RFC-005 revision 5; RFC-001 revision 5; RFC-002 revision 5; RFC-003 revision 5 with erratum 5.1; RFC-004 revision 5 with erratum 5.1; RFC-006 revision 6 |
+| Pinned to | `requirements-v1.10`, and `requirements-v1.11` for POL-32's `credit_limit_four_eyes_above` and X1-S49 (v1.2); RFC-000 revision 4.4 (§8 rows: principal and authorisation context; identity status push and catch-up; identity edge stream; supplier visibility; operator check; target summary; read grant; erasure-request intake and recovery objection; operator action envelope; audit record; integrity stop; webhook endpoints and signing secrets; signed webhook; "Revision 4.4 errata" AI-R5-7); RFC-005 revision 5; RFC-001 revision 5; RFC-002 revision 5; RFC-003 revision 5 with erratum 5.1; RFC-004 revision 5 with erratum 5.1; RFC-006 revision 6 |
 
 Not in this contract: the personal-data store (C09), authenticity of money-moving inputs
 (RFC-005 C7), probe designation (C9, owned by RFC-006), supplier authority on supply
@@ -326,7 +326,8 @@ type CanonicalAction = {             // what the signing client renders and dige
   target_version: string;            // owner's version from the signed target summary; for a set, String(v)
   flags: Record<string, unknown>;    // action-specific (withhold_notice, disclosure scope and end, …)
   scope?: unknown;
-  amounts?: { amount_micro_usd?: bigint; usage_rate_cap?: unknown };
+  amounts?: { amount_micro_usd?: bigint; usage_rate_cap?: unknown };   // in the digest; set_credit_limit
+                                     // compares amount_micro_usd with the four-eyes threshold (v1.2)
   reason_code: string;               // from the action's closed list
   refs: { order_ref?: string; request_ref?: RequestRef; note_ref?: Id128; note_sha256?: Bytes;
           verification_note_ref?: Id128 };
@@ -347,7 +348,7 @@ type OperatorEnvelope = {
   role: OperatorRole;
   not_after: EpochMicros;            // request time + approval_expiry (72 h), fixed by the requester's signing client
   requester: Signer;
-  approver?: Signer;                 // four-eyes actions only
+  approver?: Signer;                 // four-eyes actions only, set_credit_limit above the threshold included (v1.2)
   member?: AccountId;                // set-scoped actions only; OUTSIDE the digest
   console_epoch: string;             // informational, never trusted
   issued_at: EpochMicros;            // informational, never trusted
@@ -367,6 +368,7 @@ type EnvelopeCheck =
   | "assertion"             // check 2: WebAuthn rules
   | "operator_check"        // check 3: role now, credential active, unused, not cancelled
   | "four_eyes"             // check 4: approver same role, different person
+  | "four_eyes_required"    // check 4 (v1.2): a single-signed credit-limit raise above the threshold
   | "not_after"             // check 5: own ts > not_after − ε, or not_after > own ts + approval_expiry + ε
   | "target_version"        // check 6: stale target_version
   | "out_of_scope"          // check 6: target not in this partition; set-scoped: member not this partition or not a member
@@ -388,8 +390,9 @@ type EnvelopeCheck =
 | `register_link`, `retire_link` | commercial | no | link registry (and link owner for retire) |
 | `correct_price` (target `charge`) | finance | no | catalogue and rating |
 | `attribute_quarantine`, `reverse_attribution` (target `quarantine_item`) | finance | no | attribution and quarantine |
-| `set_credit_limit`, `remove_credit_limit` | finance | no | account owner |
-| `set_credit_limit` with target `set` | finance | no (S-M2) | each member's account owner, one envelope per member |
+| `set_credit_limit` | finance | **four eyes when raising above the threshold**: a second finance operator when the new `amount_micro_usd` is above `credit_limit_four_eyes_above` (10,000 USD = 10,000,000,000 µ) **and** higher than the limit in force; otherwise one operator (POL-32, requirements-v1.11, X1-S49) | account owner |
+| `remove_credit_limit` | finance | no | account owner |
+| `set_credit_limit` with target `set` | finance | four eyes when raising above the threshold, decided per member by its account owner (v1.2; otherwise S-M2) | each member's account owner, one envelope per member |
 | `set_usage_rate_cap` (target `account_product`) | finance | no | catalogue |
 | `resolve_payout_escalation` | finance | no | payouts |
 | `resolve_reversal_escalation` | finance | no | payments |
@@ -743,6 +746,9 @@ type PolicyBundle = {
                      scope: "own_tenant" | "own_key" | "probe_links_only" | "own_supplier_links" }[];
             refused_recorded: PrincipalKind[] }[];                 // kinds answered refused(right), recorded
   catalogue: { action_type: ActionType; role: OperatorRole; four_eyes: boolean;
+               four_eyes_above_micro_usd?: bigint;   // v1.2: set_credit_limit = 10,000,000,000 (10,000 USD);
+                                                     // four eyes applies when amount_micro_usd > this value AND
+                                                     // > the limit in force at the receiver ("raising above")
                receiver: string /* owner kind */; target_kinds: string[];
                reason_codes: string[]; flags_allowed: string[] }[];
   read_types: { read_type: string; role: OperatorRole; target_kinds: string[]; reader: string[] }[];
@@ -927,7 +933,16 @@ fields), 5, the partition test of 6, then 3 (the call to identity), then 2, then
    `digest_conflict` answer fails this check;
 4. four-eyes actions: `approver` present, same role, `person` ≠ requester's `person`, using
    identity's `person` and `role` per signer (and the envelope's values beforehand, which
-   must agree);
+   must agree). An action is four-eyes when its catalogue entry has `four_eyes` = true.
+   For `set_credit_limit` (v1.2, set-scoped included), the action is four-eyes only when
+   the signed `action.amounts.amount_micro_usd` is above `four_eyes_above_micro_usd` (from
+   the owner's applied policy bundle, §N) **and** higher than the limit in force in the
+   owner's own state at apply. A decrease, a removal, or a set at or below the threshold
+   needs one operator. The account owner decides with the limit in force. It refuses a
+   single-signed envelope that needs two with `four_eyes_required` (C07:
+   `unauthorised{four_eyes_required}`). The amount is in the digest, so a requester cannot
+   change it after signing. `operator_check` (check 3) verifies and consumes the
+   approver's assertion as for every signer;
 5. its own transaction timestamp ≤ `not_after − ε` (ε = `max_offset`, 100 ms), and
    `not_after` ≤ its own timestamp + `approval_expiry` (72 h) + ε (upper bound, D5);
 6. the target lies in its own partition (else `out_of_scope`), and `target_version` is
@@ -1265,7 +1280,8 @@ producer per kind for `cdc.audit.<kind>` and audit as its only consumer.
   X1-S12, X1-S13, X1-S14, X1-S15, X1-S16, X1-S17, X1-S18, X1-S19, X1-S20, X1-S21, X1-S22,
   X1-S23, X1-S24, X1-S25, X1-S26, X1-S27, X1-S28, X1-S29, X1-S30, X1-S31, X1-S32, X1-S33,
   X1-S34 (audit records unchanged by erasure), X1-S35, X1-S36, X1-S37 (pseudonymous
-  fields), X1-S38, X1-S39, X1-S40, X1-S41, X1-S42, X1-S43, X1-S44, X1-S45. Not relied on
+  fields), X1-S38, X1-S39, X1-S40, X1-S41, X1-S42, X1-S43, X1-S44, X1-S45, and X1-S49
+  (`requirements-v1.11`, v1.2). Not relied on
   here: X1-S10 (C7), X1-S46 (C16).
 - **P2**: P2-S09 (signed outcome webhook), P2-S64 and P2-S113 (principal identity for
   idempotency), P2-S72 and P2-S103 (revocation via the push).
@@ -1321,6 +1337,7 @@ same test.
 | C-11 | Owner runtime | Every committed log row's `chain` matches the golden recomputation; a head `chain` mismatch holds the partition locally and sends `integrity_report`; audit's stop follows with a `detection_ref`, and only `integrity_resume` lifts the hold (R46-12) | X1-S15 |
 | C-12 | Notifier (RFC-006) | Endpoint chosen from the event's clear partition only; deliveries ≤ 100 notices, one tenant; fresh timestamp per attempt; a pinned-address connection whose certificate does not match the URL's host is refused (R46-23); the overlap's previous secret signs until the new secret's `active_from` + 24 h; DNS-rebinding to a private address refused at delivery; down endpoint: first attempt within `affected_notice_time` (DT-10, DT-23) | X1-S11, X1-S24, P1-S75, P2-S09 |
 | C-13 | Edge (RFC-005 §2.2) | Unauthenticated answers identical in bytes and timing class (DT-23, DT-3); stale slot → "temporarily unavailable"; erasure and objection forwarded with the user's token only | X1-S01 … S04 |
+| C-14 | Account owner | Limit in force 5,000 USD: set to 10,000 USD with one operator → applied; set to 15,000 USD with one operator → refused `four_eyes_required`; set to 15,000 USD with a second finance operator (another person) → applied, the entry records the approver; with an approver of the same person or another role → refused `four_eyes`. Limit in force 20,000 USD: set to 15,000 USD (a decrease above the threshold) with one operator → applied. Removal with one operator → applied. The threshold comes from the policy bundle; an amount changed after signing fails check 1 (v1.2) | X1-S49 |
 
 ## Settled
 
@@ -1422,4 +1439,5 @@ Every fix that review 56 proposes is applied as proposed. V56-7 takes the first 
 
 | Version | Id | Change | Where |
 |---|---|---|---|
+| 1.2 | POL-32 (`requirements-v1.11`, X1-S49) | `set_credit_limit` is four-eyes when raising above the threshold: the new `amount_micro_usd` is above `credit_limit_four_eyes_above` (10,000 USD) **and** higher than the limit in force; set-scoped included, decided per member. A decrease, a removal, or a set at or below the threshold needs one operator. The account owner refuses a single-signed envelope that needs two with `four_eyes_required` (C07 `unauthorised{four_eyes_required}`). The policy bundle's catalogue gets `four_eyes_above_micro_usd`. Check 4 applies the threshold. The envelope carries the approver, and `operator_check` verifies it as for other four-eyes actions. Errata owed: RFC-004 §B12 and RFC-002 §7.3 (approver on the credit-limit command), RFC-005 §7.2 (catalogue row). C07 v1.2 matches | §E catalogue and check 4; §N; Scenarios; C-14 |
 | 1.1 | CC-2 (RFC-000 4.5, binding) | Aligned with C01 v1, which is the authority. The restore role's row-level security reads placement's `placement_integrity_stops` (state `stopped`), not audit's table. Audit's table is the detection record only, without `acknowledged_at`. A stop is acknowledged only once it is enforced at the slot fence (`owner_slot.stops_version`), with `enforced_at` and `fenced_slots` in the acknowledgement. The role is named `restore`, as in C01 | §K schema, DDL and semantics; Ownership; S-M5; P-10; C-10 |

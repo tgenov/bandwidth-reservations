@@ -4,12 +4,12 @@
 |---|---|
 | Contract ID | C07 |
 | Name | receivables-and-payouts |
-| Version | 1.1 |
-| Status | **Frozen.** Frozen at C4 on [fix verification 49](../../reviews/49-contract-C07-fix-verification.md) (D49-1 … D49-5 applied); errata owed listed below. v1.1: errata from review 64 (clarifications; no interface removed). Revised per [review 37](../../reviews/37-contract-C07-review.md) (REJECT: R37-01 … R37-30), every proposed fix and decision D-37-1 … D-37-6 applied by the orchestrator's binding decision; see "Review 37 resolution". Every mismatch is settled (see "Settled"); none is open. Errata owed by the source RFCs and by other contracts are listed under "Errata owed" |
+| Version | 1.2 |
+| Status | **Frozen.** Frozen at C4 on [fix verification 49](../../reviews/49-contract-C07-fix-verification.md) (D49-1 … D49-5 applied); errata owed listed below. v1.1: errata from review 64 (clarifications; no interface removed). v1.2: four-eyes credit limits (requirements-v1.11). Revised per [review 37](../../reviews/37-contract-C07-review.md) (REJECT: R37-01 … R37-30), every proposed fix and decision D-37-1 … D-37-6 applied by the orchestrator's binding decision; see "Review 37 resolution". Every mismatch is settled (see "Settled"); none is open. Errata owed by the source RFCs and by other contracts are listed under "Errata owed" |
 | Provider | RFC-004 (receivables, payments, payouts, reconciliation; Part A semantics of the credit-limit command). RFC-005 (identity and access) for operation 5, the payout-destination query (RFC-000 §8 lists it as C16 of RFC-005) |
 | Consumers | RFC-002 (account owner: applies the invoice-status feed and the credit-limit command). RFC-005 (operator console: sends the credit-limit command; edge payment ingress and the authenticity verifier, RFC-005 C7, in front of operations 3 and 4). RFC-004 payouts (reads operation 5). External: payment providers, payout providers, the payment partner, banks |
 | Transport | Op 1: Kafka event (receivables' outbox and changefeed relay, [C01](C01-platform.md) §3.5). Op 2: HTTP (gRPC), synchronous command. Op 3, op 4: HTTP, external API (inbound notifications and reports; outbound instructions). Op 5: HTTP (gRPC), synchronous query. No cross-owner database read |
-| Pinned to | `requirements-v1.10`; RFC-000 revision 4.4 (§8 rows: invoice-status feed, credit-limit command, payment notification ingress, payout instruction and transfer confirmation and partner reports, payout destination; errata 4.4 points C4-5, C4-6, C4-7); RFC-004 revision 5 with erratum 5.1 (§A3, §A4 F5/F6/F9 and the gate, §B1.3, §B4, §B5, §B6, §B7, §B9, §B12); RFC-002 revision 5 (§2.3 F5/F6/F9, §7.3, §13.1); RFC-005 revision 5 (§7.3, §7.4, C7, C16); RFC-006 revision 6 (`probe_account_set`, `probeSetSummary` rows only) |
+| Pinned to | `requirements-v1.10`, and `requirements-v1.11` POL-32 for the four-eyes credit limit (v1.2; record [review 65](../../reviews/65-requirements-amendments-after-c4.md)); RFC-000 revision 4.4 (§8 rows: invoice-status feed, credit-limit command, payment notification ingress, payout instruction and transfer confirmation and partner reports, payout destination; errata 4.4 points C4-5, C4-6, C4-7); RFC-004 revision 5 with erratum 5.1 (§A3, §A4 F5/F6/F9 and the gate, §B1.3, §B4, §B5, §B6, §B7, §B9, §B12); RFC-002 revision 5 (§2.3 F5/F6/F9, §7.3, §13.1); RFC-005 revision 5 (§7.3, §7.4, C7, C16); RFC-006 revision 6 (`probe_account_set`, `probeSetSummary` rows only) |
 | Depends on | [C01](C01-platform.md) (owner runtime: `Moved`, `Moving`, `Stopped`, moves, feed consumption, `probeAccountSet(v)`, `probeSetSummary(v)`). [C08](C08-identity-and-access.md) §E (operator envelope and its checks; the numbering is restated in op 2 so this contract reads on its own). RFC-005 C7 (authenticity verifier). [C05](C05-funds-and-standing.md) (F5, F6, F9 as funds entries) |
 
 ## Purpose
@@ -199,26 +199,31 @@ The C08 §E checks, numbered as there: (1) digest recomputed, action type accept
 the catalogue's, reason code allowed; (2) WebAuthn assertions verify; (3) identity's
 operator check (C15) at apply time: role held now, credential active, assertions unused
 under another identifier, digest not cancelled; (4) four eyes where the catalogue
-requires it (not for credit limits); (5) own transaction timestamp ≤ `not_after − ε`;
+requires it: for a credit limit, see "Four eyes" below; (5) own transaction timestamp ≤ `not_after − ε`;
 (6) `target_version` current, or, for a set-scoped action, the scope rule below.
 
 The owner evaluates, in this order; the first step that decides gives the answer
 (R37-01):
 
-1. **Authenticity**: checks 1 and 2. Fails → `refused{unauthorised, check}`, **not
-   recorded** (an unauthenticated message writes nothing). For a set-scoped action,
+1. **Authenticity**: checks 1 and 2, and check 4 for an `approver` that is present
+   (same role, different person). Fails → `refused{unauthorised, check}`, **not
+   recorded** (an unauthenticated message writes nothing). Whether an approver is
+   **required** is decided in step 3, after deduplication (v1.2, "Four eyes"). For a set-scoped action,
    `member` ≠ `account` → `refused{out_of_scope}`, **not recorded** (D49-4).
 2. **Deduplication** by (`action_id`, account): if this account's log has an F5 (applied or
    refused) for `action_id`, answer the answer of the **first** F5 recorded for
    `action_id`, before any check that can change with time (3, 5, 6, scope, KYB). A
    recorded `conflict` refusal never becomes the action's answer (D49-2). If the
    recomputed digest differs from the recorded one, or if the recorded F5's requester
-   `principal_id` differs → `refused{conflict}`, recorded (D49-1). So a retry after a lost answer gets
+   `principal_id` (or, when present, approver `principal_id`) differs →
+   `refused{conflict}`, recorded (D49-1). So a retry after a lost answer gets
    `applied` with the original position even if the target version moved, `not_after`
    passed, the operator's role was withdrawn, or F9 changed.
 3. **Freshness**: checks 3, 5 and, for a single-account target, 6. Fails →
    `refused{unauthorised, check}`, recorded. An unreachable operator check is
-   `UNAVAILABLE`, not an answer.
+   `UNAVAILABLE`, not an answer. Then the **four-eyes requirement** (v1.2): a set that
+   needs two operators but has no `approver` → `refused{unauthorised, check:
+   "four_eyes_required"}`, **not recorded**.
 4. **Scope, set-scoped only** (check 6 for a set descriptor; settled S1): the envelope
    applies to `member` iff `member` equals this account **and** the owner's applied F9
    marks it a designated probe account (`excluded` on). The signed slot-map version v is
@@ -257,8 +262,45 @@ review 31 K-2). **Audit check**: audit recomputes the digest of `probeAccountSet
 set-scoped action and flags any member whose applied F5 names an account outside it (the
 owners no longer check v, so this is the control on a compromised console; RFC-005 DT-32b).
 
-**Amount bound** (R37-29, RQ-37-2): no bound in this contract. Until POL-32 decides one, the
-console warns above `credit_limit_warn_above` (configuration, default 10,000 USD).
+**Four eyes** (v1.2; `requirements-v1.11` POL-32 and its amendment row, X1-S49; RQ-37-2
+closed). A `set_credit_limit` needs a second finance operator only when **both** are true:
+
+- the new limit (the signed `amount_micro_usd`) is **above** `credit_limit_four_eyes_above`
+  (10,000 USD = 10,000,000,000 micro-USD; "above" is strict), **and**
+- the new limit is **higher than the limit in force** (`CL`; no limit in force counts as 0).
+
+A decrease (a new limit lower than the limit in force), a removal, or a set at or below the
+threshold needs one operator ("small limits, decreases and removals stay quick", POL-32
+amendment row; X1-S49 rows 1 and 3). A set equal to the limit in force is not higher, so
+it needs one operator.
+
+- **Where the owner decides**: the account owner compares the new limit with the limit in
+  force when it applies the F5, in step 3, **after deduplication** (step 2). So a retry
+  of an applied action always gets the recorded answer, also when the limit in force has
+  changed since (R37-01).
+- **Refusal**: a single-signed envelope for a set that needs two operators →
+  `refused{unauthorised, check: "four_eyes_required"}`. Nothing is recorded, so a later
+  envelope under a new `action_id` with an approver is evaluated afresh.
+- **Approval path**: RFC-005 §7.3. The requester signs, a second operator in the same role
+  approves the same `digest`, then the console sends the envelope with `approver`. An
+  action without approval lapses at `not_after` (`approval_expiry`, 72 h; X1-S49 row 2).
+  The signing client shows the limit in force, the new limit and the threshold, so that
+  the requester knows if an approver is necessary.
+- **Verification**: check 2 verifies both assertions and check 4 verifies the approver
+  (same role, different person) in step 1; check 3 (identity's operator check, C15) runs
+  for **each** signer in step 3. An `approver` on an action that needs only one operator
+  is accepted and recorded.
+- **Threshold value**: the owner uses the threshold in force at the request time
+  `not_after − approval_expiry` (`not_after` is in the digest).
+- **Set-scoped probe-account actions**: the same rule applies to each member, with that
+  member's limit in force. POL-32's finance row names "the probe accounts' limits" in the
+  same sentence, and review 65 decision 4 states that they follow the same rule. The normal
+  probe amount (12 to 24 concurrent 1-minute 1 Mbps holds) is far below the threshold.
+- **Record**: the F5 records the approver's fields in its audit column (X1-S49: "recorded
+  with the operator, any approver, the role, the reason and the time").
+
+The console warning above `credit_limit_warn_above` (R37-29) stays as an operator aid. It
+is not a control.
 
 ### Delivery and ordering
 
@@ -612,7 +654,7 @@ final and reconciled, then as long as payout records need it).
 
 ## Versioning and compatibility
 
-- Contract version 1.1 (frozen; 1.1 adds clarifications and the `INTERNAL` error, and removes no interface); JSON events carry `schema` (`invoice-status/1`); gRPC packages are
+- Contract version 1.2 (frozen; 1.1 adds clarifications and the `INTERNAL` error; 1.2 adds the four-eyes path for credit limits; neither removes an interface); JSON events carry `schema` (`invoice-status/1`); gRPC packages are
   versioned `v1`; HTTP paths `/v1/`.
 - Compatible changes: adding optional fields; consumers ignore unknown fields.
 - **Coordinated minor version, consumer first** (R37-23): adding an event `type`, a refusal
@@ -631,7 +673,7 @@ final and reconciled, then as long as payout records need it).
 
 - Op 1: P4-S14, P4-S18 (row 5), P4-S83, P4-S93, P4-S94, P4-S105, P4-S111, P4-S114;
   P2-S42, P2-S69 (RFC-002 T14).
-- Op 2: P4-S82, P4-S99, X1-S12, X2-S24, X2-S27.
+- Op 2: P4-S82, P4-S99, X1-S12, X2-S24, X2-S27; X1-S49 (`requirements-v1.11`, v1.2).
 - Op 3: P4-S01, P4-S02, P4-S03, P4-S04, P4-S05, P4-S06, P4-S07, P4-S51, P4-S57, P4-S58,
   P4-S100, P4-S103, X1-S10, X2-S07, X2-S14.
 - Op 4: P4-S43 … P4-S50, P4-S67, P4-S78, P4-S79, P4-S86, P4-S87, P4-S88, P4-S95, P4-S117
@@ -665,6 +707,7 @@ final and reconciled, then as long as payout records need it).
 | K1b | Finance sets a limit after receivables decided a write-off but before the account owner applied its M19: the later `CreditLimitRemoved` is recorded superseded and the limit stays | 1 |
 | K2 | Account owner: credit-limit commands with valid, expired, cancelled and wrong-role envelopes (C08); `set` without KYB → `kyb_not_vetted`; repeat → first answer; another digest under the same `action_id` → `conflict`; `remove` without KYB applies | 2 |
 | K2b | Apply, lose the answer, bump `target_version`, let `not_after` pass, revoke the operator's role, retry → `applied` with the original position | 2 |
+| K2d | Four eyes (X1-S49), limit in force 5,000 USD: set 10,000.000000 USD with one operator → `applied`; set 15,000.000000 USD with one operator → `refused{unauthorised, four_eyes_required}`, nothing recorded; the same set with an approver of the same role and another person → `applied`, F5 audit names both; approver = requester person, or another role → `four_eyes`; unapproved past `not_after` → `not_after`; remove → one operator; limit in force 20,000 USD: set 15,000 USD (a decrease) with one operator → `applied`, set 25,000 USD with one operator → `four_eyes_required`; a set-scoped probe action above the threshold and above a member's limit in force without an approver → `four_eyes_required` for that member; retry of an applied four-eyes set after the limit in force changed or the approver's role was withdrawn → the recorded `applied` | 2 |
 | K2c | `set` with `iam_fresh` stale (after a takeover, before the first identity heartbeat or catch-up) → `temporarily_unavailable{identity_stale}`, no F5 appended; the console retries under the same `action_id` and, once fresh, gets `applied` or `kyb_not_vetted`; `remove` while stale applies | 2 |
 | K3 | Set-scoped: `member` ≠ receiving account, or applied F9 not designated → `out_of_scope` even without KYB (order); a probe account designated at a slot-map version later than the envelope's v is accepted (v not checked), and the applied F5 records v and the designating version; member without KYB → `kyb_not_vetted`, not retried under the action; two deliveries to one member apply once | 2 |
 | K4 | Console: crash mid-fan-out resumes from its record; every member answered exactly once in the action's outcome; `Moved` re-routes, `Moving` and `Stopped` retried, never recorded as answers | 2 |
@@ -731,7 +774,7 @@ is frozen.
 | C08 | §E check 6 and the envelope idempotency row: deduplication before checks 3–6 | R37-01 |
 | C05 | F5 row: drop "and it is a member of the signed set at `mapVersion`"; F5 supersession rule; F9 records the designating version | S1, R37-03 |
 | C01 | §3.8: `probeAccountSet(v)`/`probeSetSummary(v)` for a pending version, if it allows only published versions | R37-11 |
-| Requirements | RQ-37-1 (POL-21: one reversal, at most the credited amount, at the payment's rate), RQ-37-2 (POL-32: credit-limit bound or four eyes), RQ-37-3 (POL-24: per-provider unreceived-credit alert) | R37-08, R37-29, R37-28 |
+| Requirements | RQ-37-1 (POL-21: one reversal, at most the credited amount, at the payment's rate), RQ-37-2 (POL-32: credit-limit bound or four eyes; settled in `requirements-v1.11`, applied in C07 v1.2), RQ-37-3 (POL-24: per-provider unreceived-credit alert) | R37-08, R37-29, R37-28 |
 
 ## Review 37 resolution
 
@@ -791,3 +834,19 @@ E5, E7, E11, E13, E14, E15, E17, E19) are C09's.
 | A-64-1 | Architecture | "Errata owed": RFC-000 §8 payout-destination row gets the full signature and the errors |
 | A-64-2 | R64-13 | "Errata owed": the RFC-005 row cites X1-S46 (C16 command). The RFC-004 P4-S118 citation stays owed (R37-13) |
 | A-64-3 | R64-02, R64-07 | "Errata owed": a new RFC-005 row gives the order of the C16 command (checks, mint, put, commit, check again) |
+
+## Requirements-v1.11 errata (v1.2)
+
+| Erratum | Source | Change in version 1.2 |
+|---|---|---|
+| E-v1.11-1 | `requirements-v1.11` POL-32, X1-S49; review 65 decision 4; RQ-37-2 | Op 2 "Four eyes": a `set_credit_limit` needs an approver only when the new limit is above `credit_limit_four_eyes_above` (10,000 USD, strict) **and** higher than the limit in force; a decrease, a removal, or a set at or below the threshold needs one operator. The account owner compares with the limit in force when it applies the F5 (step 3, after deduplication). A single-signed envelope for a set that needs two → `refused{unauthorised, four_eyes_required}`, nothing recorded. A present approver is verified in step 1 (checks 2, 4). Set-scoped probe actions follow the same rule per member. Deduplication also compares the approver. Threshold at the request time. Test K2d. Scenario X1-S49 |
+
+**Obligations from v1.2** (errata owed; none of these documents is edited here):
+
+| Owner | Obligation |
+|---|---|
+| C08 | §E action catalogue: `set_credit_limit` is four-eyes when `amounts.amount_micro_usd` is above `credit_limit_four_eyes_above` and higher than the target's limit in force, also for a set-scoped target (replace "the action has no four eyes (S-M2)" for that case). Check 4 verifies a present approver before deduplication; the owner decides whether an approver is required at apply, after deduplication, and refuses `four_eyes_required` without a record. The threshold in force at `not_after − approval_expiry`. The envelope idempotency row also compares the approver. Operator check (C15) for each signer |
+| RFC-005 | §7.2 catalogue row for credit limits (four eyes above the threshold and higher than the limit in force, probe set included); §7.3 approval path and lapse at `approval_expiry` for this action; §7.4 check 4 for a present approver, and the `four_eyes_required` refusal at apply; the threshold as a policy parameter with history; the signing client shows the limit in force, the new limit and the threshold |
+| RFC-004 | §B12 credit-limit row and §A4 F5: four eyes when the new limit is above the threshold and higher than `CL`, decided at apply after deduplication, `four_eyes_required` not recorded; the F5 audit records the approver; §A3 probe-account action follows the same rule; RQ-37-2 closed |
+| RFC-002 | §7.3: a present approver verified with the envelope before deduplication; the four-eyes requirement decided against `CL` at apply, after deduplication, refusal not recorded; the approver recorded in F5 |
+| RFC-000 | §8 credit-limit command row: "four eyes for a set above `credit_limit_four_eyes_above` and higher than the limit in force (POL-32)" |
