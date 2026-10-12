@@ -31,16 +31,15 @@ The original, chronological record of how earlier decisions were reached is kept
 | ID | Problem | Statement | Spec | RFC |
 |---|---|---|---|---|
 | All | Architecture overview: components, interactions, consistency, topology, and the allocation of every need | all of the below | all of the below | [RFC-000](03-rfcs/RFC-000-architecture.md) (draft) |
-| P1 | Selling capacity on one link without overselling | [P1](01-discovery/P1-link-admission.md) | [P1](02-specs/P1-link-admission.feature) | RFC-001 Link schedule and admission (being rewritten; [pre-baseline draft](03-rfcs/RFC-001-link-admission.md)) |
-| P2 | Booking, changing and ending route reservations, all or nothing | [P2](01-discovery/P2-route-reservation.md) | [P2](02-specs/P2-route-reservation.feature) | RFC-002 Booking coordination (being rewritten; [pre-baseline draft](03-rfcs/RFC-002-route-reservation.md)) |
-| P3 | Rating reservations and metered traffic | [P3](01-discovery/P3-rating-and-metering.md) | [P3](02-specs/P3-rating-and-metering.feature) | RFC-003 Rating and metering (being rewritten; [pre-baseline draft](03-rfcs/RFC-003-usage-metering.md)) |
-| P4 | Wallet, funds holds, ledger and supplier settlement | [P4](01-discovery/P4-wallet-and-settlement.md) | [P4](02-specs/P4-wallet-and-settlement.feature) | RFC-004 Wallet, ledger and settlement (being rewritten; [pre-baseline draft](03-rfcs/RFC-004-wallet-and-settlement.md)) |
-| X1 | Security, tenancy and audit (cross-cutting) | [X1](01-discovery/X1-security-and-tenancy.md) | [X1](02-specs/X1-security-and-tenancy.feature) | RFC-005 Security and tenancy (being rewritten) |
-| X2 | Non-functional targets (cross-cutting) | [X2](01-discovery/X2-non-functional-targets.md) | [X2](02-specs/X2-non-functional.feature) | RFC-006 Availability, durability and operations (being rewritten) |
+| P1 | Selling capacity on one link without overselling | [P1](01-discovery/P1-link-admission.md) | [P1](02-specs/P1-link-admission.feature) | [RFC-001 Link schedule and admission](03-rfcs/RFC-001-link-admission.md) (draft) |
+| P2 | Booking, changing and ending route reservations, all or nothing | [P2](01-discovery/P2-route-reservation.md) | [P2](02-specs/P2-route-reservation.feature) | [RFC-002](03-rfcs/RFC-002-booking-coordination.md) Account owner and booking coordination (draft; to be approved together with RFC-004 Part A) |
+| P3 | Rating reservations and metered traffic | [P3](01-discovery/P3-rating-and-metering.md) | [P3](02-specs/P3-rating-and-metering.feature) | [RFC-003 Rating and metering](03-rfcs/RFC-003-rating-and-metering.md) (draft) |
+| P4 | Wallet, funds holds, ledger and supplier settlement | [P4](01-discovery/P4-wallet-and-settlement.md) | [P4](02-specs/P4-wallet-and-settlement.feature) | [RFC-004 Wallet, ledger and settlement](03-rfcs/RFC-004-wallet-and-settlement.md) (draft; Part A to be approved together with RFC-002) |
+| X1 | Security, tenancy and audit (cross-cutting) | [X1](01-discovery/X1-security-and-tenancy.md) | [X1](02-specs/X1-security-and-tenancy.feature) | [RFC-005](03-rfcs/RFC-005-security-and-tenancy.md) Security and tenancy (draft) |
+| X2 | Non-functional targets (cross-cutting) | [X2](01-discovery/X2-non-functional-targets.md) | [X2](02-specs/X2-non-functional.feature) | [RFC-006](03-rfcs/RFC-006-availability-and-operations.md) Availability, durability and operations (draft) |
 
-RFC-000 is written against this requirements baseline. The drafts of RFC-001 … RFC-004
-predate it and are **superseded**: they are being rewritten on RFC-000 (with RFC-005 and
-RFC-006 new), and are kept only as pre-baseline drafts until then. The delivery documents
+RFC-000 is written against this requirements baseline. RFC-001 … RFC-004 have been
+rewritten on it (drafts), with RFC-005 and RFC-006 new. The delivery documents
 ([plan](04-delivery/plan.md) · [contracts](04-delivery/contracts.md)) also predate the
 baseline and are pending revision against it. Where any of them disagrees with the
 requirements, the requirements win.
