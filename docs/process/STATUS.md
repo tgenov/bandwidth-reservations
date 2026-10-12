@@ -1,6 +1,6 @@
 # Pipeline status (resume point)
 
-Checkpoint written 2026-10-12. Read this, `pipeline.md` and `slices.json`, then follow
+Checkpoint updated 2026-10-12 (step 4 of the C3 round). Read this, `pipeline.md` and `slices.json`, then follow
 **Next steps**. Use the `design-pipeline` skill and the agents in `.claude/agents/`.
 
 ## Where things stand
@@ -8,51 +8,36 @@ Checkpoint written 2026-10-12. Read this, `pipeline.md` and `slices.json`, then 
 | Item | State |
 |---|---|
 | Branch / worktree | `docs-restructure` in `~/Code/bandwidth-reservations-docs` (not merged to `main`) |
-| Requirements | **`requirements-v1.7`** (tag): 448 scenarios (P1 78, P2 116, P3 73, P4 113, X1 39, X2 29), 67 needs, 33 policies, 50 parameters. `python3 tools/check_specs.py` → NO PROBLEMS |
-| C1 Requirements | Done (v1.7). Last amendment record: `docs/reviews/12-…` |
-| C2 RFC-000 | **Accepted, revision 4.1** (tag `rfc-000-accepted` marks rev 3.2; rev 4 = CockroachDB 2+2+1 + NestJS owners + Kafka substrate; rev 4.1 errata). No open issues |
-| Next review number | **17** (16 is used) |
+| Requirements | **`requirements-v1.8`** (tag): 462 scenarios (P1 80, P2 117, P3 74, P4 116, X1 43, X2 32), 67 needs, 33 policies, 51 parameters. Record: `docs/reviews/22-…` |
+| C1 Requirements | Done (v1.8) |
+| C2 RFC-000 | **Accepted, revision 4.2** (errata from reviews 16–20; batching waits budgeted, τ ≈ 420 ms cap ≈ 450 ms; ~16,384 account / 4,096 link slots; risks R23 thin X2-S15 margin, R24 probe noise, R25) |
+| Next review number | **23** (22 is used) |
 
 ### Slices (C3 = RFC accepted)
 
-| Slice | RFC | Revision | Based on | v1.7 coverage gap (`impact.py coverage`) | C3 review |
-|---|---|---|---|---|---|
-| S-LINK | RFC-001 | Draft rev 2 | v1.6 + RFC-000 r4 | P1-S76, P1-S77, P1-S78 | not run |
-| S-ACCT | RFC-002 | Draft rev 2 (+ r4.1 errata edits) | v1.6 + RFC-000 r4.1 | none | not run (joint with S-MONEY) |
-| S-RATE | RFC-003 | Draft rev 2 | v1.6 + RFC-000 r4 | P3-S71, P3-S72, P3-S73 | not run |
-| S-MONEY | RFC-004 | Draft rev 2 (+ r4.1 errata edits) | v1.6 + RFC-000 r4.1 | P4-S111, P4-S112, P4-S113 | not run (joint with S-ACCT) |
-| S-SEC | RFC-005 | Draft rev 2 | v1.6 + RFC-000 r4 | X1-S39 | **done**: `docs/reviews/16-rfc-005-review.md` — Not ready: 2 Blocker, 12 Major, 14 Minor; has Decisions taken, Requirements issues (RQ-R5-*), Architecture issues (AI-R5-*) |
-| S-PLAT | RFC-006 | Draft rev 2 | v1.6 + RFC-000 r4 | X2-S29 | not run |
+| Slice | RFC | Last review | Verdict | Step 4 action |
+|---|---|---|---|---|
+| S-LINK | RFC-001 | 17 | REJECT (1 Blocker) | revise → rev 4, then **full re-review** |
+| S-ACCT + S-MONEY | RFC-002, RFC-004 | 18 (joint) | ACCEPT WITH CHANGES | revise → rev 4, then `fix-verifier` |
+| S-RATE | RFC-003 | 19 | ACCEPT WITH CHANGES | revise → rev 4, then `fix-verifier` |
+| S-SEC | RFC-005 | 16 → fix-verify 21 (fixed in rev 3.1) | ACCEPT WITH CHANGES, defects fixed | rebase → rev 4 on v1.8, then `fix-verifier` |
+| S-PLAT | RFC-006 | 20 | REJECT (3 Blockers) | revise → rev 4, then **full re-review** |
 
-Rebase delta v1.6 → v1.7 for every slice: `python3 tools/impact.py diff requirements-v1.6 requirements-v1.7`.
-
-C4 (contracts), C5 (plans), C6 (conformance): not started. `docs/04-delivery/` holds
-pre-baseline drafts (`plan.md`, `contracts.md`) that are superseded; the C4/C5 agents
-write into `docs/04-delivery/contracts/` and `docs/04-delivery/plan/`.
+Orchestrator decisions in this round (binding): unposted-usage publish interval 2 s;
+lateness bound includes admission RTO (430 s); per-slot unavailability counts only
+measured slot-minutes (≥3 probes, ≥2 locations, all failed); placement owns the slot map.
 
 ## Next steps
 
-1. **Rebase to v1.7 (parallel, 6 × `rfc-author`, mode rebase).** For each slice: "rebase
-   <slice> against requirements-v1.7 and RFC-000 rev 4.1. Impact: `impact.py diff
-   requirements-v1.6 requirements-v1.7` (its listed IDs). Records:
-   docs/reviews/12-requirements-amendments-from-rfc-revision-2.md." For **S-SEC**, combine
-   with review 16: mode revise, "per docs/reviews/16-rfc-005-review.md", and set aside its
-   Requirements/Architecture issues for step 3. Done when `impact.py coverage` is clean
-   for every slice. Commit.
-2. **C3 reviews (parallel, 4 × `rfc-reviewer`).** S-LINK (rfc); S-ACCT + S-MONEY (joint,
-   focus money + concurrency); S-RATE (rfc, focus money); S-PLAT (rfc, focus sre).
-   Reviews numbered from 17. S-SEC goes to `fix-verifier` against review 16 instead.
-3. **Batch upstream issues** from reviews 16+ (Decisions taken, Requirements issues,
-   Architecture issues): decide each; one `req-amender` (→ `requirements-v1.8`) and one
-   `rfc-author` (RFC-000 errata → rev 4.2), in parallel. Commit, tag, run
-   `impact.py diff requirements-v1.7 requirements-v1.8`.
-4. **Revise** each slice per its review + the v1.8 impact (`rfc-author`, mode revise);
-   then `fix-verifier`; apply small residual defects directly; set Status "Accepted,
-   revision n"; tag `rfc-<slice>-accepted`.
+1. **Step 4 in flight:** 6 × `rfc-author` revising every slice to rev 4 on v1.8 + RFC-000
+   rev 4.2. When done: coverage clean for every slice; commit.
+2. `fix-verifier` for S-ACCT+S-MONEY (vs 18), S-RATE (vs 19), S-SEC (vs 16/21 + v1.8);
+   full `rfc-reviewer` for S-LINK and S-PLAT (focus sre). Reviews numbered from 23.
+3. Batch any new upstream issues (→ v1.9 / RFC-000 4.3) only if they block; else carry.
+4. Close C3 per slice: Status "Accepted, revision n", tag `rfc-<slice>-accepted`.
 5. **C4**: `contract-author` per RFC-000 §8 contract once provider and consumers are at
    C3; `rfc-reviewer` mode contract. **C5**: `plan-author` per slice; `rfc-reviewer` mode
-   plan. **C6**: implement per plan (existing prototype code in `src/` and `billing/` is
-   prior art only; the conformance matrix records results).
+   plan. **C6**: implement per plan.
 
 ## Standing decisions to remember
 
