@@ -14,7 +14,10 @@
     "slices/sec/audit",
     "slices/sec/test-owner",
     "slices/account/owner",
-    "slices/account/booking-api"
+    "slices/account/booking-api",
+    "slices/rate/common",
+    "slices/rate/ingestion",
+    "slices/rate/rating-owner"
   ],
   "scripts": {
     "test": "node --test --test-concurrency=1 test/*.test.ts",
@@ -29,7 +32,9 @@
     "typecheck:sec": "tsc --noEmit -p slices/sec",
     "test:sec": "node --test --test-concurrency=1 'slices/sec/*/test/*.test.ts' 'slices/sec/test/*.test.ts'",
     "typecheck:account": "tsc --noEmit -p slices/account",
-    "test:account": "node --test --test-concurrency=1 'slices/account/*/test/*.test.ts'"
+    "test:account": "node --test --test-concurrency=1 'slices/account/*/test/*.test.ts'",
+    "typecheck:rate": "tsc --noEmit -p slices/rate",
+    "test:rate": "node --test --test-concurrency=1 'slices/rate/*/test/*.test.ts'"
   },
   "dependencies": {
     "pg": "^8.13.1"
