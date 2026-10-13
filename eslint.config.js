@@ -87,6 +87,6 @@ export default defineConfig(
   { files: [...TEST_FILES, 'platform/examples/**/*.ts'], rules: { 'no-console': 'off' } },
   {
     files: ['**/*.test.ts'],
-    rules: { 'local/test-asserts': 'error', 'local/test-name': 'warn' },
+    rules: { 'local/test-asserts': 'error', 'local/test-name': 'error' },
   },
 );

@@ -39,7 +39,7 @@ async function start(link: string, decided: DecidedRecord[]) {
   return { rt, owner, store, slot, close: async () => { await rt.stop(); await store.close(); } };
 }
 
-test('dev cell: hold, convert, release, T-09 cases, the property run and a rebuild on the real runtime', { skip: SKIP, timeout: 180_000 }, async () => {
+test('should hold, convert, release, pass the T-09 cases and the property run, and rebuild when run on the real runtime on the dev cell', { skip: SKIP, timeout: 180_000 }, async () => {
   await migrateKinds(URL, [declaration], { presplit: false });
   const link = `itest-${randomBytes(4).toString('hex')}`;
   const decided: DecidedRecord[] = [];

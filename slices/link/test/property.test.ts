@@ -13,7 +13,7 @@ import { AccountStub, harness, M } from './support.ts';
 
 const SEEDS = [1, 2, 3, 4, 5, 6, 7, 8];
 
-test('P1-N1 property: 8 seeds × 2,000 hold/convert/release commands from 50 clients on the runtime double', async () => {
+test('should keep the P1-N1 properties when 50 clients send 8 seeds × 2,000 hold/convert/release commands on the runtime double', async () => {
   const total: Record<string, number> = {};
   for (const seed of SEEDS) {
     const h = await harness({ link: `prop-${seed}`, capacity: 10 });
@@ -32,7 +32,7 @@ test('P1-N1 property: 8 seeds × 2,000 hold/convert/release commands from 50 cli
   }
 });
 
-test('P1-N1 property on the real C01 runtime core (in-memory store): 2 seeds × 1,000 commands from 50 clients', async () => {
+test('should keep the P1-N1 properties when 50 clients send 2 seeds × 1,000 commands on the real C01 runtime core (in-memory store)', async () => {
   const store = new MemoryStore();
   store.seedSlots('link', declaration.slotCount);
   const rt = new CockroachOwnerRuntime({ declaration, store, publisher: new MemoryPublisher(), load: new ManualLoad(),

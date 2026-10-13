@@ -246,7 +246,7 @@ test('CC-8: the declaration matches RFC-001 §7.1, §7.3 and §11.1, and generat
 
 // ---------------- exit criterion 6: rebuild by replay ----------------
 
-test('rebuild: a new holder rebuilds by replay, finds no outcome difference, and answers a repeat with its recorded reply', async () => {
+test('should rebuild by replay, find no outcome difference and answer a repeat with its recorded reply when a new holder rebuilds', async () => {
   const h = await harness();
   const a = h.stub.holdCmd({ rate: 4, window: W });
   const b = h.stub.holdCmd({ rate: 6, window: W });
@@ -281,7 +281,7 @@ test('rebuild: a new holder rebuilds by replay, finds no outcome difference, and
   assert.deepEqual(rt.unleasedActions(), []);
 });
 
-test('rebuild: a changed recorded outcome stops the link (OUTCOME_MISMATCH_ON_REPLAY)', async () => {
+test('should stop the link (OUTCOME_MISMATCH_ON_REPLAY) when a recorded outcome changed on rebuild', async () => {
   const h = await harness();
   const a = h.stub.holdCmd({ rate: 4, window: W });
   await h.stub.hold(a);

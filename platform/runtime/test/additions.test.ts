@@ -36,14 +36,14 @@ async function boot(store = new MemoryStore(), publisher = new MemoryPublisher()
 }
 const P = utf8('part-1');
 
-test('S-RATE 1-3: selfOutboxed, a contract topic named exactly, and a field key are accepted; bad topics are not', () => {
+test('should accept selfOutboxed, a contract topic named exactly and a field key, and refuse bad topics, when validating additions S-RATE 1-3', () => {
   assert.deepEqual(validateDeclaration(DECL), []);
   const bad = { ...DECL, streams: [{ ...DECL.streams[0], topic: 'Not A Topic' }] } as OwnerDeclaration;
   assert.ok(validateDeclaration(bad).some((e) => /contract topic/.test(e)));
   assert.ok(validateDeclaration({ ...DECL, streams: [{ ...DECL.streams[0], topic: 'catalogue.v1' }] } as OwnerDeclaration).length === 0);
 });
 
-test('S-SEC 1, 7; S-RATE 1, 3: readLog opens rows (payload, audit with C08 Tenant and EpochMicros, sender fence); stream index; field key', async () => {
+test('should open rows with readLog (payload, audit with C08 Tenant and EpochMicros, sender fence), keep the stream index and the field key when using additions S-SEC 1, 7 and S-RATE 1, 3', async () => {
   const { rt, store, publisher } = await boot();
   const fence = { kind: 'acct', partition: utf8('A1'), generation: 0, epoch: 5n };
   assert.equal((await rt.append({ partition: P, entries: [entry('a', { senderFence: fence, emits: [{ stream: 'byacct', event: { account: 'acct-9', n: 1 } }] }), entry('b')] })).r, 'Committed');
@@ -64,7 +64,7 @@ test('S-SEC 1, 7; S-RATE 1, 3: readLog opens rows (payload, audit with C08 Tenan
   await rt.stop();
 });
 
-test('S-SEC 2, 3: listPartitions(slot); a takeover rebuilds the admitCommand high-water from the log (R47-24)', async () => {
+test('should list partitions of a slot, and rebuild the admitCommand high-water from the log on a takeover (R47-24), when using additions S-SEC 2, 3', async () => {
   const store = new MemoryStore();
   const a = await boot(store);
   const slot = slotOfPartition(P, 4);
@@ -80,7 +80,7 @@ test('S-SEC 2, 3: listPartitions(slot); a takeover rebuilds the admitCommand hig
   await a.rt.stop().catch(() => {}); await b.stop();
 });
 
-test('S-SEC 6: a slot-wide commit sequence (C08 §C position): ctx.slotPosition and Committed.slotPositions, contiguous across batches', async () => {
+test('should give a slot-wide commit sequence (C08 §C position) in ctx.slotPosition and Committed.slotPositions, contiguous across batches, when using addition S-SEC 6', async () => {
   const { rt } = await boot();
   const seen: bigint[] = [];
   const P2 = utf8('part-2');
@@ -96,7 +96,7 @@ test('S-SEC 6: a slot-wide commit sequence (C08 §C position): ctx.slotPosition 
   await rt.stop();
 });
 
-test('S-SEC 4, 5: hlcParts exported; MemoryStore consistentRead returns rows of projections and heads', async () => {
+test('should export hlcParts and return rows of projections and heads from MemoryStore consistentRead when using additions S-SEC 4, 5', async () => {
   assert.deepEqual(hlcParts('12.0000000003' as never), { wallNs: 12n, logical: 3n });
   const { rt } = await boot();
   await rt.append({ partition: P, entries: [entry('m')], projections: [{ table: 'sec_mark', op: 'upsert', key: { partition: P, id: 'k' }, row: { } }] });
@@ -107,7 +107,7 @@ test('S-SEC 4, 5: hlcParts exported; MemoryStore consistentRead returns rows of 
   await rt.stop();
 });
 
-test('S-RATE 4: publishMessage sends a declared non-log message on its topic (same producer ACL); undeclared ones are refused', async () => {
+test('should send a declared non-log message on its topic (same producer ACL) and refuse undeclared ones when publishMessage is used (addition S-RATE 4)', async () => {
   const { rt, publisher } = await boot();
   await rt.publishMessage('watermark', P, encodeJson({ through: '10' }));
   assert.equal(publisher.sent.at(-1)?.topic, 'ingestion.handoff.v1');
@@ -116,7 +116,7 @@ test('S-RATE 4: publishMessage sends a declared non-log message on its topic (sa
   await rt.stop();
 });
 
-test('double (S-SEC 5, S-RATE 5, priority list): start calls onAcquire + onReportable; chain; route by target count; groups; displacement; status reader', async () => {
+test('should call onAcquire + onReportable on start, chain, route by target count, group, displace and read status when the double has additions S-SEC 5, S-RATE 5 and the priority list', async () => {
   const account: OwnerDeclaration = { kind: 'account', slotCount: 8, entryKinds: [], projections: [], streams: [] };
   const link: OwnerDeclaration = { kind: 'link', slotCount: 2, entryKinds: [], projections: [], streams: [] };
   const g = RuntimeDouble.group([account, link], { slots: [0, 1] });

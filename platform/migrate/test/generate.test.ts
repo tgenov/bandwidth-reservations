@@ -14,7 +14,7 @@ const decl: OwnerDeclaration = {
   streams: [{ name: 'counter', topic: 'canary.counter.v1', key: 'partition', emitFn: { version: 1 }, closure: 'none', consumers: [] }],
 };
 
-test('platform tables: owner_session sharded, owner_slot with stops_version/report_through/marker_seq, 64 timing shards', () => {
+test('should generate the platform tables (owner_session sharded, owner_slot with stops_version/report_through/marker_seq, 64 timing shards) when migrating the platform', () => {
   const sql = platformMigration().statements.join('\n');
   assert.match(sql, /CREATE TABLE IF NOT EXISTS owner_session[\s\S]*shard < 64[\s\S]*PRIMARY KEY \(shard, session_id\)/);
   for (const c of ['stops_version INT8 NOT NULL DEFAULT 0', 'report_through DECIMAL NULL', 'marker_seq INT8 NOT NULL DEFAULT 0']) {
@@ -24,7 +24,7 @@ test('platform tables: owner_session sharded, owner_slot with stops_version/repo
   assert.match(sql, /placement_integrity_stops/);
 });
 
-test('kind tables: log with partition index, head with adopted and batch_id, outbox with 26 h TTL and 25 h GC', () => {
+test('should generate the kind tables (log with partition index, head with adopted and batch_id, outbox with 26 h TTL and 25 h GC) when migrating a kind', () => {
   const m = kindMigration(decl);
   const sql = m.statements.join('\n');
   assert.match(sql, /CREATE TABLE IF NOT EXISTS canary_log[\s\S]*PRIMARY KEY \(slot, partition, seq\)[\s\S]*canary_log_by_partition \(partition, seq\)/);
@@ -36,12 +36,12 @@ test('kind tables: log with partition index, head with adopted and batch_id, out
   assert.ok(m.statements.every((s) => /IF NOT EXISTS|ON CONFLICT|SPLIT AT|CONFIGURE ZONE/.test(s)), 'idempotent statements only');
 });
 
-test('a slot-led projection key is refused (R47-01)', () => {
+test('should refuse a slot-led projection key (R47-01) when generating a kind', () => {
   const bad = { ...decl, projections: [{ name: 'x', ddl: 'slot INT4, partition BYTES, PRIMARY KEY (slot, partition)', clearColumns: [] }] };
   assert.throws(() => kindMigration(bad), /begins with slot/);
 });
 
-test('split points: every slot below 257 slots, every 64 above; head splits are reversed slot starts', () => {
+test('should split at every slot below 257 slots and every 64 above, with head splits at reversed slot starts, when generating split points', () => {
   assert.deepEqual(splitSlots(8), [1, 2, 3, 4, 5, 6, 7]);
   assert.equal(splitSlots(4096).length, 63);
   // Every partition of slot s has a home_key in [reverse(s), next boundary).
@@ -56,7 +56,7 @@ test('split points: every slot below 257 slots, every 64 above; head splits are 
   }
 });
 
-test('grants (C01 §2.3): owner, read roles, gap-fill view, placement stops function; RLS only when asked', async () => {
+test('should grant (C01 §2.3) owner, read roles, gap-fill view and placement stops function, with RLS only when asked, when generating grants', async () => {
   const { grantMigration, expectedPrivileges } = await import('../src/index.ts');
   const link: OwnerDeclaration = {
     kind: 'link', slotCount: 4, entryKinds: [{ kind: 1, name: 'e', schemaVersions: [1], retention: '7y' }],

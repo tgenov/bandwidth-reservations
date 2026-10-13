@@ -27,7 +27,7 @@ function setup() {
 
 const flow = { startMs: Date.parse('2026-10-12T12:30:10Z'), endMs: Date.parse('2026-10-12T12:30:50Z'), bytes: 1_000_000_000n, ifIndex: 3, vlan: 100 };
 
-test('IPFIX codec: the reference exporter item decodes from its own context only', () => {
+test('should decode the reference exporter item from its own context only when the IPFIX codec decodes', () => {
   const exp = new ReferenceExporter(7, 1_000);
   const item = exp.exportItem([flow], 1_760_000_000);
   const d = decodeItem(item.message, item.context);
@@ -89,7 +89,7 @@ test('C01 CC-1 (ingest): an unknown AppendResult is a Retry and an alert', async
   assert.equal(exp.acks.length, 1);
 });
 
-test('resend: a verbatim resend gives duplicates, also after the memory is lost (takeover)', async () => {
+test('should give duplicates when a record is resent verbatim, also after the memory is lost (takeover)', async () => {
   const { rt, owner, session, exp } = setup();
   const item = exp.exportItem([flow], 1_760_270_000);
   await exp.send(session, exp.batch([item]));
@@ -127,7 +127,7 @@ test('C11 test 12 (first clause): the relay derivation of each ingest_log row eq
   assert.ok(relayed[1]?.body.kind === 'batch' && relayed[1].body.contexts[0]?.firstLoggedIn === rows[0]?.seq.toString());
 });
 
-test('outcomes: a record with an end before its start is rejected with a positioned reject key; the next record is accepted', async () => {
+test('should reject a record with a positioned reject key, and accept the next record, when its end is before its start', async () => {
   const { session, exp } = setup();
   const bad = { ...flow, startMs: flow.endMs, endMs: flow.startMs };
   await exp.send(session, exp.batch([exp.exportItem([bad, flow], 1_760_270_000)]));
@@ -139,7 +139,7 @@ test('outcomes: a record with an end before its start is rejected with a positio
   assert.equal(m?.acceptedIdentities[0]?.format === 'ipfix' && m.acceptedIdentities[0].extSeq, '1');
 });
 
-test('outside the I1 subset: a batch with a non-conforming payload is not committed and not acknowledged', async () => {
+test('should not commit and not acknowledge a batch when its payload is outside the I1 subset', async () => {
   const { rt, session, exp } = setup();
   const item = exp.exportItem([flow], 1_760_270_000);
   const frames = await exp.send(session, exp.batch([{ message: item.message, context: new Uint8Array() }]));

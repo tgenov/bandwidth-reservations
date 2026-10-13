@@ -203,7 +203,7 @@ test('X1-S07 / C08 C-01, DT-25: invalid contexts change nothing at the test owne
   assert.equal(applied?.limits?.key_rate_limit_per_s, 50);
 });
 
-test('revocation: after the push applies, the edge refuses the revoked key within C08 bounds (simulated clock)', async (t) => {
+test('should refuse the revoked key at the edge within C08 bounds when the revocation push applies (simulated clock)', async (t) => {
   await t.test('stream live: the edge refuses at the next stream message; the owner refuses after the push applies', async () => {
     const s = await ready('b1');
     const seen = captureContexts(s);
@@ -253,7 +253,7 @@ test('revocation: after the push applies, the edge refuses the revoked key withi
   });
 });
 
-test('I1 exit (6): a fixture key issue reaches the test owner within 2 s; resolved markers every 1 s with no traffic', async () => {
+test('should deliver a fixture key issue to the test owner within 2 s, and resolved markers every 1 s with no traffic, when the skeleton runs (I1 exit 6)', async () => {
   const s = await ready('b1');
   const t0 = s.nowMs();
   const k = await s.issue('b1');

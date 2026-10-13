@@ -71,7 +71,7 @@ test('P3-S25: 1 GB of attachment-class traffic at 12:30 outside any reservation 
   assert.deepEqual(w.alerts.alerts, []);
 });
 
-test('a resent record does not charge twice: a verbatim resend (to the other region, and after the line is posted) gives one line of 10,000', async () => {
+test('should not charge twice when a record is resent verbatim (to the other region, and after the line is posted): one line of 10,000', async () => {
   const w = await readyWorld();
   const { exp, item } = await sendFlow(w);
   // The ack is "lost": the exporter resends the same item to the other region.
@@ -89,7 +89,7 @@ test('a resent record does not charge twice: a verbatim resend (to the other reg
   assert.equal(u(w), 0n);
 });
 
-test('I1 exit criterion 2 / C11 test 12: with the direct publish of ingest_log and of the stage A outbox stopped, the relay alone gives the same line', async () => {
+test('C11 test 12 / I1 exit criterion 2: with the direct publish of ingest_log and of the stage A outbox stopped, the relay alone gives the same line', async () => {
   const direct = await readyWorld('off');
   await sendFlow(direct);
   await runPastClosure(direct);
@@ -163,7 +163,7 @@ function closedAtMs(w: World): number | undefined {
   return e ? hlcToWallMs(e.ts) : undefined;
 }
 
-test('RFC-003 §5.6: the usage minute closes at m + 60 + 60 + 180 + 15 s once the stage A watermark is there; a stalled stage A partition holds it only to the + 45 s bound', async () => {
+test('should close the usage minute at m + 60 + 60 + 180 + 15 s once the stage A watermark is there, and hold it only to the + 45 s bound when a stage A partition stalls (RFC-003 §5.6)', async () => {
   const w = await readyWorld();
   await sendFlow(w);
   await runPastClosure(w);

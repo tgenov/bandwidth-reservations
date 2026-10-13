@@ -13,7 +13,7 @@ import { CATALOGUE, DEPLOY_AT, FLOW_1GB, MINUTE_1230, chargeBatches, readyWorld,
 
 const noSleep = async (): Promise<void> => {};
 
-test('POL-13 spread: a record inside one minute is one part; a record across a boundary is split exactly, half-open', () => {
+test('should keep a record in one part inside one minute, and split it exactly and half-open when it crosses a boundary (POL-13 spread)', () => {
   assert.deepEqual(spread(FLOW_1GB.startMs, FLOW_1GB.endMs, 1_000_000_000n),
     [{ minuteMs: MINUTE_1230, bytes: { num: '40000000000000', den: '40000' }, bindTimeMs: FLOW_1GB.startMs }]);
   const s = Date.parse('2026-10-12T11:59:30Z');
@@ -136,7 +136,7 @@ test('C06 CT-C2 (rating as consumer of C06 §7): a repeated posted ack has no ef
   assert.equal(v.rating.stateOf('a1')?.lines[`p1|r1|${MINUTE_1230}`]?.posted, '10000');
 });
 
-test('settlement double (C06 §8 provider, CT-L4, CT-L5, CT-L6 subset): duplicate line, conflict, lineCount, recorded answer', async () => {
+test('C06 CT-L4, CT-L5, CT-L6 subset on the settlement double (C06 §8 provider): duplicate line, conflict, lineCount, recorded answer', async () => {
   const w = await readyWorld();
   const exp = new w.ReferenceExporter(7, MINUTE_1230 - 3_600_000);
   await exp.send(w.session('e1', 's1'), exp.batch([exp.exportItem([FLOW_1GB], 1_760_270_000)]));
@@ -193,7 +193,7 @@ test('C01 CC-8: the five declarations match RFC-003 (entry kinds, retention, key
   assert.equal(catalogueDeclaration.streams[0]?.closure, 'resolved');
 });
 
-test('alerts: the walking skeleton raises no alert', async () => {
+test('should raise no alert when the walking skeleton runs', async () => {
   const w = await readyWorld();
   const exp = new w.ReferenceExporter(7, MINUTE_1230 - 3_600_000);
   await exp.send(w.session('e1', 's1'), exp.batch([exp.exportItem([FLOW_1GB], 1_760_270_000)]));

@@ -44,7 +44,7 @@ async function producer(bus: MemoryBus, cdcPartitions = 2, publisher = new Memor
   return { store, feed, rt, publisher };
 }
 
-test('relay: parses CockroachDB JSON exactly (DECIMAL ts digits kept), re-keys rows, drops deletes, writes progress after its rows', async () => {
+test('should parse CockroachDB JSON exactly (DECIMAL ts digits kept), re-key rows, drop deletes and write progress after its rows when the relay runs', async () => {
   const m = parseCdcMessage(utf8('{"after": {"slot": 1, "partition": "\\\\x0102", "stream": "s", "stream_seq": 9007199254740993, "n": 0, "topic": "link.schedule.v1", "msg_key": "\\\\x0102", "headers": "\\\\x7b7d", "payload": "\\\\x00", "ts": 1791871402988494933.0000000001, "generation": 0, "epoch": 3}, "updated": "1"}'));
   assert.equal(m?.type, 'row');
   if (m?.type === 'row') { assert.equal(m.row.ts, '1791871402988494933.0000000001'); assert.equal(m.row.streamSeq, 9007199254740993n); assert.equal(hex(m.row.partition), '0102'); }
@@ -123,7 +123,7 @@ test('CP-8: R_min over every cdc partition; a partition with no progress holds i
   await emitter.stop(); await relay.stop(); await rt.stop();
 });
 
-test('closure emitter: a new holder writes every link once; the heartbeat repeats every link', async () => {
+test('should write every link once and repeat every link in the heartbeat when a new closure emitter holder starts', async () => {
   const bus = new MemoryBus();
   const { store, feed, rt } = await producer(bus, 1);
   const relay = new OutboxRelay({ bus, kind: 'link' });
@@ -256,7 +256,7 @@ test('CP-9 (D3): a forged copy before application ⇒ the database copy wins; FE
   await c2.stop(); await rt.stop();
 });
 
-test('consumer offsets: committed only below the first undelivered record (restart loses nothing)', async () => {
+test('should commit consumer offsets only below the first undelivered record when records are not yet delivered (restart loses nothing)', async () => {
   const bus = new MemoryBus();
   await bus.ensureTopic('link.schedule.v1', 1);
   const a = await consumer(bus);
@@ -272,7 +272,7 @@ test('consumer offsets: committed only below the first undelivered record (resta
   await b.c.stop();
 });
 
-test('onResolved fires after the position passes dataHighWater and buffered rows ≤ R are delivered; onMarker keeps every marker', async () => {
+test('should fire onResolved after the position passes dataHighWater and buffered rows ≤ R are delivered, and keep every marker in onMarker, when markers arrive', async () => {
   const bus = new MemoryBus();
   await bus.ensureTopic('link.schedule.v1', 1);
   await bus.ensureTopic('link.schedule.v1.closure', 1);

@@ -100,7 +100,7 @@ test('P2-S92: a request holds no capacity until its funds hold is taken; the oth
 
 // ---------------- Exit criteria ----------------
 
-test('AM-I1 exit (1): POST book for one Share leg answers 200 confirmed with a reservation id; the link records hold, then convert with the attempt HELD carried', async () => {
+test('should answer 200 confirmed with a reservation id, and the link records hold then convert with the attempt HELD carried, when POST book is for one Share leg (AM-I1 exit 1)', async () => {
   const h = await harness({ accounts: [{ account: 'b1', balanceMicros: ONE_USD }] });
   const a = await h.book('b1', 'exit-1', book(0, 60, 10));
   assert.equal(a.http, 200);
@@ -115,7 +115,7 @@ test('AM-I1 exit (1): POST book for one Share leg answers 200 confirmed with a r
   assert.equal(conv.decisionTime, e5.ts);
 });
 
-test('AM-I1 exit: a booking that exceeds the funds is refused with C10 reason insufficient_funds and both top-up amounts (x − h, x − h + LBW)', async () => {
+test('should refuse with C10 reason insufficient_funds and both top-up amounts (x − h, x − h + LBW) when a booking exceeds the funds (AM-I1 exit)', async () => {
   const h = await harness({ accounts: [{ account: 'b1', balanceMicros: 500n }] });
   const a = await h.book('b1', 'nofunds', book(60, 120, 8));      // x = 8 Mbps × 2 µ × 60 min = 960 µ; h = 500 µ
   assert.equal(a.http, 200);
@@ -131,7 +131,7 @@ test('AM-I1 exit: a booking that exceeds the funds is refused with C10 reason in
   assert.equal(h.links.calls.length, 0, 'nothing held on any link');
 });
 
-test('AM-I1 exit: the same Idempotency-Key gives the same answer (retry and parallel); a changed fingerprint or another principal is 409', async () => {
+test('should give the same answer for the same Idempotency-Key (retry and parallel), and 409, when the fingerprint or the principal changes (AM-I1 exit)', async () => {
   const h = await harness({ accounts: [{ account: 'b1', balanceMicros: ONE_USD, keys: ['k1', 'k2'] }] });
   const [x, y] = await Promise.all([h.book('b1', 'same', book(0, 60, 10)), h.book('b1', 'same', book(0, 60, 10))]);
   assert.deepEqual(x, y);
@@ -149,7 +149,7 @@ test('AM-I1 exit: the same Idempotency-Key gives the same answer (retry and para
   assert.deepEqual(inv2, inv1);
 });
 
-test('AM-I1 exit: a status read never says pending after a reported outcome', async () => {
+test('should never say pending in a status read when an outcome is reported (AM-I1 exit)', async () => {
   const h = await harness({ accounts: [{ account: 'b1', balanceMicros: ONE_USD }], autoReport: false });
   h.links.holdDelayMs = 250;                        // the hold answers after the ack budget: pending goes before E5 is formed
   const slot = h.rt.slotOf(utf8('b1')).slot;
@@ -181,7 +181,7 @@ test('AM-I1 exit: a status read never says pending after a reported outcome', as
   assert.ok(e5.entry.pendingAnswered, 'C01 EntryInput.pendingAnswered set on the reporting entry');
 });
 
-test('AM-I1 exit (10): a single-link booking costs two account-log transactions', async () => {
+test('should cost two account-log transactions when a single-link booking is made (AM-I1 exit 10)', async () => {
   const h = await harness({ accounts: [{ account: 'b1', balanceMicros: ONE_USD }] });
   const before = h.rt.appends.filter((a) => Buffer.from(a.call.partition).toString() === 'b1').length;
   await h.book('b1', 'count', book(0, 60, 10));
@@ -301,7 +301,7 @@ test('C01 CC-8: the account declaration validates, generates its tables, and mat
 });
 
 for (const [row, markerAttempt] of [['the recorded attempt', 1], ['another attempt', 2]] as const) {
-  test(`C02-C 7 (first row): a displacement marker with ${row} means no E5; the request is decided against the reduced capacity`, async () => {
+  test(`C02 consumer test 7 (C02-C 7, first row): a displacement marker with ${row} means no E5; the request is decided against the reduced capacity`, async () => {
     const h = await harness({ accounts: [{ account: 'b1', balanceMicros: ONE_USD }] });
     h.links.afterHold = (cmd) => h.links.displace(cmd.link, cmd.request, markerAttempt);
     const a = await h.book('b1', 'disp', book(0, 60, 10));

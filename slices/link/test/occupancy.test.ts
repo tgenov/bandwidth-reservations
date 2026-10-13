@@ -17,7 +17,7 @@ function brute(tree: OccupancyTree): Int32Array {
   return v;
 }
 
-test('tree: random pulses, every query equals the per-minute array (seeded)', () => {
+test('should equal the per-minute array for every query when the tree gets random pulses (seeded)', () => {
   for (let seed = 1; seed <= 20; seed++) {
     const r = rng(seed);
     const tree = new OccupancyTree();
@@ -59,7 +59,7 @@ test('tree: random pulses, every query equals the per-minute array (seeded)', ()
   }
 });
 
-test('tree: rollback undoes every impulse since the last commit', () => {
+test('should undo every impulse since the last commit when the tree rolls back', () => {
   const tree = new OccupancyTree();
   tree.add(10, 20, 5);
   tree.commit();
@@ -72,7 +72,7 @@ test('tree: rollback undoes every impulse since the last commit', () => {
   assert.equal(tree.peak(0, null), 5);
 });
 
-test('tree: P1-S01 worked example of RFC-001 §3.2 (7 Mbps at [10:00, 11:00), ask [10:30, 11:30))', () => {
+test('should give the peak of the P1-S01 worked example of RFC-001 §3.2 (7 Mbps at [10:00, 11:00), ask [10:30, 11:30)) when the tree holds it', () => {
   const tree = new OccupancyTree();
   tree.add(600, 660, 7);
   assert.equal(tree.peak(630, 690), 7);
@@ -80,7 +80,7 @@ test('tree: P1-S01 worked example of RFC-001 §3.2 (7 Mbps at [10:00, 11:00), as
   assert.ok(tree.peak(630, 690) + 4 > 10);
 });
 
-test('tree: P1-S04 touching windows do not overlap; open-ended counts for ever', () => {
+test('should not overlap touching windows (P1-S04) and count an open-ended entry for ever when the tree holds them', () => {
   const tree = new OccupancyTree();
   tree.add(600, 660, 10);
   assert.equal(tree.peak(660, 720), 0);

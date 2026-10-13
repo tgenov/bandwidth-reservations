@@ -51,7 +51,7 @@ test('C08 §J: a caller not on the allowlist is refused caller_not_allowed', asy
   assert.equal(rt.appends.length, 0);
 });
 
-test('audit_append on the runtime core writes a record; its chain re-computes from C08 §J; a changed row is detected', async () => {
+test('should write a record, re-compute its chain from C08 §J and detect a changed row when audit_append runs on the runtime core', async () => {
   const store = new MemoryStore();
   store.seedSlots(AUDIT_KIND, declaration.slotCount);
   const rt = new CockroachOwnerRuntime({ declaration, store, publisher: new MemoryPublisher(), load: new ManualLoad(),

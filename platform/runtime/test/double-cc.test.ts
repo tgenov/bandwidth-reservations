@@ -297,7 +297,7 @@ test('CC-8: the declaration validates (entry kinds, retention, keys led by parti
   assert.deepEqual(DECL.streams[0]?.consumers, ['probe_results']);
 });
 
-test('double: decide re-runs on scripted restarts with a fresh ts; ctx.read refuses undeclared rows', async () => {
+test('should re-run decide with a fresh ts on scripted restarts and refuse undeclared rows in ctx.read when the runtime double runs', async () => {
   const rt = new RuntimeDouble({ declaration: DECL });
   const seen: string[] = [];
   rt.scriptRestarts(3);

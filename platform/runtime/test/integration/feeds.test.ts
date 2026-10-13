@@ -105,7 +105,7 @@ async function readAll(b: KafkaBus, topic: string, expect: (n: number) => boolea
   return recs;
 }
 
-test('setup: migrate both kinds with grants; topics; changefeeds', { ...T, skip: SKIP }, async () => {
+test('should migrate both kinds with grants, topics and changefeeds when the suite sets up', { ...T, skip: SKIP }, async () => {
   await migrateKinds(URL, [LINK_DECL, ACCT_DECL], { presplit: false, grants: true });
   const admin = bus('itest-admin');
   await admin.ensureTopic(`cdc.${LINK}`, 2);

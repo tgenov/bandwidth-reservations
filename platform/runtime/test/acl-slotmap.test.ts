@@ -17,7 +17,7 @@ const account: OwnerDeclaration = {
   streams: [{ name: 'outcome', topic: 'account.outcome.v1', key: 'slot', emitFn: { version: 1 }, closure: 'none', reportGated: true, consumers: ['notifier'] }],
 };
 
-test('ACL: every topic names exactly its producing principals (C01 §2.5)', () => {
+test('should name exactly the producing principals of every topic (C01 §2.5) when building the ACL', () => {
   const acls = producerAcls([link, account], { extra: [{ topic: 'settlement.posting-acks.v1', producers: ['settlement-holder', 'settlement-relay'], contractRef: 'C06 v1 CI6-3' }] });
   const by = new Map(acls.map((a) => [a.topic, a.producers]));
   assert.deepEqual(by.get('link.schedule.v1'), ['link-holder', 'link-relay']);
@@ -43,7 +43,7 @@ test('ACL: every topic names exactly its producing principals (C01 §2.5)', () =
   assert.throws(() => producerAcls([link], { extra: [{ topic: 'link.schedule.v1', producers: ['x'], contractRef: 'bad' }] }), /two producer lists/);
 });
 
-test('slot map: fixed map from the feed; versions in order; duplicates ignored; a conflicting copy stops routing', async () => {
+test('should keep a fixed slot map from the feed with versions in order and duplicates ignored, and stop routing when a conflicting copy arrives', async () => {
   const bus = new MemoryBus();
   const v1 = fixedSlotMap(8, hlc('1'));
   await publishSlotMap(bus, v1);

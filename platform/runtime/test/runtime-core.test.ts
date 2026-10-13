@@ -55,7 +55,7 @@ const P = utf8('link-1');
 const SLOT = slotOfPartition(P, DECL.slotCount);
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
-test('Committed: contiguous seq, increasing ts, log + head + outbox in one commit, chain per C08 §J, direct publish', async () => {
+test('should commit with contiguous seq, increasing ts, log + head + outbox in one commit, chain per C08 §J and direct publish when the result is Committed', async () => {
   const { rt, store, publisher } = await boot();
   const r1 = await rt.append({ partition: P, entries: [entry('a'), entry('b')] });
   const r2 = await rt.append({ partition: P, entries: [entry('c')] });
@@ -226,7 +226,7 @@ test('CP-2 Overloaded only from shedding (event-loop monitor) or admission contr
   await rt.stop();
 });
 
-test('Stopped, Moving, Moved and lockTimeout per call', async () => {
+test('should answer Stopped, Moving, Moved and lockTimeout per call when the partition is stopped, moving or moved, or the displacement lock times out', async () => {
   const { rt, store } = await boot();
   assert.equal((await rt.append({ partition: P, entries: [entry('s0')] })).r, 'Committed');
   store.stopPartition('canary', SLOT, P, utf8('det-1'));

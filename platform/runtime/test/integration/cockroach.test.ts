@@ -148,7 +148,7 @@ const DECL2: OwnerDeclaration = {
   streams: [{ name: 'byacct', topic: `${KIND2}.byacct.v1`, key: { field: 'account' }, emitFn: { version: 1 }, closure: 'none', consumers: [] }],
 };
 
-test('setup: migrate the platform tables and the test kind', { ...T, skip: SKIP }, async () => {
+test('should migrate the platform tables and the test kind when the suite sets up', { ...T, skip: SKIP }, async () => {
   await migrateKinds(URL, [DECL, DECL2], { presplit: false });
   await migrateKinds(URL, [DECL], { presplit: false });   // idempotent
   const rows = await q('SELECT count(*)::INT4 AS n FROM owner_slot WHERE kind = $1', [KIND]);
@@ -308,7 +308,7 @@ test('CP-1: two processes contend for a slot across a pause; one committed write
   await a.close(); await b.close();
 });
 
-test('direct publish to Kafka after Committed (idempotent producer, acks=all)', { ...T, skip: KAFKA_SKIP }, async () => {
+test('should publish directly to Kafka after Committed (idempotent producer, acks=all) when Kafka is available', { ...T, skip: KAFKA_SKIP }, async () => {
   const publisher = new KafkaPublisher({ brokers: BROKERS, clientId: `${KIND}-holder` });
   const { rt, close } = await boot([0, 1, 2, 3], publisher);
   const kafka = new Kafka({ clientId: 'itest-consumer', brokers: BROKERS, logLevel: logLevel.NOTHING });
@@ -330,7 +330,7 @@ test('direct publish to Kafka after Committed (idempotent producer, acks=all)', 
   await close();
 });
 
-test('additions on the cell: readLog (opened, sender fence), listPartitions, slot positions, stream index; no pg deprecation warning', { ...T, skip: SKIP }, async () => {
+test('should run the additions (readLog opened with sender fence, listPartitions, slot positions, stream index) with no pg deprecation warning when on the dev cell', { ...T, skip: SKIP }, async () => {
   const warnings: string[] = [];
   const onWarning = (w: Error): void => { warnings.push(w.message); };
   process.on('warning', onWarning);

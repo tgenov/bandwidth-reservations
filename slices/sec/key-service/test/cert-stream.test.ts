@@ -41,7 +41,7 @@ test('C08 P-15 (I1 part): after a revocation is applied, and after 30 s of cert-
   assert.deepEqual(s.store.verify(DOMAINS.edgeRecord, s.obj, s.sig, s.req, s.now()), { ok: false, reason: 'revoked' });
 });
 
-test('cert stream: a message not signed by the certification root is refused and alerted', () => {
+test('should refuse and alert when a cert stream message is not signed by the certification root', () => {
   const s = setup();
   const other = new DevKeyService(() => s.now());
   const forged = other.read('0').find((m) => 'heartbeat' in m);

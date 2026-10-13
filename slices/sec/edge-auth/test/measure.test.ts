@@ -90,7 +90,7 @@ test('DT-23 (X1-S01): malformed, unknown and wrong-secret answers have the same 
   }
 });
 
-test('I1 exit (8): edge steps 3 to 6 take ≤ 1 ms at p99 on one node', { skip: !enabled }, async () => {
+test('measurement: I1 exit (8): edge steps 3 to 6 take ≤ 1 ms at p99 on one node', { skip: !enabled }, async () => {
   const measure: bigint[] = [];
   const { gateway, token, sync } = await setup(measure);
   // 2,000 requests/s for 5 s: paced in batches of 200 every 100 ms.

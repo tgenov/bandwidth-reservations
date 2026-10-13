@@ -12,7 +12,7 @@ test('CC-8: the canary declaration validates and generates its tables', () => {
   assert.match(sql, /canary_applied/);
 });
 
-test('canary on the runtime double: counts once per id; Retry/Ambiguous are retried with the same identity', async () => {
+test('should count once per id and retry Retry/Ambiguous with the same identity when the canary runs on the runtime double', async () => {
   const rt = new RuntimeDouble({ declaration });
   const owner = new CanaryOwner(rt);
   rt.attach(owner);
@@ -25,7 +25,7 @@ test('canary on the runtime double: counts once per id; Retry/Ambiguous are retr
   assert.deepEqual(await owner.increment(p, 'b'), { ok: false, reason: 'unavailable' });
 });
 
-test('canary on the real runtime core (memory store): counter and idempotency', async () => {
+test('should keep the counter and idempotency when the canary runs on the real runtime core (memory store)', async () => {
   const store = new MemoryStore();
   store.seedSlots('canary', declaration.slotCount);
   const publisher = new MemoryPublisher();

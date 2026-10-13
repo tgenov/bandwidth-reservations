@@ -9,7 +9,7 @@ import {
 
 const GB_PRICE_10000 = 10_000_000_000n; // 10,000 micro-USD per GB in pico-USD
 
-test('POL-11 / RFC-003 §2: usage charge is ⌊price × X / 10^15⌋ with exact bigint arithmetic', () => {
+test('should compute the usage charge as ⌊price × X / 10^15⌋ with exact bigint arithmetic (POL-11 / RFC-003 §2) when charging', () => {
   assert.equal(usageCharge(addFraction(emptyEla(), 1_000_000_000n, 1n), GB_PRICE_10000), 10_000n); // P3-S25
   assert.equal(usageCharge(addFraction(emptyEla(), 150_000n, 1n), GB_PRICE_10000), 1n); // 1.5 → 1 (P3-S21)
   assert.equal(usageCharge(addFraction(emptyEla(), 99_999n, 1n), GB_PRICE_10000), 0n); // 0.99999 → 0 (P3-S21)
@@ -17,7 +17,7 @@ test('POL-11 / RFC-003 §2: usage charge is ⌊price × X / 10^15⌋ with exact 
   assert.equal(usageCharge(addFraction(emptyEla(), 3_000_000_000n * 40n, 70n), GB_PRICE_10000), 17_142n);
 });
 
-test('ELA: the result does not depend on the order of the adds, and negated parts cancel (P3-N3)', () => {
+test('should not depend on the order of the adds, and cancel negated parts (P3-N3), when the ELA adds', () => {
   const parts: Array<[bigint, bigint]> = [[1_000n * 7n, 13n], [5n, 3n], [-2_000n, 7n], [999n, 1n], [11n, 120_000n]];
   const a = parts.reduce((e, [n, d]) => addFraction(e, n, d), emptyEla());
   const b = [...parts].reverse().reduce((e, [n, d]) => addFraction(e, n, d), emptyEla());
@@ -27,7 +27,7 @@ test('ELA: the result does not depend on the order of the adds, and negated part
   assert.equal(floorDiv(-7n, 2n), -4n);
 });
 
-test('time: minutes are half-open and C06 Minute form', () => {
+test('should make minutes half-open and in C06 Minute form when converting time', () => {
   assert.equal(minuteIso(Date.parse('2026-10-12T12:30:00Z')), '2026-10-12T12:30:00Z');
   assert.equal(lastMinuteEnd(Date.parse('2026-10-12T10:00:00Z'), Date.parse('2026-10-12T10:02:00Z')), Date.parse('2026-10-12T10:02:00Z'));
   assert.equal(lastMinuteEnd(Date.parse('2026-10-12T10:00:10Z'), Date.parse('2026-10-12T10:00:10Z')), Date.parse('2026-10-12T10:01:00Z'));

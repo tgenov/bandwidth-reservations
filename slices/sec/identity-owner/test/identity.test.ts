@@ -169,7 +169,7 @@ test('C08 §C / V56-3 regression: a record verifies under its cert at committed_
   }
 });
 
-test('fixture: accepted only from the test workload identity', async () => {
+test('should accept the fixture only when it comes from the test workload identity', async () => {
   const { owner, rt } = setup();
   const f = new KeyFixture(owner);
   assert.deepEqual(await f.issueAgentKey('spiffe://share/edge/node-1', 'b1'), { ok: false, reason: 'caller_not_allowed' });
@@ -178,7 +178,7 @@ test('fixture: accepted only from the test workload identity', async () => {
   assert.equal(a.ok, true);
 });
 
-test('fixture lint: the production entry does not reach the fixture module', () => {
+test('should not reach the fixture module from the production entry when the fixture lint runs', () => {
   const dir = fileURLToPath(new URL('../src/', import.meta.url));
   for (const f of readdirSync(dir).filter((n) => n.endsWith('.ts') && n !== 'fixture.ts' && n !== 'testing.ts')) {
     const text = readFileSync(dir + f, 'utf8');
