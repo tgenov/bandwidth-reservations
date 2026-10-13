@@ -146,9 +146,22 @@ test('CP-8 on the cell: relay + closure emitter; markers never precede a row at 
   assert.ok(compareHlc(emitter.rMin() as HlcTs, R1) > 0, 'R_min never goes back');
   const reader = bus('itest-reader');
   const data = await readAll(reader, `${LINK}.schedule.v1`, (n) => n >= 12);
+  // C01 §4, §5: feed events are at least once. The changefeed can emit a copy of a row that it already
+  // emitted after a resolved timestamp, and the relay forwards that copy. The consumer drops it by stream_seq.
+  // So CP-8 applies to the first copy of each event; every later copy must be byte-identical (§3.5).
+  const header = (r: (typeof data)[number], k: string): string => Buffer.from(r.headers[k] ?? []).toString();
+  const first = new Map<string, (typeof data)[number]>();
+  for (const r of [...data].sort((a, b) => a.partition - b.partition || (a.offset < b.offset ? -1 : a.offset > b.offset ? 1 : 0))) {
+    const id = `${r.partition}|${header(r, 'partition')}|${header(r, 'stream')}|${header(r, 'stream_seq')}`;
+    const f = first.get(id);
+    if (f === undefined) { first.set(id, r); continue; }
+    assert.deepEqual({ value: r.value, key: r.key, headers: r.headers }, { value: f.value, key: f.key, headers: f.headers },
+      `copy at ${r.partition}/${r.offset} is identical to the first copy at ${f.partition}/${f.offset}`);
+  }
+  assert.equal(first.size, 12, 'every event is on the data topic');
   for (const m of emitter.emitted) {
-    for (const r of data.filter((d) => d.partition === m.partition)) {
-      const ts = hlc(Buffer.from(r.headers['ts'] ?? []).toString());
+    for (const r of [...first.values()].filter((d) => d.partition === m.partition)) {
+      const ts = hlc(header(r, 'ts'));
       if (compareHlc(ts, m.resolved) <= 0) assert.ok(r.offset < m.dataHighWater, `row at ${r.partition}/${r.offset} (ts ≤ ${m.resolved}) below dataHighWater ${m.dataHighWater}`);
     }
   }
