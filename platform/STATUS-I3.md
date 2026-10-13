@@ -4,13 +4,12 @@ Increment: S-PLAT-I3 "Moves, splitting and integrity stops" (`docs/04-delivery/p
 `1.0.0-alpha.1`: the 1.0.0 release waits for the manual proofs below (exit 5). Every addition to the C01 v1 surface is
 optional (`AppendOptions.slot`, `ReaderChannel.movedOut`/`adopted`), so C01 v1 consumers do not change.
 
-Checks (this run, 2026-10-13): `npm run -s typecheck` passes (all workspaces); `npm run -s test:platform` 434 pass, 0 fail
-(three runs after the last change); `npm run -s test:contracts` 93 pass, 0 fail, 3 todo (`PENDING real provider` entries of
+Checks (this run, 2026-10-13, after the exit 1 and 2 follow-up): `npm run -s typecheck` passes (all workspaces);
+`npm run -s test:platform` 439 pass, 0 fail (two runs after the last change); `npm run -s test:contracts` 93 pass, 0 fail, 3 todo (`PENDING real provider` entries of
 other slices); `npx eslint platform contracts` is clean. `npm run check` and `npm run ci` were not run (engineering.md §2).
 
-Environment: `@grpc/grpc-js` (a dependency since I2) was not in this worktree's `node_modules`, so every platform test
-failed at import. The worktree now has the symlink `node_modules/@grpc` → `.claude/worktrees/s-rate-i4/node_modules/@grpc`,
-the same link that the other worktrees use. No package or lock file changed; no dependency was added.
+Environment: `@grpc/grpc-js` (a dependency since I2) is now installed in the main checkout; the worktree resolves it from
+there. No package or lock file changed; no dependency was added.
 
 Integration tests: **written, not run (manual proof owed)**. A person runs `REQUIRE_DEV_CELL=1 npm run
 test:platform:integration` on the dev cell. The I3 files: `platform/runtime/test/integration/i3.test.ts` (database `ii3_…`),
@@ -32,7 +31,8 @@ test:platform:integration` on the dev cell. The I3 files: `platform/runtime/test
 | 9 | `Stop`/`Resume`: one transaction (stop row, `stops_version` +1 on every fenced slot: both during a move, s and s + n for `headDecides`), `StopAck` after commit, `enforced_at` = commit ts, idempotent by `detection_ref`, `CONFLICT`, `NOT_STOPPED`, `HEAD_MISMATCH`, `PERMISSION_DENIED`; gRPC `share.placement.v1.IntegrityStop` (hand-coded protobuf); Pg store through `placement_set_stops_version` | `placement/integrity-stop*.ts`, `placement/pg-integrity-stop.ts` | `integrity-stop.test.ts` (34, 16 `C01 CP-6`), `integrity-stop-codec.test.ts` (4), `integrity-stop-grpc.test.ts` (9); cell: `integrity-stop.test.ts` |
 | 10 | Runtime: `Stopped` from a changed `stops_version` (a Stop restarts a batch in flight: the memory store now validates `stops_version` like the database's serialisable order), stops read on acquisition, local hold and `integrity_report` on a head-chain mismatch (sent once, retried until accepted; only audit's stop then resume lifts the hold) | `batch/attempt.ts`, `runtime.ts` (`reportIntegrity`), `store/memory.ts` | `stops-split.test.ts` (5 CP-6), C01 suite CP-6 (both subjects); cell: `i3.test.ts` |
 | 11 | Restore role: SELECT/INSERT/UPDATE on log and head only with row-level security; FORCE; permissive `restore_only_stopped` and restrictive `restore_confined` on placement's table; permissive policies for every other role; conformance job checks; new nullable columns of `placement_integrity_stops` | `migrate/src/grants.ts`, `migrate/src/generate.ts` | `restore-role.test.ts` (21); cell: `restore-role.test.ts` |
-| 12 | TLA+ model and Jepsen harness with moves, fence, splitting and stops | — | **Open** (the I1 model and harness do not exist yet, S-PLAT-I1 items 15, 16) |
+| 12 | TLA+ model and Jepsen harness with moves, fence, splitting and stops | — | **Manual proof owed / deferred** (orchestrator decision; the I1 model and harness do not exist yet, S-PLAT-I1 items 15, 16) |
+| — | CP-1, CP-7, CP-7a, CP-8 again with moves and stops in the seeded fault mix; CP-9 gap fill across a move; DT-08 with moves | `test/faultmix-moves.test.ts` | 5 tests: CP-1 (3 seeds × 90 operations: lost COMMIT answers both ways, stops and resumes, moves to two target slots, a takeover of a target slot; one writer per generation, seq contiguous, ts strictly increasing, nothing inside a stop, each Committed identity once, ts above the closed timestamp read before it); CP-7a (chains per slot across a move, a stop and a takeover); CP-7 (readers learn `moved`/`adopt` before P passes them); CP-8 (markers never precede rows, R_min never back, CLOSED of a moved link continues); CP-9 (gap filled by partition across slots, generation header continues) |
 
 Runtime double (`@share/owner-runtime/testing`): `prepareAdopt`, `adopt` that continues the source double's log and seq
 in one `DoubleWorld`, `moveOut` cancels the partition's timers, `AppendOptions.slot`. The C01 suite (`runC01ProviderSuite`)
@@ -43,11 +43,11 @@ double pass them.
 
 | # | Criterion | Status | Evidence |
 |---|---|---|---|
-| 1 | C01 CP-2 (all results), CP-5, CP-6, CP-9 (all clauses), CP-10, CP-13 (all clauses, dev sealer); CP-1, CP-7, CP-7a, CP-8 again with moves and stops in the fault mix | **Partly met by unit/contract test; cell part written, not run (manual proof owed); part open** | Met (unit/contract): CP-2 `Moved`, `Moving`, `Stopped` from the real runtime; CP-5 (every clause, `moves.test.ts`, suite); CP-6 (runtime and placement clauses; restore-role clause by the migration and its conformance job); CP-10 (placement and holder clauses, property test); CP-13 "a moved partition's old rows open in B by key_id" (B's pre-warm opens A's rows). Cell (written, not run): `i3.test.ts`, `integrity-stop.test.ts`, `restore-role.test.ts`. **Open**: CP-9 "gaps filled within gap_timeout across a move" has no test of its own (gap fill reads by partition since I1); CP-1, CP-7, CP-7a, CP-8 with moves and stops in the fault mix are not re-run |
-| 2 | DT-08 (with moves), DT-12, DT-37, DT-41 (64 → 128 on the dev cell under load), DT-45 | **DT-12, DT-37, DT-45 met by unit test; cell part written, not run (manual proof owed); DT-08 with moves and DT-41 open** | DT-12: `DT-12 a receiver …`, CP-5 seq/generation tests. DT-37: CP-5 tests (fence, rule 4, rowAbsent after a takeover, successor push). DT-45: CP-6 tests (runtime, placement, restore role). DT-41: the doubling runs on fakes only; no dev-cell run with account owners exists (needs the account owner, identity provisioning B4, finance) |
-| 3 | DT-42 on the dev cell: `Moving` at most 200 ms p99, no cold rebuild | **Written, not run (manual proof owed)** | `DT-42 on the cell …` in `i3.test.ts` (20 moves under load). Unit: pre-warm test (no cold rebuild) |
-| 4 | TLC and 24 h of the Jepsen harness find no violation | **Open (manual proof owed)** | No TLA+ model and no Jepsen harness exist (S-PLAT-I1 items 15, 16) |
-| 5 | `@share/owner-runtime` 1.0.0 published; the double has the same API | **Open** (the double: met) | The version stays `1.0.0-alpha.1` until exits 1 to 4 have their manual proofs |
+| 1 | C01 CP-2 (all results), CP-5, CP-6, CP-9 (all clauses), CP-10, CP-13 (all clauses, dev sealer); CP-1, CP-7, CP-7a, CP-8 again with moves and stops in the fault mix | **Met by unit/contract test; cell part: manual proof owed / deferred** | CP-2 `Moved`, `Moving`, `Stopped` from the real runtime; CP-5 (every clause, `moves.test.ts`, C01 suite on the runtime and the double); CP-6 (runtime and placement clauses; restore-role clause by the migration and its conformance job); CP-9 across a move and CP-1, CP-7, CP-7a, CP-8 with moves and stops (`faultmix-moves.test.ts`); CP-10 (placement and holder clauses, property test); CP-13 "a moved partition's old rows open in B by key_id" (B's pre-warm opens A's rows). Cell (written, not run): `i3.test.ts`, `integrity-stop.test.ts`, `restore-role.test.ts` |
+| 2 | DT-08 (with moves), DT-12, DT-37, DT-41 (64 → 128 on the dev cell under load), DT-45 | **DT-08 with moves, DT-12, DT-37, DT-45 met by unit test; cell parts and DT-41: manual proof owed / deferred** | DT-08: the CP-1 fault-mix test (ts strictly increasing per partition across holders and moves, above the closed timestamp read before each commit). DT-12: `DT-12 a receiver …`, CP-5 seq/generation tests. DT-37: CP-5 tests. DT-45: CP-6 tests. DT-41 needs real account owners on the dev cell (B4); the doubling runs on fakes only (orchestrator decision: deferred) |
+| 3 | DT-42 on the dev cell: `Moving` at most 200 ms p99, no cold rebuild | **Manual proof owed / deferred** (written, not run) | `DT-42 on the cell …` in `i3.test.ts` (20 moves under load). Unit: pre-warm test (no cold rebuild) |
+| 4 | TLC and 24 h of the Jepsen harness find no violation | **Manual proof owed / deferred** (orchestrator decision) | No TLA+ model and no Jepsen harness exist (S-PLAT-I1 items 15, 16) |
+| 5 | `@share/owner-runtime` 1.0.0 published; the runtime double is updated to the same API | **Deferred** until the manual proofs (orchestrator decision); the double: met | The version stays `1.0.0-alpha.1` |
 
 ## Defect found and fixed in this run
 
@@ -87,9 +87,8 @@ revoked and does nothing when the process has a newer session.
 
 ## Remaining work
 
-- Manual proofs: the integration files above on the dev cell; DT-41 on the dev cell with account owners; TLA+ and Jepsen
-  (exit 4); then release 1.0.0 (exit 5).
-- CP-1, CP-7, CP-7a, CP-8 with moves and stops in the fault mix; a CP-9 gap-fill test across a move.
+- Manual proof owed / deferred (orchestrator decision): the integration files above on the dev cell (exits 1 to 3); DT-41 on
+  the dev cell with real account owners (B4); TLA+ and Jepsen (exit 4); then release 1.0.0 (exit 5).
 - gRPC transports for `HolderPlacementApi`, `PlacementApi`, the move steps and the fence push; mTLS for
   `GrpcIntegrityStopServer`.
 - Placement's own kind grants on `placement_integrity_stops` and `placement_partition_moves` (`grantMigration`).
