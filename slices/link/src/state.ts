@@ -1,5 +1,5 @@
 /**
- * The apply state machine of one link (RFC-001 §2, §3.3, §4.1 … §4.4, §7.3, §7.4), parts I1 … I5.
+ * The apply state machine of one link (RFC-001 §2, §3.3, §4.1 … §4.5, §7.3, §7.4), parts I1 … I6.
  *
  * `beginBatch(ts)` starts a batch at its commit timestamp `ts`. `decide(command, ts)` then applies one
  * command. It returns the outcome and tells if the command writes a log entry. A command that writes no
@@ -27,6 +27,10 @@
  * every version, so it can judge each hold by the rules (V1 … V6, `rate_min`, `selling_horizon`) of the version
  * that the hold carries. The newest version gives the other parameters of the link from its entry on.
  *
+ * Leg changes (§4.5, I6). `end_leg` and `reduce_parts` change the confirmed parts of one (reservation, leg), in the
+ * order of their change ids (C02 "Leg-command sequencing"). The link keeps the recorded reply of every applied change
+ * id for the life of the leg. A `convert` is clipped only by an applied `end_leg` with a change id above `createdBy`.
+ *
  * Determinism (§7.4): the apply reads `ts`, never a clock. It uses integer arithmetic only. It
  * iterates maps in insertion order, which is a function of the log. The counter-offer budgets are step
  * counts that `beginBatch` resets. A replay calls `beginBatch` at each new `ts` (all entries of one batch
@@ -35,10 +39,12 @@
 import { createHash } from 'node:crypto';
 import { compareHlc, encodeJson, type HlcTs, type WriterFence } from '@share/owner-runtime';
 import type {
-  AcceptOutcome, ConvertCmd, ConvertOutcome, CounterOffer, FitRanges, HoldCmd, HoldOutcome, LinkCommand, LinkId, MarkWaitingCmd,
-  MarkWaitingOutcome, Minute, QueryState, ReleaseCmd, ReleaseOutcome, RequestId, WaitingContent, Window, YieldAnswerCmd,
+  AcceptOutcome, ChangeId, ConvertCmd, ConvertOutcome, CounterOffer, EndLegCmd, FitRanges, HoldCmd, HoldOutcome, LegChangeOutcome,
+  LinkCommand, LinkId, MarkWaitingCmd, MarkWaitingOutcome, Minute, Piece, QueryState, ReducePartsCmd, ReleaseCmd, ReleaseOutcome,
+  RequestId, WaitingContent, Window, YieldAnswerCmd,
 } from './c02.ts';
-import { requestKey } from './c02.ts';
+import { legKey, requestKey } from './c02.ts';
+import { endFrom, piecesOf, raises, segments, setPieces, wellFormedPieces } from './legs.ts';
 import { CounterOfferBatch, earliest, fitRanges, horizonMinute, largestRate } from './counteroffer.ts';
 import { OccupancyTree, type MinuteRange } from './occupancy.ts';
 
@@ -75,7 +81,7 @@ export interface PolicyCmd { link: LinkId; policy: LinkPolicy }
 
 /** The outcome of one command, without the link stamp. */
 export type Outcome =
-  | HoldOutcome | ConvertOutcome | ReleaseOutcome | MarkWaitingOutcome | AcceptOutcome
+  | HoldOutcome | ConvertOutcome | ReleaseOutcome | MarkWaitingOutcome | AcceptOutcome | LegChangeOutcome
   | { code: 'UNKNOWN_LINK' } | { code: 'UNAVAILABLE' }
   | { result: 'INITIALISED' } | { result: 'TAKEOVER' } | { result: 'TICK' }
   | { result: 'POLICY_APPLIED'; version: string } | { code: 'INVALID_POLICY' };
@@ -140,7 +146,29 @@ export interface YieldRequest {
 /** A confirmed leg part in `occ_firm` (RFC-001 §3.3 "Leg parts"). */
 export interface LegPart {
   reservation: string; leg: string; part: string; request: string;
-  rateMbps: number; window: Window; age: HlcTs;
+  /** The rate at conversion. */
+  rateMbps: number;
+  /** The current window: an `end_leg` or a convert clip ends it earlier (I6). */
+  window: Window; age: HlcTs;
+  /** The rate as absolute pieces from the window start, after a `reduce_parts` (I6). Absent: `rateMbps` throughout. */
+  pieces?: Piece[];
+}
+
+/**
+ * The changes of one (reservation, leg) at this link (RFC-001 §4.5; C02 "Leg-command sequencing"). Kept for the life
+ * of the leg. The state replaces the whole record on each change, so the journal can undo it.
+ */
+export interface LegRecord {
+  /** The account partition (hex) that owns the reservation: the account of the hold of its first part. */
+  owner: string;
+  /** The part keys of the leg, in conversion order. */
+  parts: string[];
+  /** The highest applied change id. */
+  lastApplied?: ChangeId;
+  /** The applied `end_leg` changes: change sequence and effective minute (the convert clip, C02 V61-1). */
+  ends: Array<{ seq: bigint; fromMinute: number }>;
+  /** The recorded reply of every applied change id, by `requestKey(changeId)`: the body digest and the entry. */
+  changes: Record<string, { digest: string; seq: bigint }>;
 }
 
 /**
@@ -187,6 +215,8 @@ export class LinkState {
 
   private readonly holds = new Map<string, ActiveHold>();
   private readonly parts = new Map<string, LegPart>();
+  /** The leg records, by `legKey(reservation, leg)` (I6). */
+  private readonly legs = new Map<string, LegRecord>();
   private readonly records = new Map<string, RequestRecord>();
   private readonly waiters = new Map<string, Waiter>();
   /** The waiter keys in priority order: `request_age`, ties by request identity (RFC-001 §4.3). */
@@ -309,6 +339,8 @@ export class LinkState {
    * body than the recorded one (a defect, DI-7). This keeps the read off the path of new holds (RFC-001 §7.2).
    */
   needsRecall(cmd: LinkCommand, nowMs: number, marginMs: number): boolean {
+    // A leg change has no request record: its leg keeps the recorded replies for the life of the leg (I6).
+    if (cmd.op === 'end_leg' || cmd.op === 'reduce_parts') return false;
     const rec = this.records.get(requestKey(cmd.body.request));
     if (rec && this.memoryUntil(rec) > nowMs + marginMs) return false;
     return cmd.op !== 'hold' || nowMs >= cmd.body.commitFence;
@@ -375,7 +407,8 @@ export class LinkState {
     this.seq = seq;
     this.notices = [];
     this.finals = [];
-    this.recalled = recalled !== undefined && requestKey(recalled.request) === requestKey(cmd.body.request) ? recalled : undefined;
+    const request = 'request' in cmd.body ? cmd.body.request : undefined;
+    this.recalled = recalled !== undefined && request !== undefined && requestKey(recalled.request) === requestKey(request) ? recalled : undefined;
     try {
       switch (cmd.op) {
         case 'hold': return this.withEffects(this.hold(cmd.body, ts));
@@ -383,6 +416,8 @@ export class LinkState {
         case 'release': return this.withEffects(this.release(cmd.body, ts));
         case 'mark_waiting': return this.withEffects(this.markWaiting(cmd.body, ts));
         case 'yield': return this.withEffects(this.yieldAnswer(cmd.body, ts));
+        case 'end_leg': return this.withEffects(this.legChange(cmd.op, cmd.body, ts));
+        case 'reduce_parts': return this.withEffects(this.legChange(cmd.op, cmd.body, ts));
       }
     } finally {
       this.recalled = undefined;
@@ -634,7 +669,10 @@ export class LinkState {
     this.notices.push({ request: b.request, account: b.account, attempt: w.attempt, kind: 'WAITER_REFUSED', reason: 'NO_FIT', counterOffer });
   }
 
-  /** RFC-001 §4.4 "Convert". I1 has no clip (I6) and no displacement mark (I11). */
+  /**
+   * RFC-001 §4.4 "Convert", with the clip backstop (I6): an applied `end_leg` of the leg with a change id above
+   * `createdBy` clips the new part at its minute (`clippedAt`, alert `CONVERT_AFTER_END`). No displacement mark (I11).
+   */
   private convert(b: ConvertCmd, ts: HlcTs): Decision {
     const key = requestKey(b.request);
     const rec = this.liveRecord(key, ts);
@@ -648,24 +686,37 @@ export class LinkState {
     if (rec.state !== 'HELD') return { outcome: { code: 'TOMBSTONED' }, entry: false, alert: 'TOMBSTONED' };
     const h = this.holds.get(key) as ActiveHold;
     if (b.attempt !== h.attempt) return { outcome: { code: 'MISMATCH' }, entry: false, alert: 'MISMATCH' };
-    // The pulse goes to occ_firm. occ_all does not change, so the capacity is not counted twice (P1-S09).
-    this.occFirm.add(h.window.start, h.window.end, h.rateMbps);
+    const lk = legKey(b.reservation, b.leg);
+    const leg = this.legs.get(lk);
+    const clippedAt = leg === undefined ? undefined : clipOf(leg, b.createdBy);
+    const window = clippedAt === undefined ? h.window : endFrom(h.window, clippedAt);
+    // The pulse goes to occ_firm. occ_all does not change, so the capacity is not counted twice (P1-S09). A clip
+    // removes the hold's pulse after the clip minute from occ_all (C02 V61-1).
+    this.occFirm.add(window.start, window.end, h.rateMbps);
+    if (window.end !== h.window.end) this.occAll.add(window.end as number, h.window.end, -h.rateMbps);
     this.deleteIn(this.holds, key);
     // The entry that ends a hold attempt ends every yield claim on it (C02 port invariants, review 54 m1).
     this.endClaimsOnAttempt(key, h.attempt);
-    this.setIn(this.parts, partKey(b.reservation, b.leg, b.part), {
+    const pk = partKey(b.reservation, b.leg, b.part);
+    this.setIn(this.parts, pk, {
       reservation: b.reservation, leg: b.leg, part: b.part, request: key,
-      rateMbps: h.rateMbps, window: h.window, age: b.decisionTime,
+      rateMbps: h.rateMbps, window, age: b.decisionTime,
     });
-    const outcome: ConvertOutcome = { result: 'CONVERTED', part: b.part };
+    this.setIn(this.legs, lk, leg === undefined
+      ? { owner: hexOf(h.account), parts: [pk], ends: [], changes: {} }
+      : { ...leg, parts: [...leg.parts, pk] });
+    const outcome: ConvertOutcome = clippedAt === undefined
+      ? { result: 'CONVERTED', part: b.part }
+      : { result: 'CONVERTED', part: b.part, clippedAt };
     const next: RequestRecord = {
       ...rec, state: 'CONVERTED', holdOutcome: { result: 'CONVERTED', part: b.part },
       convertDigest: digest(b), convertAttempt: b.attempt, convertOutcome: outcome, seq: this.seq,
     };
     this.putRecord(key, next);
-    // occ_firm grew over the window: the waiters there can no longer fit (P2-S52, RFC-001 §4.3).
+    // occ_firm grew over the window: the waiters there can no longer fit (P2-S52, RFC-001 §4.3). A clip frees the
+    // rest of the hold's window, which is in the same range.
     this.scan(h.window.start, h.window.end, ts);
-    return { outcome, entry: true, final: next };
+    return { outcome, entry: true, final: next, ...(clippedAt === undefined ? {} : { alert: 'CONVERT_AFTER_END' }) };
   }
 
   /** RFC-001 §4.4 "Release": request-scoped; it also records a tombstone for a request not seen. */
@@ -879,6 +930,103 @@ export class LinkState {
     return [...this.yieldReqs.values()].sort((a, b) => (a.claim < b.claim ? -1 : a.claim > b.claim ? 1 : a.holder < b.holder ? -1 : a.holder > b.holder ? 1 : 0));
   }
 
+  // ---------------- leg changes (RFC-001 §4.5; C02 "Leg-command sequencing"; I6) ----------------
+
+  /**
+   * `end_leg` and `reduce_parts`. The checks, in order: the leg is known (`UNKNOWN_RESERVATION`); (1) an applied
+   * change id gets its recorded reply, or `MISMATCH` for another body; (4) a change id of a partition that does not
+   * own the reservation gets `MISMATCH`; `applies` present exactly with cause `POL07` (`INVALID(applies)`, C4-4); a
+   * well-formed minute and pieces (`INVALID`, DI-32); (3) a lower change id that the link never applied gets
+   * `STALE_CHANGE`; every named part is on the leg (`UNKNOWN_PART`); no piece raises a rate (`INVALID(pieces)`,
+   * DI-33); no pair names a reduction of this link (`UNKNOWN_REDUCTION`: the link has no reductions before I13).
+   * (2) Otherwise the change is applied. Only an applied change writes an entry.
+   */
+  private legChange(op: 'end_leg' | 'reduce_parts', b: EndLegCmd | ReducePartsCmd, ts: HlcTs): Decision {
+    const refuse = (o: Extract<LegChangeOutcome, { code: string }>): Decision => ({ outcome: o, entry: false, alert: o.code });
+    const lk = legKey(b.reservation, b.leg);
+    const leg = this.legs.get(lk);
+    if (!leg) return refuse({ code: 'UNKNOWN_RESERVATION' });
+    const ck = requestKey(b.changeId);
+    const applied = leg.changes[ck];
+    if (applied) {
+      if (applied.digest !== digest({ op, body: b })) return refuse({ code: 'MISMATCH' });
+      return { outcome: { result: 'CHANGED' }, entry: false, recordedSeq: applied.seq };
+    }
+    if (hexOf(b.changeId.partition) !== leg.owner) return refuse({ code: 'MISMATCH' });
+    if ((b.cause === 'POL07') !== (b.applies !== undefined)) return refuse({ code: 'INVALID', field: 'applies' });
+    if (op === 'end_leg' && !Number.isSafeInteger((b as EndLegCmd).fromMinute)) return refuse({ code: 'INVALID', field: 'fromMinute' });
+    const named = op === 'reduce_parts' ? (b as ReducePartsCmd).parts : [];
+    if (op === 'reduce_parts' && (!Array.isArray(named) || named.length === 0 || new Set(named.map((n) => n.part)).size !== named.length
+      || !named.every((n) => wellFormedPieces(n.pieces)))) return refuse({ code: 'INVALID', field: 'pieces' });
+    if (leg.lastApplied !== undefined && b.changeId.seq <= leg.lastApplied.seq) {
+      return { outcome: { result: 'STALE_CHANGE', lastApplied: leg.lastApplied }, entry: false };
+    }
+    const keys = named.map((n) => partKey(b.reservation, b.leg, n.part));
+    if (keys.some((k) => !leg.parts.includes(k))) return refuse({ code: 'UNKNOWN_PART' });
+    const next = named.map((n, i) => {
+      const p = this.parts.get(keys[i] as string) as LegPart;
+      const old = piecesOf(p);
+      return { key: keys[i] as string, p, old, pieces: setPieces(old, p.window, n.pieces), first: (n.pieces[0] as Piece).from };
+    });
+    if (next.some((x) => raises(x.old, x.pieces, x.p.window))) return refuse({ code: 'INVALID', field: 'pieces' });
+    if ((b.applies ?? []).some((r) => r.link === this.link)) return refuse({ code: 'UNKNOWN_REDUCTION' });
+
+    // Apply. The freed range is [the least first freed minute, the largest end) over the changed parts.
+    let freedStart = Infinity;
+    let freedEnd: number | null = -Infinity;
+    const freed = (s: number, e: number | null): void => {
+      freedStart = Math.min(freedStart, s);
+      freedEnd = freedEnd === null || e === null ? null : Math.max(freedEnd, e);
+    };
+    let effective: number;
+    if (op === 'end_leg') {
+      const t = (b as EndLegCmd).fromMinute;
+      effective = t;
+      for (const k of leg.parts) {
+        const p = this.parts.get(k) as LegPart;
+        const w = endFrom(p.window, t);
+        if (w === p.window) continue;
+        this.replaceContribution(k, p, { ...p, window: w });
+        freed(w.end as number, p.window.end);
+      }
+      this.setIn(this.legs, lk, { ...leg, ends: [...leg.ends, { seq: b.changeId.seq, fromMinute: t }] });
+    } else {
+      effective = Math.min(...next.map((x) => x.first));
+      for (const x of next) {
+        this.replaceContribution(x.key, x.p, { ...x.p, pieces: x.pieces });
+        const s = Math.max(x.p.window.start, x.first);
+        if (x.p.window.end === null || s < x.p.window.end) freed(s, x.p.window.end);
+      }
+    }
+    const cur = this.legs.get(lk) as LegRecord;
+    this.setIn(this.legs, lk, { ...cur, lastApplied: b.changeId, changes: { ...cur.changes, [ck]: { digest: digest({ op, body: b }), seq: this.seq } } });
+    // Every change scans the waiters over the freed range (RFC-001 §4.5).
+    if (freedStart !== Infinity) this.scan(freedStart, freedEnd, ts);
+    // A change that arrives after its effective minute is applied as decided, from that minute, and alerted (§4.5).
+    const late = atOrAfterMs(ts, effective * 60_000);
+    return { outcome: { result: 'CHANGED' }, entry: true, ...(late ? { alert: 'LATE_CHANGE' } : {}) };
+  }
+
+  /**
+   * Replace a part, and its pulses in `occ_firm` and `occ_all` (journaled). Only the net impulses go to the trees, so a
+   * change that leaves the rate as it was does not change the `occ_all` change counter (the counter-offer cache, §4.2).
+   */
+  private replaceContribution(key: string, old: LegPart, next: LegPart): void {
+    const delta = new Map<number, number>();
+    const put = (t: number, d: number): void => { delta.set(t, (delta.get(t) ?? 0) + d); };
+    for (const [sign, p] of [[-1, old], [1, next]] as const) {
+      for (const g of segments(piecesOf(p), p.window)) {
+        put(g.s, sign * g.b);
+        if (g.e !== null) put(g.e, -sign * g.b);
+      }
+    }
+    for (const [t, d] of delta) {
+      this.occFirm.impulse(t, d);
+      this.occAll.impulse(t, d);
+    }
+    this.setIn(this.parts, key, next);
+  }
+
   // ---------------- queries (not entries; RFC-001 §7.3) ----------------
 
   /** C02 `query`: the state of a request at `ts`, from memory or from its `link_request` record. */
@@ -1041,6 +1189,21 @@ function yieldKey(holder: string, attempt: number, claim: bigint): string {
 
 function partKey(reservation: string, leg: string, part: string): string {
   return `${reservation}|${leg}|${part}`;
+}
+
+function hexOf(b: Uint8Array): string {
+  return Buffer.from(b).toString('hex');
+}
+
+/**
+ * The clip minute of a part that a `convert` creates (RFC-001 §4.4; C02 V61-1): the earliest minute of the applied
+ * `end_leg`s of the leg with a change id above `createdBy`, or undefined. A change id of another partition is never
+ * applied (rule 4), so the sequences compare.
+ */
+function clipOf(leg: LegRecord, createdBy: ChangeId): number | undefined {
+  let clip: number | undefined;
+  for (const e of leg.ends) if (e.seq > createdBy.seq && (clip === undefined || e.fromMinute < clip)) clip = e.fromMinute;
+  return clip;
 }
 
 export { fenceBelow };

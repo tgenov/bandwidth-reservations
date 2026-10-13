@@ -1,5 +1,5 @@
 /**
- * The link schedule owner on the C01 runtime (RFC-001 §7.2, §8), parts I1 … I5.
+ * The link schedule owner on the C01 runtime (RFC-001 §7.2, §8), parts I1 … I6.
  *
  * - The C02 link hold port: `hold`, `convert`, `release`, `query`. Each command comes with its C01
  *   `CommandEnvelope`. The owner checks the routing, calls `admitCommand`, and queues the command for
@@ -17,6 +17,7 @@
  * - Yields (I5): `markWaiting` and `yieldAnswer` are commands as `hold`. A `YIELD_REQUEST` is a notice as above. The
  *   owner sends each open yield request again with the same claim, every `yieldResendMs`, from a C01 timer of the
  *   link, until an entry ends it (C02 "YIELD_REQUEST"). A rebuild arms the timer again (C02 `onAdopt`).
+ * - The C02 leg changes (I6): `endLeg`, `reduceParts`. Their entries are `EndLeg` and `ReduceParts`.
  * - The deployment command `deployPolicy` writes a `Policy(version, parameters)` entry (RFC-001 §7.3).
  * - Hooks: `onAcquire` and `onAdopt` rebuild the link by replay of its log. The replay compares each
  *   recorded outcome (RFC-001 §7.4). The first batch after a new epoch writes `Takeover(epoch)`.
@@ -27,10 +28,11 @@ import type {
 } from '@share/owner-runtime';
 import { encodeJson, hex, hlcAddMs, hlcToWallMs, slotOfPartition, utf8 } from '@share/owner-runtime';
 import type {
-  AvailabilityQuery, AvailabilityReply, BodyOf, ConvertCmd, Fence, FitRangesQuery, FitRangesReply, HoldCmd, LinkCommand, LinkId,
-  LinkOp, LinkStamp, MarkWaitingCmd, QueryCmd, QueryReply, ReleaseCmd, ReplyOf, RequestId, WaitingNotification, YieldAnswerCmd,
+  AvailabilityQuery, AvailabilityReply, BodyOf, ConvertCmd, EndLegCmd, Fence, FitRangesQuery, FitRangesReply, HoldCmd, LinkCommand,
+  LinkId, LinkOp, LinkStamp, MarkWaitingCmd, QueryCmd, QueryReply, ReducePartsCmd, ReleaseCmd, ReplyOf, RequestId, WaitingNotification,
+  YieldAnswerCmd,
 } from './c02.ts';
-import { requestKey } from './c02.ts';
+import { commandKey, requestKey } from './c02.ts';
 import { declaration, ENTRY, LINK_KIND } from './declaration.ts';
 import type { LoggedEntry, LogReader } from './log-source.ts';
 import {
@@ -165,6 +167,16 @@ export class LinkOwner implements OwnerHooks {
   /** C02 `yield_accept` and `yield_refuse` (outcome and expiry port). */
   yieldAnswer(env: CommandEnvelope, body: YieldAnswerCmd): Promise<ReplyOf['yield']> {
     return this.command('yield', env, body);
+  }
+
+  /** C02 `end_leg` (I6): every part of the leg ends from `fromMinute`. Answered once durable. */
+  endLeg(env: CommandEnvelope, body: EndLegCmd): Promise<ReplyOf['end_leg']> {
+    return this.command('end_leg', env, body);
+  }
+
+  /** C02 `reduce_parts` (I6): the named parts get the absolute pieces. Answered once durable. */
+  reduceParts(env: CommandEnvelope, body: ReducePartsCmd): Promise<ReplyOf['reduce_parts']> {
+    return this.command('reduce_parts', env, body);
   }
 
   /**
@@ -446,7 +458,7 @@ export class LinkOwner implements OwnerHooks {
   private async recallFor(mem: LinkMemory, batch: Pending[]): Promise<void> {
     const nowMs = hlcToWallMs(this.rt.now().ts);
     for (const p of batch) {
-      if (p.t !== 'cmd' || p.recalled || !mem.state.needsRecall(p.cmd, nowMs, RECALL_MARGIN_MS)) continue;
+      if (p.t !== 'cmd' || p.recalled || !('request' in p.cmd.body) || !mem.state.needsRecall(p.cmd, nowMs, RECALL_MARGIN_MS)) continue;
       const rec = await this.recall(mem, p.cmd.body.request);
       if (rec) p.recalled = rec;
     }
@@ -584,11 +596,11 @@ export class LinkOwner implements OwnerHooks {
       const command = p.t === 'cmd' ? p.cmd : p.t === 'init' ? p.init : p.policy;
       this.o.onDecided?.({ link: mem.link, command, outcome: d.outcome, ts, ...(seq === undefined ? {} : { seq }) });
       if (d.alert) {
-        const request = p.t === 'cmd' ? requestKey(p.cmd.body.request) : undefined;
+        const request = p.t === 'cmd' ? commandKey(p.cmd) : undefined;
         this.alert({ kind: d.alert, link: mem.link, ...(request ? { request } : {}) });
       }
       if (!this.rt.leaseValid(mem.slot).valid) { p.resolve({ code: 'NOT_OWNER' }); return; }
-      this.o.onReply?.(p.t === 'cmd' ? `${p.cmd.op}:${requestKey(p.cmd.body.request)}` : `${p.t}:${mem.link}`);
+      this.o.onReply?.(p.t === 'cmd' ? `${p.cmd.op}:${commandKey(p.cmd)}` : `${p.t}:${mem.link}`);
       const out = d.outcome;
       if ('result' in out) {
         const stamp: LinkStamp = { linkFence, linkSeq: seqs[i] ?? d.recordedSeq ?? mem.state.appliedSeq };
@@ -679,10 +691,11 @@ export class LinkOwner implements OwnerHooks {
   }
 
   private commandEntry(cmd: LinkCommand, sender: SenderRef, d: Decision): EntryInput {
-    const key = requestKey(cmd.body.request);
+    const key = commandKey(cmd);
     const kind = ENTRY_OF[cmd.op](cmd);
     // A release can write a second entry only to extend its tombstone, so its identity has D. A request has one
-    // mark entry for each position, and one answer entry for each (attempt, claim, kind).
+    // mark entry for each position, and one answer entry for each (attempt, claim, kind). A leg change has one
+    // entry for each change id (its key).
     const identity = cmd.op === 'release' ? `release:${key}:${cmd.body.deadline}`
       : cmd.op === 'mark_waiting' ? `mark:${key}:${cmd.body.position}`
         : cmd.op === 'yield' ? `${cmd.body.answer}:${key}:${cmd.body.attempt}:${cmd.body.claim}` : `${cmd.op}:${key}`;
@@ -708,6 +721,8 @@ const ENTRY_OF: { [O in LinkOp]: (cmd: Extract<LinkCommand, { op: O }>) => numbe
   release: () => ENTRY.Release,
   mark_waiting: () => ENTRY.MarkWaiting,
   yield: (cmd) => (cmd.op === 'yield' && cmd.body.answer === 'yield_accept' ? ENTRY.YieldAccept : ENTRY.YieldRefuse),
+  end_leg: () => ENTRY.EndLeg,
+  reduce_parts: () => ENTRY.ReduceParts,
 };
 
 /**

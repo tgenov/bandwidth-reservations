@@ -15,9 +15,9 @@
  * scan raises have the sequence of the command's entry.
  */
 import type { HlcTs } from '@share/owner-runtime';
-import type { HoldCmd, LinkCommand, Outcome } from '../src/index.ts';
+import type { HoldCmd, Outcome } from '../src/index.ts';
 import { requestKey, wallNs } from '../src/index.ts';
-import { MinuteOracle, oraclePriority, type OracleRequest, type OracleWaiter } from './support.ts';
+import { MinuteOracle, oraclePriority, type OracleRequest, type OracleWaiter, type YieldCommand } from './support.ts';
 
 interface OracleClaim { seq: bigint; waiter: string; minutes: Set<number> }
 interface OracleYield { holder: string; attempt: number; claim: bigint; waiter: string }
@@ -33,7 +33,7 @@ export class YieldOracle extends MinuteOracle {
     return [...this.yields];
   }
 
-  protected override other(cmd: LinkCommand, ts: HlcTs): Outcome {
+  protected override other(cmd: YieldCommand, ts: HlcTs): Outcome {
     const key = requestKey(cmd.body.request);
     const rec = this.req.get(key);
     if (cmd.op === 'mark_waiting') {
@@ -52,7 +52,6 @@ export class YieldOracle extends MinuteOracle {
       }
       return { result: 'APPLIED' };
     }
-    if (cmd.op !== 'yield') throw new Error(`YieldOracle: unexpected ${cmd.op}`);
     const b = cmd.body;
     const answerKey = `${key}|${b.attempt}|${b.claim}|${b.answer}`;
     const done = this.answers.get(answerKey);

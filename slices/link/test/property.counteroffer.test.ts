@@ -9,7 +9,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { encodeJson, hex, type HlcTs } from '@share/owner-runtime';
-import { DEFAULT_POLICY, LinkState, requestKey, type HoldCmd, type LinkCommand, type LinkPolicy, type Outcome } from '../src/index.ts';
+import { commandKey, DEFAULT_POLICY, LinkState, type HoldCmd, type LinkCommand, type LinkPolicy, type Outcome } from '../src/index.ts';
 import { int, M, MinuteOracle, rng } from './support.ts';
 
 const DOMAIN = 600;
@@ -89,7 +89,7 @@ function run(seed: number, policy: LinkPolicy): { log: Logged[]; counts: Record<
       const d = decided[i] as { outcome: Outcome; seq?: bigint };
       const want = oracle.apply(c, ts);
       assert.equal(hex(encodeJson(d.outcome)), hex(encodeJson(want)),
-        `seed ${seed}, batch ${b}, command ${i} (${c.op} ${requestKey(c.body.request)}): link ${JSON.stringify(d.outcome)} oracle ${JSON.stringify(want)}`);
+        `seed ${seed}, batch ${b}, command ${i} (${c.op} ${commandKey(c)}): link ${JSON.stringify(d.outcome)} oracle ${JSON.stringify(want)}`);
       if (d.seq !== undefined) { seq = d.seq; log.push({ cmd: c, ts, seq: d.seq, outcome: d.outcome }); }
       const offer = (d.outcome as { counterOffer?: { earliest: object } }).counterOffer;
       if (offer) for (const k of Object.keys(offer.earliest)) counts[k] = (counts[k] ?? 0) + 1;

@@ -138,7 +138,7 @@ test('P1-S14 decisions are those of one-at-a-time checks in arrival order; a wai
   const [ra, rb, rc] = await Promise.all([h.stub.hold(a), h.stub.hold(b), h.stub.hold(c)]);
   assert.deepEqual([resultOf(ra), resultOf(rb), resultOf(rc)], ['HELD', 'REFUSED:"IN_FLIGHT"', 'HELD']);
   // The log has them in arrival order.
-  assert.deepEqual(h.decided.slice(-3).map((d) => 'body' in d.command ? d.command.body.request.seq : 0n), [a.request.seq, b.request.seq, c.request.seq]);
+  assert.deepEqual(h.decided.slice(-3).map((d) => 'body' in d.command && 'request' in d.command.body ? d.command.body.request.seq : 0n), [a.request.seq, b.request.seq, c.request.seq]);
   await h.stub.release(h.stub.releaseCmd(a.request, a.deadline));
   assert.equal(resultOf(await h.stub.hold(b)), 'REFUSED:"IN_FLIGHT"', 'b stays refused after its blocker is released');
 });

@@ -21,11 +21,18 @@
  * request_age, so younger holders block older waiters. The oracle is then `YieldOracle`. The run also checks from the
  * log rows alone that each yield request goes to a holder that carries the mark, for an older request that waits,
  * with the claim of its entry, and that an accepted yield moves the pulse out of occ_all (P1-N1, P2-S58).
+ * With `legShare` > 0 (S-LINK I6 exit criterion 3), that share of the steps changes the confirmed legs of the client:
+ * `end_leg` and `reduce_parts` (with change-id gaps, repeats, stale ids, changed bodies, `applies` errors, unknown
+ * parts and reservations, rates that rise), and extensions of kind `change` whose `convert` sometimes comes after a
+ * later `end_leg` (the clip). The oracle decides each of them too. The P1-N1 check from the log rows follows the parts,
+ * and asserts that no leg change raises a rate. With `state`, the link's `occ_firm` and `occ_all` at the end equal the
+ * oracle's at every minute.
  */
 import assert from 'node:assert/strict';
-import { encodeJson, hex, hlcToWallMs, type HlcTs } from '@share/owner-runtime';
+import { encodeJson, hex, hlcToWallMs, utf8, type HlcTs } from '@share/owner-runtime';
 import type {
-  DecidedRecord, HoldCmd, LinkCommand, LinkPolicy, LoggedEntry, LoggedPayload, MarkWaitingCmd, Outcome, RequestId, WaitingNotice, YieldAnswerCmd,
+  ConvertCmd, DecidedRecord, EndLegCmd, HoldCmd, LinkCommand, LinkPolicy, LinkState, LoggedEntry, LoggedPayload, MarkWaitingCmd, Outcome, Piece,
+  ReducePartsCmd, RequestId, WaitingNotice, YieldAnswerCmd,
 } from '../src/index.ts';
 import { DEFAULT_POLICY, requestKey } from '../src/index.ts';
 import { YieldOracle } from './oracle.yields.ts';
@@ -50,11 +57,107 @@ export interface PropertyTarget {
   spread?: number;
   /** The YIELD_REQUESTs that the link sent so far (I5; needed when `yieldShare` > 0). */
   yieldRequests?: () => Array<{ request: RequestId; attempt: number; claim: bigint }>;
+  /** The share of the steps that change confirmed legs (I6). Default 0: no leg change. */
+  legShare?: number;
+  /** The link state at the end of the run (I6): its occupancy must equal the oracle's at every minute. */
+  state?: () => LinkState | undefined;
+}
+
+/** The confirmed reservations of one client, and the leg commands that it sent (I6). */
+interface LegClient {
+  account: string;
+  res: Array<{ reservation: string; leg: string; parts: string[]; start: number; end: number | null }>;
+  sent: Array<{ op: 'end_leg'; cmd: EndLegCmd } | { op: 'reduce_parts'; cmd: ReducePartsCmd }>;
+  /** The client's change-id counter. It goes up in steps of 1 … 3, so lower ids that were never applied exist. */
+  chg: bigint;
+}
+
+const END_CAUSES: Array<EndLegCmd['cause']> = ['CANCEL', 'SHORTEN', 'RELEASE', 'TERMINATE', 'MOVE', 'POL07'];
+
+/** One leg-change step of a client (I6). Returns the reply. */
+async function legStep(t: PropertyTarget, r: () => number, lc: LegClient): Promise<unknown> {
+  const stub = t.stub;
+  const next = (gap: number): bigint => { lc.chg += BigInt(gap); return lc.chg; };
+  const id = (seq: bigint, account = lc.account) => ({ partition: utf8(account), seq });
+  const inDomain = (m: number): number => Math.min(Math.max(m, t.base), t.base + DOMAIN - 1);
+  const x = r();
+  if (lc.res.length === 0 || x < 0.03) {
+    return stub.endLeg({
+      link: stub.link, receiverPartition: stub.link, reservation: `none-${lc.account}`, leg: 'leg-1', changeId: id(next(1)),
+      fromMinute: t.base + int(r, 0, DOMAIN - 1), cause: 'CANCEL', decisionTime: stub.rt.now().ts,
+    });
+  }
+  const R = lc.res[int(r, 0, lc.res.length - 1)] as LegClient['res'][number];
+  const span = (R.end ?? R.start + 300) - R.start;
+  const near = (): number => inDomain(R.start + int(r, -20, span + 20));
+  const base = { link: stub.link, receiverPartition: stub.link, reservation: R.reservation, leg: R.leg, decisionTime: stub.rt.now().ts };
+  if (x < 0.33) {
+    const cause = END_CAUSES[int(r, 0, END_CAUSES.length - 1)] as EndLegCmd['cause'];
+    const y = r();
+    let applies: EndLegCmd['applies'] = cause === 'POL07' ? [{ link: 'L9', reduction: 1n }] : undefined;
+    if (y < 0.04) applies = cause === 'POL07' ? undefined : [{ link: 'L9', reduction: 1n }];
+    else if (y < 0.06) applies = [{ link: stub.link, reduction: 2n }];
+    const account = r() < 0.04 ? `${lc.account}-other` : lc.account;
+    const cmd: EndLegCmd = {
+      ...base, changeId: id(next(int(r, 1, 3)), account), fromMinute: r() < 0.02 ? near() + 0.5 : near(), cause,
+      ...(applies ? { applies } : {}),
+    };
+    lc.sent.push({ op: 'end_leg', cmd });
+    return stub.endLeg(cmd);
+  }
+  if (x < 0.66) {
+    const names = R.parts.filter(() => r() < 0.7);
+    if (names.length === 0) names.push(R.parts[int(r, 0, R.parts.length - 1)] as string);
+    if (r() < 0.04) names.push(`unknown-${lc.account}`);
+    const parts = names.map((part) => {
+      const froms = [...new Set(Array.from({ length: int(r, 1, 3) }, near))].sort((a, b) => a - b);
+      const pieces: Piece[] = froms.map((from) => ({ from, rateMbps: int(r, 0, 6) }));
+      if (r() < 0.02) (pieces[0] as Piece).rateMbps = 1.5;
+      return { part, pieces };
+    });
+    const cause = r() < 0.2 ? 'POL07' as const : 'DECREASE' as const;
+    const cmd: ReducePartsCmd = { ...base, changeId: id(next(int(r, 1, 3))), cause, parts, ...(cause === 'POL07' ? { applies: [{ link: 'L9', reduction: 1n }] } : {}) };
+    lc.sent.push({ op: 'reduce_parts', cmd });
+    return stub.reduceParts(cmd);
+  }
+  if (x < 0.78 && lc.sent.length > 0) {
+    const old = lc.sent[int(r, 0, lc.sent.length - 1)] as LegClient['sent'][number];
+    if (old.op === 'end_leg') return stub.endLeg(r() < 0.2 ? { ...old.cmd, fromMinute: old.cmd.fromMinute + 1 } : old.cmd);
+    return stub.reduceParts(r() < 0.2 ? { ...old.cmd, cause: old.cmd.cause === 'POL07' ? 'DECREASE' : 'POL07' } : old.cmd);
+  }
+  if (x < 0.86) {
+    const cmd: EndLegCmd = { ...base, changeId: id(lc.chg - BigInt(int(r, 1, 2))), fromMinute: near(), cause: 'SHORTEN' };
+    return stub.endLeg(cmd);
+  }
+  // An extension or an increase of R: a hold of kind change, then its convert as a new part with its own age.
+  const start = inDomain(R.start + int(r, 0, span + 60));
+  const hold: HoldCmd = {
+    ...stub.holdCmd({ rate: int(r, 1, 4), window: { start, end: r() < 0.05 ? null : Math.min(start + int(r, 1, 120), t.base + DOMAIN - 1) }, account: lc.account, leg: R.leg }),
+    holdKind: { kind: 'change', reservation: R.reservation },
+  };
+  if (hold.window.end !== null && hold.window.end <= start) hold.window = { start, end: start + 1 };
+  const held = await stub.hold(hold);
+  if (!(typeof held === 'object' && held !== null && 'result' in held && held.result === 'HELD')) return held;
+  const createdBy = next(1);
+  // A defect: the convert comes after a later end_leg of the leg, which clips it (C02 V61-1).
+  if (r() < 0.3) {
+    const end: EndLegCmd = { ...base, changeId: id(next(1)), fromMinute: inDomain(start + int(r, -10, 60)), cause: 'SHORTEN' };
+    lc.sent.push({ op: 'end_leg', cmd: end });
+    await stub.endLeg(end);
+  }
+  const part = `x-${requestKey(hold.request)}`;
+  const conv: ConvertCmd = { ...stub.convertCmd(hold, 1, part), reservation: R.reservation, createdBy: id(createdBy) };
+  const reply = await stub.convert(conv);
+  if (typeof reply === 'object' && reply !== null && 'result' in reply && reply.result === 'CONVERTED') R.parts.push(part);
+  return reply;
 }
 
 export interface PropertyResult { counts: Record<string, number>; entries: number }
 
 const DOMAIN = 2_880;   // two days of minutes
+
+/** JSON with bigints as decimal strings (a `STALE_CHANGE` names a change id, I6). */
+const show = (x: unknown): string => JSON.stringify(x, (_k, v: unknown) => (typeof v === 'bigint' ? v.toString() : v));
 
 /**
  * Make the hold break one rule (S-LINK I4 exit criterion 4): V1 … V6 against its receipt minute and the
@@ -84,6 +187,7 @@ export async function propertyRun(t: PropertyTarget, seed: number, commands: num
     const r = rng(seed * 7919 + c);
     const account = `acct-${c}`;
     const mine: HoldCmd[] = [];
+    const lc: LegClient = { account, res: [], sent: [], chg: 10_000_000n };
     const pick = (): HoldCmd | undefined => mine.length === 0 ? undefined : mine[int(r, 0, mine.length - 1)];
     const ys = t.yieldShare ?? 0;
     const positions = new Map<string, bigint>();
@@ -120,6 +224,11 @@ export async function propertyRun(t: PropertyTarget, seed: number, commands: num
         counts[k] = (counts[k] ?? 0) + 1;
         continue;
       }
+      if ((t.legShare ?? 0) > 0 && r() < (t.legShare ?? 0)) {
+        const k = `leg:${resultOf(await legStep(t, r, lc))}`;
+        counts[k] = (counts[k] ?? 0) + 1;
+        continue;
+      }
       const p = r();
       let reply: unknown;
       if (p < 0.42 || mine.length === 0) {
@@ -142,7 +251,12 @@ export async function propertyRun(t: PropertyTarget, seed: number, commands: num
         if (ys > 0 && resultOf(reply) === 'HELD') holding.push(cmd);
       } else if (p < 0.58) {
         const h = pick() as HoldCmd;
-        reply = await t.stub.convert(t.stub.convertCmd(h, r() < 0.05 ? 2 : 1));
+        const conv = t.stub.convertCmd(h, r() < 0.05 ? 2 : 1);
+        reply = await t.stub.convert(conv);
+        // I6: a confirmed booking is a reservation whose leg the client can change.
+        if (resultOf(reply) === 'CONVERTED' && !lc.res.some((x) => x.reservation === conv.reservation)) {
+          lc.res.push({ reservation: conv.reservation, leg: conv.leg, parts: [conv.part], start: h.window.start, end: h.window.end });
+        }
       } else if (p < 0.78) {
         const h = pick() as HoldCmd;
         reply = await t.stub.release(t.stub.releaseCmd(h.request, h.deadline + (r() < 0.1 ? 1_000 : 0)));
@@ -173,7 +287,7 @@ export async function propertyRun(t: PropertyTarget, seed: number, commands: num
   for (const [i, d] of cmds.entries()) {
     const want = oracle.apply(d.command as LinkCommand, d.ts, d.seq);
     assert.equal(hex(encodeJson(d.outcome)), hex(encodeJson(want)),
-      `seed ${seed}, decision ${i} (${(d.command as LinkCommand).op}): link ${JSON.stringify(d.outcome)} oracle ${JSON.stringify(want)}`);
+      `seed ${seed}, decision ${i} (${(d.command as LinkCommand).op}): link ${show(d.outcome)} oracle ${show(want)}`);
   }
 
   // (2) The log holds exactly the decisions that wrote an entry, in log order. Tick entries continue a scan.
@@ -201,6 +315,15 @@ export async function propertyRun(t: PropertyTarget, seed: number, commands: num
   /** I5: the hold command and the applied waiting mark of each request, from the log rows. */
   const holdCmds = new Map<string, HoldCmd>();
   const marked = new Map<string, boolean>();
+  // I6: the confirmed parts from the log rows: the cells of the window [s, end), and the rate at each cell from s.
+  const parts = new Map<string, { s: number; end: number; rate: Int32Array }>();
+  const legParts = new Map<string, string[]>();
+  const setRate = (p: { s: number; end: number; rate: Int32Array }, i: number, v: number, seq: bigint): void => {
+    const old = p.rate[i] as number;
+    assert.ok(v <= old, `seed ${seed}: a leg change raises a rate at cell ${p.s + i} (seq ${seq})`);
+    all[p.s + i] = (all[p.s + i] as number) + v - old;
+    p.rate[i] = v;
+  };
   const hold = (span: { s: number; e: number; b: number }, seq: bigint): void => {
     for (let m = span.s; m < span.e; m++) {
       all[m] = (all[m] as number) + span.b;
@@ -210,8 +333,31 @@ export async function propertyRun(t: PropertyTarget, seed: number, commands: num
   for (const e of log) {
     const p = e.payload as LoggedPayload;
     if (p.op === 'init' || p.op === 'takeover' || p.op === 'policy') continue;
-    if (p.op !== 'tick') {
-      const key = requestKey(p.body.request);
+    if (p.op === 'end_leg' || p.op === 'reduce_parts') {
+      const b = p.body as EndLegCmd | ReducePartsCmd;
+      const lk = `${b.reservation}|${b.leg}`;
+      if (p.op === 'end_leg') {
+        const from = (b as EndLegCmd).fromMinute - t.base;
+        for (const k of legParts.get(lk) ?? []) {
+          const part = parts.get(k) as { s: number; end: number; rate: Int32Array };
+          for (let i = Math.max(0, from - part.s); i < part.rate.length; i++) setRate(part, i, 0, e.seq);
+          part.end = Math.min(part.end, Math.max(part.s, from));
+        }
+      } else {
+        for (const n of (b as ReducePartsCmd).parts) {
+          const part = parts.get(`${lk}|${n.part}`);
+          assert.ok(part, `seed ${seed}: reduce_parts applied to an unknown part ${n.part} (seq ${e.seq})`);
+          part.rate.forEach((old, i) => {
+            const minute = t.base + part.s + i;
+            if (part.s + i >= part.end) return;   // the pieces are clipped to the window of the part
+            let v = old;
+            for (const x of n.pieces) if (x.from <= minute) v = x.rateMbps;
+            setRate(part, i, v, e.seq);
+          });
+        }
+      }
+    } else if (p.op !== 'tick') {
+      const key = requestKey((p.body as Extract<LinkCommand['body'], { request: unknown }>).request);
       // (5) An invalid request is refused INVALID(rule) and its entry records a tombstone until D + release_grace (S-LINK I4).
       const reason = (p.outcome as { reason?: unknown }).reason;
       if (p.op === 'hold' && typeof reason === 'object' && reason !== null && 'invalid' in reason) {
@@ -233,7 +379,18 @@ export async function propertyRun(t: PropertyTarget, seed: number, commands: num
       } else if (p.op === 'convert') {
         assert.ok(!convertEntries.has(key), `seed ${seed}: two convert entries for ${key}`);
         convertEntries.add(key);
+        const span = held.get(key);
         held.delete(key);
+        if (span) {
+          // I6: a clip ends the part at clippedAt, and frees the rest of the hold's window in occ_all.
+          const c = p.body as ConvertCmd;
+          const clippedAt = (p.outcome as { clippedAt?: number }).clippedAt;
+          const end = clippedAt === undefined ? span.e : Math.max(span.s, Math.min(span.e, clippedAt - t.base));
+          for (let m = end; m < span.e; m++) all[m] = (all[m] as number) - span.b;
+          const lk = `${c.reservation}|${c.leg}`;
+          parts.set(`${lk}|${c.part}`, { s: span.s, end, rate: Int32Array.from({ length: span.e - span.s }, (_, i) => (span.s + i < end ? span.b : 0)) });
+          legParts.set(lk, [...(legParts.get(lk) ?? []), `${lk}|${c.part}`]);
+        }
       } else if (p.op === 'mark_waiting') {
         assert.equal((p.outcome as { result?: string }).result, 'APPLIED', `seed ${seed}: a mark entry is APPLIED`);
         marked.set(key, (p.body as MarkWaitingCmd).waiting);
@@ -277,6 +434,17 @@ export async function propertyRun(t: PropertyTarget, seed: number, commands: num
         waiting.delete(key);
       }
     }
+  }
+  // (6) I6: the link's occupancy at the end equals the oracle's at every minute of the domain and after it.
+  const st = t.state?.();
+  if (st) {
+    for (let m = t.base; m < t.base + DOMAIN; m++) {
+      const i = m - t.base;
+      if (st.occFirm.value(m) !== oracle.firm[i] || st.occAll.value(m) !== oracle.all[i]) {
+        assert.fail(`seed ${seed}: minute ${m}: link firm ${st.occFirm.value(m)} all ${st.occAll.value(m)}, oracle firm ${oracle.firm[i]} all ${oracle.all[i]}`);
+      }
+    }
+    assert.equal(st.occAll.value(t.base + DOMAIN + 10_000), oracle.allAt(t.base + DOMAIN + 10_000), `seed ${seed}: occ_all after the domain`);
   }
   return { counts, entries: log.length };
 }

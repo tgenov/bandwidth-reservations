@@ -10,6 +10,7 @@ export {
   type C02HoldReply, type C02ReleaseCmd, type C02ReleaseReply, type C02Subject, type C02SuiteOptions, type C02CounterOffer,
   type C02QueryCmd, type C02QueryReply, type C02AvailabilityQuery, type C02AvailabilityReply, type C02FitRangesQuery, type C02FitRangesReply, type C02NotificationCopy,
   type C02MarkWaitingCmd, type C02MarkWaitingReply, type C02YieldAnswerCmd, type C02AcceptReply,
+  type C02EndLegCmd, type C02ReducePartsCmd, type C02LegChangeReply, type C02Piece, type C02ReductionRef,
 } from './c02.ts';
 export {
   runC08ProviderSuite, type C08CatchUpAnswer, type C08CatchUpRequest, type C08PrincipalContext, type C08SnapshotAccount,

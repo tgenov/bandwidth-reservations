@@ -4,13 +4,15 @@
  * - the runtime double with the link owner attached;
  * - the recorded account-owner stub, which sends C02 commands with C01 envelopes;
  * - the per-minute oracle (T-01), one cell per minute, for hold, convert and release, extended with POL-05
- *   waiting (I3): waiters in priority order, and the scan of each release and conversion.
+ *   waiting (I3): waiters in priority order, and the scan of each release and conversion; and with the leg changes
+ *   `end_leg`, `reduce_parts` and the convert clip (I6).
  */
 import type { AppendResult, BatchContext, CommandEnvelope, HlcTs, NotificationOut, OwnerRuntime, PartitionKey } from '@share/owner-runtime';
 import { hlcToWallMs, utf8 } from '@share/owner-runtime';
 import { RuntimeDouble, type ScriptedAppend } from '@share/owner-runtime/testing';
 import type {
-  ConvertCmd, ConvertReply, CounterOffer, HoldCmd, HoldReply, LinkCommand, LinkPolicy, Outcome, ReleaseCmd, ReleaseReply, RequestId, Window,
+  ChangeId, ConvertCmd, ConvertReply, CounterOffer, EndLegCmd, HoldCmd, HoldReply, LegChangeReply, LinkCommand, LinkPolicy, Outcome, ReducePartsCmd,
+  ReleaseCmd, ReleaseReply, RequestId, Window,
 } from '../src/index.ts';
 import { declaration, DEFAULT_POLICY, digest, LINK_KIND, LinkOwner, requestKey, wallNs, type DecidedRecord, type LinkOwnerOptions, type LogReader } from '../src/index.ts';
 
@@ -183,6 +185,16 @@ export class AccountStub {
     return this.owner.release(env ?? this.envelope(cmd.request.partition), cmd);
   }
 
+  /** C02 `end_leg` (I6), from the account partition of its change id. */
+  endLeg(cmd: EndLegCmd, env?: CommandEnvelope): Promise<LegChangeReply> {
+    return this.owner.endLeg(env ?? this.envelope(cmd.changeId.partition), cmd);
+  }
+
+  /** C02 `reduce_parts` (I6), from the account partition of its change id. */
+  reduceParts(cmd: ReducePartsCmd, env?: CommandEnvelope): Promise<LegChangeReply> {
+    return this.owner.reduceParts(env ?? this.envelope(cmd.changeId.partition), cmd);
+  }
+
   /** Book and confirm: hold, then convert. Returns the hold reply and the convert reply. */
   async book(a: HoldArgs): Promise<{ hold: HoldReply; convert?: ConvertReply; cmd: HoldCmd }> {
     const cmd = this.holdCmd(a);
@@ -210,7 +222,26 @@ export interface OracleRequest {
   rate?: number; window?: Window; deadline?: number; tombstoneUntil?: number;
   /** I5: the attempt (1 if not set) and the hold command (to wait again after a yield). */
   attempt?: number; cmd?: HoldCmd;
+  /** The account partition (hex) of the hold (I6: the owner of the reservation of its part). */
+  account?: string;
 }
+
+/**
+ * A confirmed part as the oracle keeps it (I6): its window, its rate at each minute of the window inside the domain
+ * (`cells`, from `start`), and its rate after the domain (`tail`, open-ended windows only).
+ */
+interface OraclePart { start: number; end: number | null; cells: Int32Array; tail: number }
+
+/** The changes of one (reservation, leg) as the oracle keeps them (I6). */
+interface OracleLeg {
+  owner: string; parts: string[]; last?: ChangeId;
+  ends: Array<{ seq: bigint; from: number }>;
+  /** The body digest of each applied change id. */
+  changes: Map<string, string>;
+}
+
+/** The I5 commands that only `YieldOracle` decides. */
+export type YieldCommand = Extract<LinkCommand, { op: 'mark_waiting' | 'yield' }>;
 
 /** A waiter of the oracle, in priority order. */
 export interface OracleWaiter { key: string; b: HoldCmd; ahead: number; attempt: number }
@@ -285,6 +316,9 @@ export class MinuteOracle {
   readonly notices: OracleNotice[] = [];
   /** The policy versions that the link has applied (RFC-001 §2). A hold judges validity by its own version. */
   private readonly policies = new Map<string, LinkPolicy>();
+  /** The confirmed parts, by reservation|leg|part, and the legs, by reservation|leg (I6). */
+  private readonly parts = new Map<string, OraclePart>();
+  private readonly legs = new Map<string, OracleLeg>();
 
   constructor(base: number, n: number, capacity: number, policy: LinkPolicy = DEFAULT_POLICY) {
     this.base = base; this.n = n; this.capacity = capacity; this.policy = policy; this.releaseGraceMs = policy.releaseGraceMs;
@@ -419,6 +453,7 @@ export class MinuteOracle {
   apply(cmd: LinkCommand, ts: HlcTs, seq?: bigint): Outcome {
     this.seq = seq;
     if (cmd.op === 'mark_waiting' || cmd.op === 'yield') return this.other(cmd, ts);
+    if (cmd.op === 'end_leg' || cmd.op === 'reduce_parts') return this.legChange(cmd, ts);
     const key = requestKey(cmd.body.request);
     const rec = this.req.get(key);
     const tsNs = wallNs(ts);
@@ -439,13 +474,19 @@ export class MinuteOracle {
       if (this.peak(this.all, b.window) + b.rateMbps <= this.capacity) {
         this.addTo(this.all, b.window, b.rateMbps);
         const o: Outcome = { result: 'HELD', attempt: 1 };
-        this.req.set(key, { madeBy: 'hold', state: 'HELD', holdDigest: digest(b), holdOutcome: o, rate: b.rateMbps, window: b.window, deadline: b.deadline, cmd: b });
+        this.req.set(key, {
+          madeBy: 'hold', state: 'HELD', holdDigest: digest(b), holdOutcome: o, rate: b.rateMbps, window: b.window, deadline: b.deadline,
+          account: Buffer.from(b.account).toString('hex'), cmd: b,
+        });
         return o;
       }
       const latest = this.latestBlocker(b.window, b.rateMbps);
       if (b.wait) {
         const o: Outcome = { result: 'WAITING', attempt: 1, aheadDeadline: Math.max(latest, 0) };
-        this.req.set(key, { madeBy: 'hold', state: 'WAITING', holdDigest: digest(b), holdOutcome: o, rate: b.rateMbps, window: b.window, deadline: b.deadline });
+        this.req.set(key, {
+          madeBy: 'hold', state: 'WAITING', holdDigest: digest(b), holdOutcome: o, rate: b.rateMbps, window: b.window, deadline: b.deadline,
+          account: Buffer.from(b.account).toString('hex'),
+        });
         const x = { key, b, ahead: Math.max(latest, 0), attempt: 1 };
         this.waiters.push(x);
         this.waiters.sort((p, q) => oraclePriority(p.b, q.b));
@@ -469,14 +510,29 @@ export class MinuteOracle {
       if (rec.state === 'WAITING') return { code: 'NO_HOLD' };
       if (rec.state !== 'HELD') return { code: 'TOMBSTONED' };
       if (b.attempt !== (rec.attempt ?? 1)) return { code: 'MISMATCH' };
-      this.addTo(this.firm, rec.window as Window, rec.rate as number);
+      const w = rec.window as Window;
+      const rate = rec.rate as number;
+      // I6: the earliest end of the applied end_legs of the leg with a change id above createdBy clips the part.
+      const lk = `${b.reservation}|${b.leg}`;
+      const leg = this.legs.get(lk);
+      const clips = (leg?.ends ?? []).filter((e) => e.seq > b.createdBy.seq).map((e) => e.from);
+      const clip = clips.length === 0 ? undefined : Math.min(...clips);
+      const end = clip === undefined || (w.end !== null && clip >= w.end) ? w.end : Math.max(w.start, clip);
+      this.addTo(this.firm, { start: w.start, end }, rate);
+      if (end !== w.end) this.addTo(this.all, { start: end as number, end: w.end }, -rate);
       this.holderEnded(key, rec.attempt ?? 1);
-      const o: Outcome = { result: 'CONVERTED', part: b.part };
+      const [ps, pe] = this.span({ start: w.start, end });
+      const part: OraclePart = { start: w.start, end, cells: new Int32Array(Math.max(pe - ps, 0)).fill(rate), tail: end === null ? rate : 0 };
+      const pk = `${lk}|${b.part}`;
+      this.parts.set(pk, part);
+      if (leg) leg.parts.push(pk);
+      else this.legs.set(lk, { owner: rec.account as string, parts: [pk], ends: [], changes: new Map() });
+      const o: Outcome = clip === undefined ? { result: 'CONVERTED', part: b.part } : { result: 'CONVERTED', part: b.part, clippedAt: clip };
       Object.assign(rec, { state: 'CONVERTED', holdOutcome: { result: 'CONVERTED', part: b.part }, convertDigest: digest(b), convertAttempt: b.attempt, convertOutcome: o });
       this.scan(rec.window as Window, ts);
       return o;
     }
-    const b = cmd.body;
+    const b = (cmd as Extract<LinkCommand, { op: 'release' }>).body;
     const until = b.deadline + this.releaseGraceMs;
     if (!rec) {
       this.req.set(key, { madeBy: 'release', state: 'RELEASED', tombstoneUntil: until });
@@ -497,7 +553,7 @@ export class MinuteOracle {
   }
 
   /** I5 (yields): `mark_waiting` and the yield answers. This oracle has no yields; `YieldOracle` has them. */
-  protected other(cmd: LinkCommand, _ts: HlcTs): Outcome {
+  protected other(cmd: YieldCommand, _ts: HlcTs): Outcome {
     throw new Error(`MinuteOracle has no ${cmd.op}: use YieldOracle (test/oracle.yields.ts)`);
   }
 
@@ -511,6 +567,99 @@ export class MinuteOracle {
   protected waiterEnded(_key: string): void {}
   /** The hold attempt of `key` ends (convert or release). */
   protected holderEnded(_key: string, _attempt: number): void {}
+
+  /**
+   * I6: `end_leg` and `reduce_parts` (RFC-001 §4.5; C02 "Leg-command sequencing", "Leg-command replies"), one minute at
+   * a time. Checks in the order of the link's design: unknown leg; an applied change id (recorded reply or MISMATCH);
+   * another partition (MISMATCH); `applies` exactly with POL07; a malformed minute or piece list; a lower change id
+   * (STALE_CHANGE); an unknown part; a raise; a reduction of this link (the link has none). Then the change applies,
+   * and the waiters of the freed range are scanned.
+   */
+  private legChange(cmd: Extract<LinkCommand, { op: 'end_leg' | 'reduce_parts' }>, ts: HlcTs): Outcome {
+    const b = cmd.body;
+    const lk = `${b.reservation}|${b.leg}`;
+    const leg = this.legs.get(lk);
+    if (!leg) return { code: 'UNKNOWN_RESERVATION' };
+    const ck = requestKey(b.changeId);
+    const applied = leg.changes.get(ck);
+    const d = digest({ op: cmd.op, body: b });
+    if (applied !== undefined) return applied === d ? { result: 'CHANGED' } : { code: 'MISMATCH' };
+    if (Buffer.from(b.changeId.partition).toString('hex') !== leg.owner) return { code: 'MISMATCH' };
+    if ((b.cause === 'POL07') !== ('applies' in b && b.applies !== undefined)) return { code: 'INVALID', field: 'applies' };
+    const whole = (x: number): boolean => Number.isInteger(x) && Math.abs(x) <= Number.MAX_SAFE_INTEGER;
+    if (cmd.op === 'end_leg' && !whole(cmd.body.fromMinute)) return { code: 'INVALID', field: 'fromMinute' };
+    const named = cmd.op === 'reduce_parts' ? cmd.body.parts : [];
+    const piecesOk = (ps: Array<{ from: number; rateMbps: number }>): boolean => ps.length > 0
+      && ps.every((p, i) => whole(p.from) && whole(p.rateMbps) && p.rateMbps >= 0 && (i === 0 || p.from > (ps[i - 1] as { from: number }).from));
+    if (cmd.op === 'reduce_parts' && (named.length === 0 || new Set(named.map((n) => n.part)).size !== named.length || !named.every((n) => piecesOk(n.pieces)))) {
+      return { code: 'INVALID', field: 'pieces' };
+    }
+    if (leg.last !== undefined && b.changeId.seq <= leg.last.seq) return { result: 'STALE_CHANGE', lastApplied: leg.last };
+    if (named.some((n) => !leg.parts.includes(`${lk}|${n.part}`))) return { code: 'UNKNOWN_PART' };
+    // The new rate of each named part at each cell from its first piece, and after the domain.
+    const plans = named.map((n) => {
+      const p = this.parts.get(`${lk}|${n.part}`) as OraclePart;
+      const first = (n.pieces[0] as { from: number }).from;
+      // The pieces are clipped to the current window of the part: no minute at or after its end changes.
+      const at = (m: number, old: number): number => {
+        if (m < first || (p.end !== null && m >= p.end)) return old;
+        let r = old;
+        for (const x of n.pieces) if (x.from <= m) r = x.rateMbps;
+        return r;
+      };
+      const cells = Int32Array.from(p.cells, (old, i) => at(p.start + i, old));
+      const tail = p.end === null ? at(this.base + this.n, p.tail) : 0;
+      return { p, first, cells, tail };
+    });
+    if (plans.some((x) => x.cells.some((v, i) => v > (x.p.cells[i] as number)) || x.tail > x.p.tail)) return { code: 'INVALID', field: 'pieces' };
+    if ((b.applies ?? []).some((r) => r.link === cmd.body.link)) return { code: 'UNKNOWN_REDUCTION' };
+
+    let freedStart = Infinity;
+    let freedEnd: number | null = -Infinity;
+    const freed = (s: number, e: number | null): void => {
+      freedStart = Math.min(freedStart, s);
+      freedEnd = freedEnd === null || e === null ? null : Math.max(freedEnd, e);
+    };
+    const setCell = (p: OraclePart, i: number, v: number): void => {
+      const delta = v - (p.cells[i] as number);
+      if (delta === 0) return;
+      const m = p.start + i - this.base;
+      this.firm[m] = (this.firm[m] as number) + delta;
+      this.all[m] = (this.all[m] as number) + delta;
+      p.cells[i] = v;
+      this.allVersion += 1;
+    };
+    const setTail = (p: OraclePart, v: number): void => {
+      if (v === p.tail) return;
+      this.allTail += v - p.tail;
+      p.tail = v;
+      this.allVersion += 1;
+    };
+    if (cmd.op === 'end_leg') {
+      const t = cmd.body.fromMinute;
+      for (const k of leg.parts) {
+        const p = this.parts.get(k) as OraclePart;
+        const end = Math.max(p.start, t);
+        if (p.end !== null && end >= p.end) continue;
+        for (let i = end - p.start; i < p.cells.length; i++) setCell(p, i, 0);
+        setTail(p, 0);
+        freed(end, p.end);
+        p.end = end;
+      }
+      leg.ends.push({ seq: b.changeId.seq, from: t });
+    } else {
+      for (const x of plans) {
+        x.cells.forEach((v, i) => setCell(x.p, i, v));
+        setTail(x.p, x.tail);
+        const s = Math.max(x.p.start, x.first);
+        if (x.p.end === null || s < x.p.end) freed(s, x.p.end);
+      }
+    }
+    leg.last = b.changeId;
+    leg.changes.set(ck, d);
+    if (freedStart !== Infinity) this.scan({ start: freedStart, end: freedEnd }, ts);
+    return { result: 'CHANGED' };
+  }
 
   /** The largest D of the held requests that overlap a minute where all + rate > capacity; −1 if none. */
   protected latestBlocker(w: Window, rate: number): number {

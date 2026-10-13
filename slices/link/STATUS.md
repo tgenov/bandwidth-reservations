@@ -14,6 +14,7 @@ Run: `npm run typecheck:link`, `npm run test:link`, `REQUIRE_DEV_CELL=1 npm run 
 | S-LINK-I3 Waiting, grants and the waiting port | Built, not committed; manual proofs owed (see S-LINK-I3) | P1-S07, S11, S34 |
 | S-LINK-I4 Validity and the rolling horizon | Built, not committed (one manual proof owed) | P1-S18, S19, S20, S21, S22, S23, S74 |
 | S-LINK-I5 Yields, claims and waiting marks | Built, not committed | None of P1 (plan §7). Link parts of P2-S15, S19, S58, S59, S60, S87, S88, S97, S118 (plan §8) |
+| S-LINK-I6 Changes to confirmed legs | Built, not committed (one manual proof owed) | None of P1. Link parts of P2-S43 … S48, S74, S79, S80, S81, S84, S85, S94, S119 |
 
 ## S-LINK-I2
 
@@ -393,3 +394,125 @@ Gates after the fixes: `npm run -s typecheck:link`, `typecheck:contracts` and `n
 - Scans and yields after capacity rises (leg changes I6, I12 … I15): they use the same `scan`.
 - The account link double has no I5 part (account slice; `contracts/suites/ISSUES.md`).
 - The gRPC push transport: `onNotify` is the hook; the re-send uses it.
+
+## S-LINK-I6
+
+### What it adds
+
+| Part | Where |
+|---|---|
+| C02 types: `EndLegCmd`, `ReducePartsCmd`, `Piece`, `ReductionRef`, `LegChangeCause`, `LegChangeOutcome`, `LegChangeReply`; `LinkCommand` ops `end_leg`, `reduce_parts`; `commandKey` (the request, or reservation, leg and change id) | `src/c02.ts` |
+| A part's rate as absolute pieces from its window start: `setPieces` (C02 "sets … from the first `from`, clipped to the current window"), `raises`, `segments`, `endFrom`, `wellFormedPieces` | `src/legs.ts` |
+| Leg records by (reservation, leg): the owner partition (the account of the hold of the first part), the parts, the highest applied change id, the applied `end_leg` minutes, and the recorded reply (body digest, entry) of every applied change id, for the life of the leg | `src/state.ts` (`LegRecord`) |
+| `end_leg` and `reduce_parts` (RFC-001 §4.5; C02 "Leg-command sequencing"). Checks in order: unknown leg `UNKNOWN_RESERVATION`; (1) an applied change id gets its recorded `CHANGED` (stamp of its entry), another body `MISMATCH`; (4) another partition `MISMATCH`; `INVALID(applies)` (C4-4); malformed minute or pieces `INVALID(fromMinute \| pieces)` (DI-32); (3) a lower id never applied `STALE_CHANGE(lastApplied)`, no entry, no alert; `UNKNOWN_PART`; a raise `INVALID(pieces)` (DI-33); a pair that names this link `UNKNOWN_REDUCTION` (no reductions before I13); (2) apply. Every refusal is alerted and writes nothing | `src/state.ts` (`legChange`) |
+| Apply: `end_leg` ends every part from `max(s, from)` in `occ_firm` and `occ_all`; `reduce_parts` sets the named parts' pieces. Only the net impulses go to the trees, so an unchanged rate does not change the `occ_all` change counter (the counter-offer cache). The waiters of the freed range are scanned in the entry (DI-36). A change at or after the start of its effective minute is applied as decided and alerted `LATE_CHANGE` (DI-34) | `src/state.ts` |
+| `convert` clip backstop (RFC-001 §4.4; C02 V61-1): the earliest minute of the applied `end_leg`s of the leg with a change id above `createdBy` clips the new part; the rest of the hold's pulse leaves `occ_all`; `CONVERTED(part, clippedAt)`, alert `CONVERT_AFTER_END`; a repeat gets the same `clippedAt`. A hold of kind `change` converts to a new part with its own age (T_dec) | `src/state.ts` (`convert`, `clipOf`) |
+| Port methods `endLeg`, `reduceParts`; entries `EndLeg` (20) and `ReduceParts` (21) with identity `<op>:<reservation>\|<leg>\|<change id>`, the sender fence and the audit `request_ref`; replay of both; no `link_request` read for a leg change | `src/owner.ts` |
+| Contract suite: `runC02ProviderSuite(…, { i6: true })` adds provider tests 6, 7 and 8 (the two `INVALID(applies)` cases). The account link double has a PENDING entry (`contracts/suites/ISSUES.md`, "Known double gaps") | `contracts/suites/src/c02.ts` |
+| Oracle: `MinuteOracle` keeps parts per minute (cells and tail), legs, change ids and the clip, written apart from the link's code. `AccountStub.endLeg`, `reduceParts` | `test/support.ts` |
+
+### Exit criteria
+
+| # | Criterion | State | Proving tests |
+|---|---|---|---|
+| 1 | C02 provider tests 6, 7 and 8 (the two `INVALID(applies)` cases) | Met | Owner (`test/legs.test.ts`): `C02 6 end_leg, each cause: an applied lower change id … recorded CHANGED …`, `C02 6 reduce_parts, each cause: …`, `C02 6 end_leg and reduce_parts, each cause: a lower change id … STALE_CHANGE(lastApplied) …`, `C02 6 reduce_parts: absolute pieces are clipped to the window of the part`; `C02 7 a convert whose createdBy is below … clippedAt …`, `C02 7 … above … is not clipped`, `C02 7 the clip takes the earliest end …`, `C02 7 a clipped convert of an open-ended hold …`; `C02 8 cause POL07 without applies …`, `C02 8 applies with another cause …`. Suite: `C02 6 [real link owner] …` (3), `C02 7 [real link owner] …`, `C02 8 [real link owner] …`. `offer_move_at` (the third operation of test 6) is I15 |
+| 2 | C02 joint traces against the stub: "shorten, then extend" keeps p3 `[12:00, 20:00)`; P2-S119 with a late `convert`; a decrease and an end on one leg in both orders | Met (recorded stub, runtime double) | `C02 joint shorten, then extend: L holds p3 [12:00, 20:00), also when a new account-owner holder sends both commands again`; `P2-S119 link part: a cancellation 1 s after the confirmation frees the 4 Mbps from 10:01 on L1 and L2, in either order of the links` (L1: `convert` answered `MOVING`, then sent again; `end_leg` after `CONVERTED`); `P2-S119 link part: a decrease 1 s after an increase …`; `C02 joint confirm, then cancel, with convert answered MOVING: L ends p1 at 10:01 (P2-S43)`; `C02 joint P2-S94 row 2 with a late convert: L ends p3 with the shorten`; `C02 joint a decrease and an end on one leg, in both orders, give the same leg (P2-S48)`; `C02 joint an account-owner takeover between two changes of one leg: …`; `C02 joint shorten, then cut on one leg, with the first call answered MOVING (and each other refusal of the append) …`, `C02 joint a reduce_parts answered MOVING … sent again …`, `C02 joint an end_leg answered MOVING leaves no end …` (review 74) |
+| 3 | The I1 property test runs with leg changes; the oracle and invariant I1 still agree | Met | `test/property.legs.test.ts`: 6 seeds × 2,000 commands × 50 clients (30 % leg changes; half the seeds with waiters), 4 seeds × 1,500 with the budgets binding (`scanSteps` 1, counter-offer 2/5), and 2 seeds × 1,000 on the C01 runtime core (memory store). Each decision equals the oracle; P1-N1 holds after each log entry, from the log rows alone, and no leg change raises a rate; the link's `occ_firm` and `occ_all` equal the oracle's at every minute at the end; every leg outcome, clips and grants occur. The I1 … I4 runs are unchanged (`legShare` 0 draws no extra random number) |
+
+Dev cell: `test/integration/link-i6-crdb.test.ts` `should write EndLeg and ReduceParts entries, clip a late convert, and rebuild the recorded change replies when run on the real runtime on the dev cell` — **written, not run (manual proof owed)**. It shows the change ids (bigint, bytes) through the sealed payload and a rebuild in a new owner process.
+
+Link parts of P2 (S-LINK plan §8): `P2-S43 …`, `P2-S44 …`, `P2-S45 …`, `P2-S46 …`, `P2-S47 …`, `P2-S48 …` (2), `P2-S74 …`, `P2-S79 …`, `P2-S80 …`, `P2-S81 …`, `P2-S84 …`, `P2-S85 …`, `P2-S94 …`, `P2-S119 …` (2). Other tests: rule 4 and the body `MISMATCH` (`should answer MISMATCH to a change id of a partition that does not own the leg …`, `… to an applied change id with another body …`), "sets, never decrements" and the order of `end_leg` and `reduce_parts` (`should set the rate with reduce_parts …`, `should end the reduced rate …`), the DI-35 check order and the DI-37 owner (review 74), `UNKNOWN_RESERVATION`, `UNKNOWN_PART`, `UNKNOWN_REDUCTION`, `INVALID(pieces)` for a raise and for malformed input, `INVALID(fromMinute)`, `LATE_CHANGE` on both sides of the minute start, the scan over the freed range (grants in the change entry; a waiter outside the range not examined), rebuild by replay after a takeover, and the entry kinds and identities.
+
+Deliberate breaks (run once, then restored; `state.ts` equal to the copy before the breaks): no scan after a leg change (5 tests fail, the three property runs among them); a clip by every `end_leg`, whatever `createdBy` (6 fail); no raise check (4 fail).
+
+### Changes to earlier tests (types and messages only; no assertion removed or weakened)
+
+- `test/scenarios.test.ts` (P1-S77): the request sequence is read only from a body that has a request (`LinkCommand` now has leg changes).
+- `test/property.counteroffer.test.ts`: the failure message names the command by `commandKey`.
+- `test/property.ts`: failure messages print bigints (`show`); the log check reads the request through a narrowed type; the leg-change parts are added behind `legShare` and `state` (both off for the I1 … I4 runs).
+- `test/support.ts`: the oracle's `apply` routes leg changes first and records the hold's account; its `convert` keeps the part and applies the clip (no clip when the leg has no later `end_leg`, so the I1 … I4 outcomes are the same).
+
+### Gates (2026-10-13, agent run, contract and double based only)
+
+`npx eslint slices/link contracts` clean. `npm run -s typecheck:link` and `typecheck:contracts`: no error in `slices/link` or `contracts`; the only errors are in `platform/runtime/src/standby/grpc.ts` (`@grpc/grpc-js` is in `package-lock.json` but not installed in the main checkout's `node_modules`; the same on `main` 91717d0). For the same reason every test file fails to load on `main` as it is. The agent ran the npm scripts with `NODE_OPTIONS=--import <scratchpad hook>`, which resolves `@grpc/grpc-js` to an empty stand-in (no test uses gRPC); no file of the repository changed for it. With it: `main` 91717d0 `test:link` 200 tests, 197 pass, 3 skipped; `test:contracts` 92 tests, 89 pass, 3 todo. This build: `npm run -s test:link` 254 tests, 251 pass, 0 fail, 3 skipped (the measurements); `npm run -s test:contracts` 98 tests, 94 pass, 0 fail, 4 todo (PENDING entries, one new for the account double's I6 part). A person runs `npm install` before `npm run check`. Not run by the agent: the integration tests (`link-i6-crdb`: written, not run), `npm run measure`, `npm run check`, Stryker (`tools/mutation/link.stryker.json`: `legs.ts`, the I6 ranges of `state.ts` and the moved `owner.ts` ranges; the command also runs `legs.test.ts` and `property.legs.test.ts`).
+
+### Review 74 (test review) findings
+
+| Finding | State | Proving tests or note |
+|---|---|---|
+| TR-1 (Major) a leg change whose append fails, sent again | Fixed | `C02 joint shorten, then cut on one leg, with the first call answered MOVING (and each other refusal of the append) …` (the C02 joint trace; the cut after the shorten changes nothing after 12:00), `C02 joint a reduce_parts answered MOVING … sent again, frees the capacity with one ReduceParts entry`, `C02 joint an end_leg answered MOVING leaves no end: a later convert with createdBy below its change id is not clipped`. Each runs for `MOVING`, `MOVED`, `STALE_EPOCH`, `STOPPED`, `OVERLOADED` and `Retry` × 4 (`UNAVAILABLE`). The append runs `decide` and then does not commit (`decidedThen`): a scripted result alone of the runtime double does not run `decide`, so it cannot show an unjournaled write. No code defect: the rollback is correct |
+| TR-2 (Minor) late minute of a `reduce_parts` with two parts | Fixed | `should alert LATE_CHANGE when the least first from of a reduce_parts with two parts has started (DI-34)` |
+| TR-3 (Minor) DI-37 owner rule | Fixed | `should keep the owner of the first part when a later part of the leg comes from a hold of another account (DI-37)` |
+| TR-4 (Minor) DI-35 check order | Fixed | `should apply the DI-35 check order when a command breaks two checks`: 12 pairs of checks (unknown leg / rule 4; rule 1 / `INVALID(applies)`; rule 4 / rule 3 and `INVALID(applies)`; `INVALID(applies)` / rule 3 and malformed; malformed pieces and minute / rule 3; rule 3 / `UNKNOWN_PART` and raise; `UNKNOWN_PART` / raise; raise / `UNKNOWN_REDUCTION`), no entry. The C02 note and the RFC-001 erratum for DI-35 are still owed |
+| TR-5 (Minor) `C02 6` names | Fixed | Renamed: the takeover test is `C02 joint an account-owner takeover between two changes of one leg: …`; the four others are `should …` names (rule 4 with DI-37, the body `MISMATCH`, "never a decrement", the order of `end_leg` and `reduce_parts`) |
+| TR-6 (Minor) `STALE_CHANGE` stamp value | Fixed | `C02 6 … STALE_CHANGE(lastApplied) …` asserts the stamp equals the sequence of the applied head |
+| TR-7 (Minor) "no entry" for the body `MISMATCH` and `UNKNOWN_REDUCTION` | Fixed | Both tests count the log entries before and after |
+| TR-8 (Minor) the scan over the freed range of an `end_leg` | Fixed | `should count only the waiters that overlap the freed range of an end_leg in the scan budget (no Tick entry)` (`scanSteps` 1, two waiters on `[10:30, 11:00)`) |
+
+Manual mutants (each: edit `src/state.ts`, `npm run -s test:link`, restore; `cmp` with the copy is equal):
+
+| Mutant | Result | Killing tests |
+|---|---|---|
+| `:793` `this.setIn(this.legs, …ends…)` → `this.legs.set(…)` | Killed | `C02 joint an end_leg answered MOVING leaves no end …` |
+| `:803` `this.setIn(this.legs, …lastApplied…)` → `this.legs.set(…)` | Killed | `C02 joint a reduce_parts answered MOVING …` (for an `end_leg` the undo of `:793` restores the record, so only `reduce_parts` shows it) |
+| `:828` `this.setIn(this.parts, …)` → `this.parts.set(…)` | Killed | The three TR-1 tests |
+| M1 `STALE_CHANGE` check above the partition check | Killed | `should apply the DI-35 check order …`; the two property runs |
+| M2 `STALE_CHANGE` check above `INVALID(applies)` | Killed | `should apply the DI-35 check order …`; the two property runs |
+| M3 `Math.min` → `Math.max` (effective minute) | Killed | `should alert LATE_CHANGE when the least first from … two parts …` |
+| M4 a convert sets the owner to its hold's account | Killed | `should keep the owner of the first part … (DI-37)` |
+| M5 `freed(w.end, …)` → `freed(p.window.start, …)` | Killed | `should count only the waiters … (no Tick entry)`, `should scan only the waiters …`; the first property run |
+| M6 no `occ_all` clip for an open-ended hold | Killed | `C02 7 a clipped convert of an open-ended hold …`; the first property run |
+| TR-6 `STALE_CHANGE` with `recordedSeq: 0n` | Killed | `C02 6 … STALE_CHANGE(lastApplied) …` |
+| TR-7 `UNKNOWN_REDUCTION` with `entry: true` | Killed | `should answer UNKNOWN_REDUCTION …` |
+| TR-7 body `MISMATCH` with `entry: true` | Killed | `should answer MISMATCH to an applied change id with another body …`; `should apply the DI-35 check order …` |
+
+Gates after review 74: `npm run -s test:link` 262 tests, 259 pass, 0 fail, 3 skipped; `npm run -s test:contracts` 98 tests,
+94 pass, 0 fail, 4 todo; `typecheck:link`, `typecheck:contracts`, `npx eslint slices/link contracts` clean.
+
+### Merge with S-LINK-I5 (rebase on `a41dc48`)
+
+I6 was built on I4 and rebased on I5 (yields, claims, waiting marks, the re-send timer, the stepped clock). Both
+increments hold. The line numbers in "Review 74 findings" are those before the rebase.
+
+| Place | Both increments touch | Resolution and rule |
+|---|---|---|
+| `src/c02.ts` | `LinkCommand`, `ReplyOf` | Union: `mark_waiting`, `yield`, `end_leg`, `reduce_parts`. `commandKey` gives the request of each request command (also `mark_waiting` and `yield`) |
+| `src/state.ts` `convert` | I5 ends every claim on the hold attempt; I6 clips the new part (C02 V61-1) | Both, in one entry: the clip, then `endClaimsOnAttempt`, then the scan over the hold's window. C02 port invariants: a `convert` ends every claim on its attempt, clipped or not |
+| `src/state.ts` `decide` | The command switch | Union. `needsRecall` is false for a leg change (no request record) |
+| `src/state.ts` leg change and claims | A leg change frees capacity while a yield claim is live | RFC-001 §4.3 lists the leg change among the entries that scan, and the claim ends only by the events of §4.3 (its waiter granted, refused or released; the end of the holder attempt; a refusal). A leg change ends no attempt (it changes confirmed parts, not holds), so it ends no claim, and its scan is the I5 scan: a waiter younger than a live claim is not granted inside the claimed ranges. New test: `should not grant the capacity that an end_leg frees to a waiter younger than a live yield claim over it, and grant it after the yield (RFC-001 §4.3, §4.5)` |
+| `src/owner.ts` | `ENTRY_OF`, entry identities | I5's per-command function table with `EndLeg` and `ReduceParts` added; the identity key is `commandKey` (a leg change: `<op>:<reservation>\|<leg>\|<change id>`, unchanged from I6) |
+| `test/support.ts` oracle | `apply`, hold records, `convert` | `apply(cmd, ts, seq?)` routes `mark_waiting` and `yield` to `other` (now typed `YieldCommand`), the leg changes to `legChange`. A hold record keeps the command (I5) and the account (I6). The oracle `convert` checks the request's attempt (I5), applies the clip (I6) and ends the claims of the attempt (I5) |
+| `test/oracle.yields.ts` | `other(cmd)` | Typed `YieldCommand`: `LinkCommand` now has bodies without `request`. The unreachable "unexpected op" throw is removed (the type excludes it) |
+| `test/legs.test.ts` | Two `decidedThen` helpers | I6's local copy removed; the legs tests use I5's `decidedThen(h, result)` from `test/support.ts`. No assertion changed |
+| `test/property.ts` | The step mix and the log checks | Both: the yield steps (`yieldShare`, `YieldOracle`, equal ages) and the leg steps (`legShare`, `state`). A client draws the yield step first, then the leg step; with both shares 0 the run is as before. The log check follows the parts (I6) and the marks and yields (I5) |
+| `test/property.legs.test.ts` | Core run clock | The C01-core run uses `steppedClock` as the `wallMs` of the runtime and the store, moved by the run (I5 review 75 TR-1 rule), and asserts that the run moves it |
+| `test/contract.c02.test.ts`, suite | Suite options | The real link owner registers `{ i2, i3, i4, i5, i6 }`. The I6 part runs before the I2 PENDING return, so the account double still gets its I6 PENDING entry |
+| `tools/mutation/link.stryker.json` | Ranges and command | Union at the merged lines: `legs.ts`; `state.ts:292-1080` (request records … queries, with the yields and the leg changes), `1111-1176`, `1194-1208` (`hexOf`, `clipOf`); `owner.ts:186-268`, `286-293`, `364-405` (re-send timer), `458-465`, `480-533`, `537-545`, `614-633`, `641-685`, `693-726` (entry identities, `ENTRY_OF`), `732-746`. The command runs the I5 and the I6 test files. Stryker not run |
+| `contracts/suites/ISSUES.md` | Known double gaps | Both rows (I5, I6). I6 adds no CS row, so no renumbering (main has CS-1 … CS-13) |
+
+New design issues from the merge: none. The interactions above follow from RFC-001 §4.3 and §4.5 and C02 as stated.
+
+Gates after the merge (2026-10-13, agent run): `npm run -s typecheck:link`, `npm run -s typecheck:contracts` and
+`npx eslint slices/link contracts` clean; `npm run -s test:link` 321 tests, 318 pass, 0 fail, 3 skipped (measurements);
+`npm run -s test:contracts` 120 tests, 116 pass, 0 fail, 4 todo (PENDING entries). Not run: the integration tests,
+`npm run measure`, `npm run check`, Stryker.
+
+### Design issues found
+
+| Id | Where | Conflict | Proposed resolution |
+|---|---|---|---|
+| DI-31 | C02 "Leg-command sequencing", P2-S43 trace; C02 `LegChangeReply` | The trace says that a late `convert` after the cancel's `end_leg` is clipped. But an `end_leg` that reaches the link before the first part of its leg is converted finds no part; C02 gives it `UNKNOWN_RESERVATION`, so nothing is applied and the late `convert` is not clipped. The clip works only for a leg that already has a part (P2-S94 row 2, an extension) | The link answers `UNKNOWN_RESERVATION` and records nothing (the frozen reply table). C02 note: the clip backstop covers parts added to a known leg; the per-leg sequence alone covers the first part |
+| DI-32 | C02 `EndLegCmd`, `ReducePartsCmd`, `LegChangeReply` | No error for a malformed change: a minute that is not an integer, a rate below 0 or not an integer, `from`s that do not increase, an empty piece list, no part, a part named twice. `INVALID` has the field `applies` only | The link answers `INVALID(fromMinute)` or `INVALID(pieces)`, alerted, no entry (answered, so the leg queue moves on). C02 minor version: `INVALID` with these fields |
+| DI-33 | C02 `reduce_parts` "sets the rate … never decrements"; RFC-001 §4.5 | Nothing stops a `reduce_parts` that sets a rate above the present rate of a part. That adds capacity without admission and can oversell (P1-N1). An increase is a new admission (§4.5) | The link refuses the whole command `INVALID(pieces)` if a piece is above the present rate at one minute of the window, alerted, no entry. C02 / RFC-001: `reduce_parts` never raises a rate |
+| DI-34 | RFC-001 §4.5, C02 `end_leg` "arrives after `fromMinute`" | "After `fromMinute`" is not exact, and `reduce_parts` has no single effective minute | Late when `ts` is at or after the start of the effective minute (the minute has begun); for `reduce_parts` the effective minute is the least first `from` of the named parts. RFC-001 erratum |
+| DI-35 | C02 "Leg-command sequencing" rules 1 … 4 and the error variants | The order of rules 1 … 4 against `UNKNOWN_RESERVATION`, `INVALID(applies)`, `UNKNOWN_PART`, `UNKNOWN_REDUCTION` is not stated | Unknown leg; rule 1; rule 4; `INVALID(applies)`; malformed (DI-32); rule 3; `UNKNOWN_PART`; raise (DI-33); `UNKNOWN_REDUCTION`; rule 2. RFC-001 erratum |
+| DI-36 | RFC-001 §4.5 "the waiter scan over the freed range" | The range is not defined for a change of several parts | [the least first freed minute, the largest end of a changed part); a part whose window does not change is not in it. RFC-001 erratum |
+| DI-37 | C02 rule 4 "a partition that is not the owner of the reservation" | The link is not told the owner of a reservation | The owner is the account partition of the hold of the first converted part of the leg (C02 `HoldCmd.account`). C02 note |
+
+### Left for later increments
+
+- `offer_move_at`, `offer_accept` in the per-leg sequence: I15. C02 provider test 6 for `offer_move_at`: I15.
+- `applies` with a reduction of this link: `UNKNOWN_REDUCTION` until reductions exist (I13); the cap check `CUT_TARGET_UNMET` and test 8 items 3 and 4: I14.
+- `occ_commit` (I11): leg changes then also change it. Flags and affected sets on a leg change, and late changes re-notified: I12 … I14.
+- `LEG_CHANGED` on the schedule feed and the `LATE_CHANGE`, `CONVERT_AFTER_END` alert episodes: I7.
+- The account link double has no I6 part (account slice).

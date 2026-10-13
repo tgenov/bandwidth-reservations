@@ -4,8 +4,8 @@
  * The names and the fields are copied from C02 "Schema". I1 provides `hold`, `convert` and `release`. I2 adds
  * the counter-offer, `query` and the availability query (`availability`, `fit_ranges`). I3 adds `hold` check (8)
  * `WAITING` and the link waiting port notifications `WAITING_NOTICE`, `GRANTED` and `WAITER_REFUSED`. I5 adds
- * `YIELD_REQUEST`, `mark_waiting`, `yield_accept` and `yield_refuse`. The other operations of C02 come in later
- * increments (S-LINK plan §6).
+ * `YIELD_REQUEST`, `mark_waiting`, `yield_accept` and `yield_refuse`. I6 adds the leg changes `end_leg` and
+ * `reduce_parts`, and `clippedAt` on `convert`. The other operations of C02 come in later increments (S-LINK plan §6).
  */
 import type { CommandEnvelope, Epoch, Generation, HlcTs, PartitionKey, RoutingRefusal, Seq } from '@share/owner-runtime';
 
@@ -113,6 +113,51 @@ export interface QueryState {
 }
 export type QueryReply = (LinkStamp & QueryState) | Refusal;
 
+// ---------- Leg changes (S-LINK I6; C02 "Link hold port", "Leg-command sequencing") ----------
+
+export type ReductionSeq = Seq;
+/** A step function piece: `rateMbps` from `from` until the `from` of the next piece (the last piece is open). */
+export interface Piece { from: Minute; rateMbps: Mbps }
+export interface ReductionRef { link: LinkId; reduction: ReductionSeq }
+
+/** C02 M-3: one policy cause, POL07 (a revocation is a cut to 0). */
+export type LegChangeCause = 'CANCEL' | 'SHORTEN' | 'DECREASE' | 'RELEASE' | 'TERMINATE' | 'MOVE' | 'POL07';
+
+export interface EndLegCmd extends C02Body {
+  reservation: ReservationId; leg: LegId; changeId: ChangeId;
+  /** Every part of the leg ends from this minute. */
+  fromMinute: Minute;
+  cause: Exclude<LegChangeCause, 'DECREASE'>;
+  /** Present only if cause = 'POL07': every applied (link, reduction) (C4-4). */
+  applies?: ReductionRef[];
+  decisionTime: Hlc;
+}
+
+export interface ReducePartsCmd extends C02Body {
+  reservation: ReservationId; leg: LegId; changeId: ChangeId;
+  cause: 'DECREASE' | 'POL07';
+  /** Absolute rates, newest part first, every cause. */
+  parts: { part: PartId; pieces: Piece[] }[];
+  applies?: ReductionRef[];
+  decisionTime: Hlc;
+}
+
+/**
+ * The decision part of a leg-change reply. The reply adds the link stamp to `CHANGED` and `STALE_CHANGE`.
+ * `INVALID` with the field `fromMinute` or `pieces` is not in C02: the link gives it to a malformed minute or piece
+ * list, and to pieces that raise a rate (S-LINK I6 design issues DI-32, DI-33).
+ */
+export type LegChangeOutcome =
+  | { result: 'CHANGED' }
+  | { result: 'STALE_CHANGE'; lastApplied: ChangeId }
+  | { code: 'UNKNOWN_RESERVATION' } | { code: 'UNKNOWN_PART' } | { code: 'UNKNOWN_REDUCTION' }
+  | { code: 'INVALID'; field: 'applies' | 'fromMinute' | 'pieces' }
+  | { code: 'MISMATCH' };
+export type LegChangeReply = (LinkStamp & ({ result: 'CHANGED' } | { result: 'STALE_CHANGE'; lastApplied: ChangeId }))
+  | { code: 'UNKNOWN_RESERVATION' } | { code: 'UNKNOWN_PART' } | { code: 'UNKNOWN_REDUCTION' }
+  | { code: 'INVALID'; field: 'applies' | 'fromMinute' | 'pieces' }
+  | Refusal;
+
 // ---------- Link waiting port (notifications, link → account owner) ----------
 
 /** The notification kinds of the link waiting port that I3 and I5 send. `DISPLACED` is I11. */
@@ -177,17 +222,36 @@ export type LinkCommand =
   | { op: 'convert'; body: ConvertCmd }
   | { op: 'release'; body: ReleaseCmd }
   | { op: 'mark_waiting'; body: MarkWaitingCmd }
-  | { op: 'yield'; body: YieldAnswerCmd };
+  | { op: 'yield'; body: YieldAnswerCmd }
+  | { op: 'end_leg'; body: EndLegCmd }
+  | { op: 'reduce_parts'; body: ReducePartsCmd };
 
 export type LinkOp = LinkCommand['op'];
 
 /** A reply as the port sends it, for each operation. */
-export interface ReplyOf { hold: HoldReply; convert: ConvertReply; release: ReleaseReply; mark_waiting: MarkWaitingReply; yield: AcceptReply }
+export interface ReplyOf {
+  hold: HoldReply; convert: ConvertReply; release: ReleaseReply; mark_waiting: MarkWaitingReply; yield: AcceptReply;
+  end_leg: LegChangeReply; reduce_parts: LegChangeReply;
+}
 export type BodyOf<O extends LinkOp> = Extract<LinkCommand, { op: O }>['body'];
 
 /** The text key of a request identity (account partition in hex, then the sequence). */
 export function requestKey(r: RequestId): string {
   return `${Buffer.from(r.partition).toString('hex')}:${r.seq.toString()}`;
+}
+
+/** The text key of the (reservation, leg) of a leg command. */
+export function legKey(reservation: ReservationId, leg: LegId): string {
+  return `${reservation}|${leg}`;
+}
+
+/**
+ * The text key of a command for logs, alerts and entry identities: the request of a request command, or the
+ * (reservation, leg, change id) of a leg change (C02 "Idempotency": by (link, change id)).
+ */
+export function commandKey(cmd: LinkCommand): string {
+  if (cmd.op === 'end_leg' || cmd.op === 'reduce_parts') return `${legKey(cmd.body.reservation, cmd.body.leg)}|${requestKey(cmd.body.changeId)}`;
+  return requestKey(cmd.body.request);
 }
 
 export function isRoutingRefusal(x: unknown): x is RoutingRefusal {

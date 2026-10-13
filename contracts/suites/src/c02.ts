@@ -15,6 +15,9 @@
  * STALE_ATTEMPT", "the end of a hold attempt closes every claim on it", and 5 "yield claims") runs only for a subject
  * registered with `{ i2: true, i3: true, i5: true }` that provides `markWaiting` and `yieldAnswer`. Else a PENDING entry.
  *
+ * The S-LINK I6 part (provider tests 6 change ids, 7 the `convert` backstop, 8 the two `INVALID(applies)` cases) runs
+ * only for a subject registered with `{ i6: true }` whose port has `endLeg` and `reduceParts`. Else a PENDING entry.
+ *
  * The types are copied from C02 "Schema" (the subset that the tests use). They are structurally the same
  * as the types of each slice, so each slice can give its own port.
  */
@@ -85,6 +88,20 @@ export interface C02FitRangesQuery { link: string; receiverPartition: string; ra
 export type C02FitRangesReply = (C02LinkStamp & { asOfSeq: Seq; ranges: C02Window[]; continueFrom: number | null })
   | RoutingRefusal | C02Error;
 
+export interface C02Piece { from: number; rateMbps: number }
+export interface C02ReductionRef { link: string; reduction: Seq }
+export interface C02EndLegCmd {
+  link: string; receiverPartition: string; reservation: string; leg: string; changeId: C02RequestId; fromMinute: number;
+  cause: 'CANCEL' | 'SHORTEN' | 'RELEASE' | 'TERMINATE' | 'MOVE' | 'POL07'; applies?: C02ReductionRef[]; decisionTime: HlcTs;
+}
+export interface C02ReducePartsCmd {
+  link: string; receiverPartition: string; reservation: string; leg: string; changeId: C02RequestId;
+  cause: 'DECREASE' | 'POL07'; parts: { part: string; pieces: C02Piece[] }[]; applies?: C02ReductionRef[]; decisionTime: HlcTs;
+}
+export type C02LegChangeReply = (C02LinkStamp & ({ result: 'CHANGED' } | { result: 'STALE_CHANGE'; lastApplied: C02RequestId }))
+  | { code: 'UNKNOWN_RESERVATION' } | { code: 'UNKNOWN_PART' } | { code: 'UNKNOWN_REDUCTION' } | { code: 'INVALID'; field: string }
+  | RoutingRefusal | C02Error;
+
 /** The link hold port as a sender calls it. The C01 envelope travels beside the body. */
 export interface C02HoldPort {
   hold(env: CommandEnvelope, cmd: C02HoldCmd): Promise<C02HoldReply>;
@@ -99,6 +116,10 @@ export interface C02HoldPort {
   markWaiting?(env: CommandEnvelope, cmd: C02MarkWaitingCmd): Promise<C02MarkWaitingReply>;
   /** C02 `yield_accept` and `yield_refuse` (S-LINK I5). */
   yieldAnswer?(env: CommandEnvelope, cmd: C02YieldAnswerCmd): Promise<C02AcceptReply>;
+  /** C02 `end_leg` (S-LINK I6). */
+  endLeg?(env: CommandEnvelope, cmd: C02EndLegCmd): Promise<C02LegChangeReply>;
+  /** C02 `reduce_parts` (S-LINK I6). */
+  reduceParts?(env: CommandEnvelope, cmd: C02ReducePartsCmd): Promise<C02LegChangeReply>;
 }
 
 /** Which parts beyond the I1 subset a subject provides. */
@@ -111,6 +132,8 @@ export interface C02SuiteOptions {
   i4?: boolean;
   /** `YIELD_REQUEST`, `mark_waiting`, `yield_accept` and `yield_refuse` (S-LINK I5). Needs `i3`. */
   i5?: boolean;
+  /** `end_leg`, `reduce_parts` and the `convert` backstop: provider tests 6, 7 and 8 (`INVALID(applies)`) (S-LINK I6). */
+  i6?: boolean;
 }
 
 /** The capacity (Mbps) of the one link that every C02 subject registers. */
@@ -389,6 +412,13 @@ export function runC02ProviderSuite(name: string, make: SubjectFactory<C02Subjec
     });
   }
 
+  if (!opts.i6) {
+    test(`C02 [${name}] PENDING (S-LINK I6 part): end_leg, reduce_parts and the convert backstop (provider tests 6, 7, 8)`,
+      { todo: 'the subject does not provide the S-LINK I6 part (contracts/suites/ISSUES.md)' }, () => {});
+  } else {
+    runI6Part(t, env);
+  }
+
   if (!opts.i2) {
     test(`C02 [${name}] PENDING (S-LINK I2 part): counter-offer, query, availability and fit_ranges`,
       { todo: 'the subject does not provide the S-LINK I2 part (contracts/suites/ISSUES.md)' }, () => {});
@@ -598,5 +628,110 @@ export function runC02ProviderSuite(name: string, make: SubjectFactory<C02Subjec
     await mark(s, y.request, false, 2n);
     assert.deepEqual(outcome(await answer(s, y.request, 1, c1, 'yield_refuse')), { result: 'REFUSED_RECORDED' });
     assert.deepEqual(await queryOf(s, y.request), { state: 'HELD', attempt: 1, openYieldClaims: [{ claim: c2, olderRequest: o2.request }] });
+  });
+}
+
+type SuiteTest = (id: string, behaviour: string, body: (s: C02Subject) => Promise<void>) => void;
+
+/** The S-LINK I6 part: C02 provider tests 6, 7 and 8 (the two `INVALID(applies)` cases). */
+function runI6Part(t: SuiteTest, env: (s: C02Subject, h: { account: PartitionKey } | C02RequestId) => CommandEnvelope): void {
+  const C = C02_SUITE_CAPACITY;
+  const leg = (s: C02Subject): { endLeg: NonNullable<C02HoldPort['endLeg']>; reduceParts: NonNullable<C02HoldPort['reduceParts']> } => {
+    assert.ok(s.port.endLeg && s.port.reduceParts, 'the subject provides end_leg and reduce_parts');
+    return { endLeg: s.port.endLeg.bind(s.port), reduceParts: s.port.reduceParts.bind(s.port) };
+  };
+  /** A confirmed part of 4 Mbps on [m + 60, m + 120) of reservation R, created by the E5 at `createdBy`. */
+  const setup = async (s: C02Subject): Promise<{ m: number; account: PartitionKey; reservation: string }> => {
+    const m = Math.floor(s.nowMs() / 60_000);
+    const h = holdCmd(s, { account: 'r-owner', rate: 4, window: { start: m + 60, end: m + 120 } });
+    assert.equal(outcome(await s.port.hold(env(s, h), h))['result'], 'HELD');
+    const reservation = `R-${h.request.seq}`;
+    const c = { ...convertCmd(s, h, 1, 'p1'), reservation, createdBy: { partition: h.account, seq: 50n } };
+    assert.deepEqual(outcome(await s.port.convert(env(s, h), c)), { result: 'CONVERTED', part: 'p1' });
+    return { m, account: h.account, reservation };
+  };
+  const endCmd = (s: C02Subject, r: { account: PartitionKey; reservation: string }, seq: bigint, fromMinute: number,
+    cause: C02EndLegCmd['cause'] = 'SHORTEN', applies?: C02ReductionRef[]): C02EndLegCmd => ({
+    link: s.link, receiverPartition: s.link, reservation: r.reservation, leg: 'leg-1', changeId: { partition: r.account, seq },
+    fromMinute, cause, ...(applies ? { applies } : {}), decisionTime: tsAtMs(s.nowMs()) as HlcTs,
+  });
+  const reduceCmd = (s: C02Subject, r: { account: PartitionKey; reservation: string }, seq: bigint, pieces: C02Piece[],
+    cause: C02ReducePartsCmd['cause'] = 'DECREASE', applies?: C02ReductionRef[]): C02ReducePartsCmd => ({
+    link: s.link, receiverPartition: s.link, reservation: r.reservation, leg: 'leg-1', changeId: { partition: r.account, seq },
+    cause, parts: [{ part: 'p1', pieces }], ...(applies ? { applies } : {}), decisionTime: tsAtMs(s.nowMs()) as HlcTs,
+  });
+  /** The largest rate that a new hold gets on [start, end): HELD for it, and not for one more Mbps. The probes are released. */
+  const room = async (s: C02Subject, start: number, end: number): Promise<number> => {
+    for (let rate = C; rate >= 1; rate--) {
+      const p = holdCmd(s, { account: `probe-${start}-${rate}`, rate, window: { start, end } });
+      const r = outcome(await s.port.hold(env(s, p), p));
+      if (r['result'] === 'HELD') {
+        assert.equal(outcome(await s.port.release(env(s, p), releaseCmd(s, p.request, p.deadline)))['result'], 'RELEASED');
+        return rate;
+      }
+    }
+    return 0;
+  };
+  const other = [{ link: 'L-other', reduction: 7n }];
+
+  t('6', 'change ids: an applied lower id sent again after a higher one gets its recorded CHANGED, for end_leg and reduce_parts', async (s) => {
+    const r = await setup(s);
+    const p = leg(s);
+    const e1 = endCmd(s, r, 100n, r.m + 110);
+    const first = await p.endLeg(env(s, r), e1);
+    assert.deepEqual(outcome(first), { result: 'CHANGED' });
+    const d1 = reduceCmd(s, r, 101n, [{ from: r.m + 60, rateMbps: 2 }]);
+    const second = await p.reduceParts(env(s, r), d1);
+    assert.deepEqual(outcome(second), { result: 'CHANGED' });
+    assert.deepEqual(outcome(await p.endLeg(env(s, r), endCmd(s, r, 102n, r.m + 100, 'POL07', other))), { result: 'CHANGED' });
+    const again1 = await p.endLeg(env(s, r), e1);
+    const again2 = await p.reduceParts(env(s, r), d1);
+    assert.deepEqual([outcome(again1), stamp(again1).linkSeq], [{ result: 'CHANGED' }, stamp(first).linkSeq]);
+    assert.deepEqual([outcome(again2), stamp(again2).linkSeq], [{ result: 'CHANGED' }, stamp(second).linkSeq]);
+    assert.deepEqual([await room(s, r.m + 60, r.m + 100), await room(s, r.m + 100, r.m + 120)], [C - 2, C], 'the repeats change nothing');
+  });
+
+  t('6', 'change ids: a lower id that the link never applied gets STALE_CHANGE(lastApplied), and occupancy does not change', async (s) => {
+    const r = await setup(s);
+    const p = leg(s);
+    assert.deepEqual(outcome(await p.endLeg(env(s, r), endCmd(s, r, 100n, r.m + 110))), { result: 'CHANGED' });
+    const lastApplied = { partition: r.account, seq: 100n };
+    assert.deepEqual(outcome(await p.endLeg(env(s, r), endCmd(s, r, 99n, r.m + 60, 'CANCEL'))), { result: 'STALE_CHANGE', lastApplied });
+    assert.deepEqual(outcome(await p.reduceParts(env(s, r), reduceCmd(s, r, 98n, [{ from: r.m + 60, rateMbps: 0 }]))), { result: 'STALE_CHANGE', lastApplied });
+    assert.deepEqual([await room(s, r.m + 60, r.m + 110), await room(s, r.m + 110, r.m + 120)], [C - 4, C]);
+  });
+
+  t('6', 'change ids: absolute pieces are clipped to the window of the part', async (s) => {
+    const r = await setup(s);
+    const pieces = [{ from: r.m + 30, rateMbps: 3 }, { from: r.m + 90, rateMbps: 1 }, { from: r.m + 150, rateMbps: 2 }];
+    assert.deepEqual(outcome(await leg(s).reduceParts(env(s, r), reduceCmd(s, r, 100n, pieces))), { result: 'CHANGED' });
+    assert.deepEqual([await room(s, r.m + 30, r.m + 60), await room(s, r.m + 60, r.m + 90), await room(s, r.m + 90, r.m + 120), await room(s, r.m + 120, r.m + 180)],
+      [C, C - 3, C - 1, C]);
+  });
+
+  t('7', 'convert backstop: createdBy below the change id of an applied end_leg clips the part at its end (clippedAt); above every one, no clip', async (s) => {
+    const r = await setup(s);
+    const p = leg(s);
+    const below = { ...holdCmd(s, { account: 'r-owner', rate: 3, window: { start: r.m + 80, end: r.m + 140 } }), holdKind: { kind: 'change' as const, reservation: r.reservation } };
+    assert.equal(outcome(await s.port.hold(env(s, below), below))['result'], 'HELD');
+    assert.deepEqual(outcome(await p.endLeg(env(s, r), endCmd(s, r, 110n, r.m + 100))), { result: 'CHANGED' });
+    const c1 = { ...convertCmd(s, below, 1, 'p2'), reservation: r.reservation, createdBy: { partition: r.account, seq: 105n } };
+    assert.deepEqual(outcome(await s.port.convert(env(s, below), c1)), { result: 'CONVERTED', part: 'p2', clippedAt: r.m + 100 });
+    assert.deepEqual(outcome(await s.port.convert(env(s, below), c1)), { result: 'CONVERTED', part: 'p2', clippedAt: r.m + 100 }, 'a repeat has the same clippedAt');
+    const above = { ...holdCmd(s, { account: 'r-owner', rate: 2, window: { start: r.m + 100, end: r.m + 140 } }), holdKind: { kind: 'change' as const, reservation: r.reservation } };
+    assert.equal(outcome(await s.port.hold(env(s, above), above))['result'], 'HELD');
+    const c2 = { ...convertCmd(s, above, 1, 'p3'), reservation: r.reservation, createdBy: { partition: r.account, seq: 115n } };
+    assert.deepEqual(outcome(await s.port.convert(env(s, above), c2)), { result: 'CONVERTED', part: 'p3' });
+    assert.deepEqual([await room(s, r.m + 80, r.m + 100), await room(s, r.m + 100, r.m + 140)], [C - 7, C - 2]);
+  });
+
+  t('8', 'applies: cause POL07 without applies, and applies with another cause, get INVALID(applies), and nothing changes', async (s) => {
+    const r = await setup(s);
+    const p = leg(s);
+    assert.deepEqual(await p.endLeg(env(s, r), endCmd(s, r, 100n, r.m + 60, 'POL07')), { code: 'INVALID', field: 'applies' });
+    assert.deepEqual(await p.reduceParts(env(s, r), reduceCmd(s, r, 100n, [{ from: r.m + 60, rateMbps: 0 }], 'POL07')), { code: 'INVALID', field: 'applies' });
+    assert.deepEqual(await p.endLeg(env(s, r), endCmd(s, r, 100n, r.m + 60, 'CANCEL', other)), { code: 'INVALID', field: 'applies' });
+    assert.deepEqual(await p.reduceParts(env(s, r), reduceCmd(s, r, 100n, [{ from: r.m + 60, rateMbps: 0 }], 'DECREASE', other)), { code: 'INVALID', field: 'applies' });
+    assert.equal(await room(s, r.m + 60, r.m + 120), C - 4);
   });
 }
