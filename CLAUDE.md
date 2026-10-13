@@ -8,6 +8,7 @@ Read these before you change anything:
   for every change in `platform/` and `slices/`.**
 - `docs/04-delivery/contracts/`: the frozen contracts C01 … C13. Slices meet only through them.
 - `docs/04-delivery/plan/`: the delivery plan for each slice and the build order.
+- `docs/bugtraq/`: defects in third-party code, with their workarounds and removal conditions.
 
 Rules that are easy to miss:
 

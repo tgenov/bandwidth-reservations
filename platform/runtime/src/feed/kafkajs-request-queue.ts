@@ -4,7 +4,8 @@
  * that negative epoch time to setTimeout when nothing is pending. Node clamps it to 1 ms
  * (TimeoutNegativeWarning), and each firing schedules the next: a 1 ms timer loop on every open
  * connection. This replaces the method with one that schedules a check only for pending requests,
- * after a non-negative delay.
+ * after a non-negative delay. Upstream: tulios/kafkajs#1751 and #1556. Removal condition:
+ * docs/bugtraq/BT-001-kafkajs-negative-timeout.md.
  */
 import { createRequire } from 'node:module';
 import { systemClock } from '../clock.ts';
