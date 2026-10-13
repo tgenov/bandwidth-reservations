@@ -4,7 +4,8 @@
  * against the account slice's link double.
  *
  * The S-LINK I2 part (the counter-offer, `query` and the link availability query) runs only for a subject
- * registered with `{ i2: true }`. For another subject, the suite registers a PENDING entry for that part
+ * registered with `{ i2: true }`, and the S-LINK I4 part (`hold` check (4), V1 … V6) only for one registered
+ * with `{ i4: true }`. For another subject, the suite registers a PENDING entry for each part
  * (contracts/suites/ISSUES.md, "Known double gaps").
  *
  * The S-LINK I3 part (provider tests 1 `WAITING`, 4 "a grant keeps the attempt", 13 first two items) runs only
@@ -89,6 +90,8 @@ export interface C02SuiteOptions {
   i2?: boolean;
   /** `hold` check (8) `WAITING`, grants and the waiting port notifications (S-LINK I3). Needs `i2` and `notifications`. */
   i3?: boolean;
+  /** `hold` check (4): V1 … V6 against the receipt minute m0, with the calendar cases of P1-S74 (S-LINK I4). */
+  i4?: boolean;
 }
 
 /** The capacity (Mbps) of the one link that every C02 subject registers. */
@@ -97,6 +100,25 @@ export const C02_SUITE_CAPACITY = 10;
 const RELEASE_GRACE_MS = 60_000;
 /** C02 "Timeouts": D_c = D − τ for a request with no partner leg (τ about 420 ms). */
 const TAU_MS = 420;
+/** POL-09 `selling_horizon`: 12 calendar months. */
+const SELLING_HORIZON_MONTHS = 12;
+
+/** The minute index of a UTC date and time (month 1 … 12). */
+function utcMinute(y: number, mo: number, d: number, hh: number, mm: number): number {
+  return Date.UTC(y, mo - 1, d, hh, mm) / 60_000;
+}
+
+/**
+ * The selling horizon H of a request received at minute m0 (RFC-001 §2, POL-09): the same UTC time of day on
+ * the same calendar date `months` later, or on the last day of that month if it has no such date.
+ */
+function horizonOf(m0: number, months: number): number {
+  const d = new Date(m0 * 60_000);
+  const y = d.getUTCFullYear() + Math.floor((d.getUTCMonth() + months) / 12);
+  const mo = (d.getUTCMonth() + months) % 12;
+  const last = new Date(Date.UTC(y, mo + 1, 0)).getUTCDate();
+  return Date.UTC(y, mo, Math.min(d.getUTCDate(), last), d.getUTCHours(), d.getUTCMinutes()) / 60_000;
+}
 
 export interface C02Subject extends Closable {
   port: C02HoldPort;
@@ -288,6 +310,59 @@ export function runC02ProviderSuite(name: string, make: SubjectFactory<C02Subjec
     const h = holdCmd(s, { rate: 1 });
     assert.deepEqual(await s.port.convert(env(s, h), convertCmd(s, h)), { code: 'NO_HOLD' });
   });
+
+  if (!opts.i4) {
+    test(`C02 [${name}] PENDING (S-LINK I4 part): hold check (4), V1 … V6 against m0 with the calendar cases of P1-S74`,
+      { todo: 'the subject does not provide the S-LINK I4 part (contracts/suites/ISSUES.md)' }, () => {});
+  } else {
+    t('1', 'hold: V1 … V6 against m0 give REFUSED(INVALID(rule)) and hold nothing; the edges of what is sold are HELD', async (s) => {
+      const m0 = Math.floor(s.nowMs() / 60_000);
+      const h = horizonOf(m0, SELLING_HORIZON_MONTHS);
+      const cases: Array<[number, C02Window, string]> = [
+        [1.5, { start: m0 + 60, end: m0 + 120 }, 'V1'],
+        [1, { start: m0 + 60.5, end: m0 + 120 }, 'V2'],
+        [1, { start: m0 + 60, end: m0 + 120.5 }, 'V2'],
+        [1, { start: m0 - 1, end: m0 + 60 }, 'V4'],
+        [1, { start: h, end: h + 60 }, 'V5'],
+        [1, { start: h + 5, end: null }, 'V5'],
+        [1, { start: h - 10, end: h + 10 }, 'V6'],
+      ];
+      for (const [rate, window, rule] of cases) {
+        const cmd = holdCmd(s, { rate, window });
+        const r = outcome(await s.port.hold(env(s, cmd), cmd));
+        assert.deepEqual(r, { result: 'REFUSED', reason: { invalid: rule } }, `${rate} Mbps [${window.start}, ${window.end})`);
+        assert.deepEqual(outcome(await s.port.hold(env(s, cmd), cmd)), r, 'a repeat gets the recorded refusal');
+        assert.ok(s.port.query, 'the subject provides query (provider test 1: a query after each refusal)');
+        assert.deepEqual(outcome(await s.port.query(env(s, cmd), { link: s.link, receiverPartition: s.link, request: cmd.request })),
+          { state: 'REFUSED', refusal: { reason: { invalid: rule } }, tombstoneUntil: cmd.deadline + RELEASE_GRACE_MS }, `tombstone after ${rule}`);
+      }
+      // The invalid holds hold nothing: the full capacity fits beside them, where they overlap and up to H.
+      for (const window of [{ start: m0, end: m0 + 121 }, { start: h - 10, end: h }]) {
+        const full = holdCmd(s, { account: 'full', rate: C, window });
+        assert.deepEqual(outcome(await s.port.hold(env(s, full), full)), { result: 'HELD', attempt: 1 }, `full capacity on [${window.start}, ${window.end})`);
+        assert.equal(outcome(await s.port.release(env(s, full), releaseCmd(s, full.request, full.deadline)))['result'], 'RELEASED');
+      }
+      for (const window of [{ start: m0, end: m0 + 60 }, { start: h - 10, end: h }, { start: h - 1, end: null }]) {
+        const cmd = holdCmd(s, { rate: 1, window });
+        assert.deepEqual(outcome(await s.port.hold(env(s, cmd), cmd)), { result: 'HELD', attempt: 1 }, `[${window.start}, ${window.end})`);
+      }
+    });
+
+    t('1', 'hold: the horizon is calendar months in UTC from the carried receipt minute m0, clamped to the month end (P1-S74)', async (s) => {
+      const cases: Array<[number, number, string]> = [
+        [utcMinute(2026, 3, 31, 10, 0), utcMinute(2027, 3, 31, 10, 0), 'HELD'],
+        [utcMinute(2026, 3, 31, 10, 0), utcMinute(2027, 3, 31, 10, 1), 'V6'],
+        [utcMinute(2028, 2, 29, 10, 0), utcMinute(2029, 2, 28, 10, 0), 'HELD'],
+        [utcMinute(2028, 2, 29, 10, 0), utcMinute(2029, 2, 28, 10, 1), 'V6'],
+      ];
+      for (const [m0, end, want] of cases) {
+        const cmd = { ...holdCmd(s, { rate: 2, window: { start: m0 + 60, end } }), receiptMinute: m0 };
+        const r = outcome(await s.port.hold(env(s, cmd), cmd));
+        assert.deepEqual(r, want === 'HELD' ? { result: 'HELD', attempt: 1 } : { result: 'REFUSED', reason: { invalid: want } },
+          `received in minute ${new Date(m0 * 60_000).toISOString()}, ends ${new Date(end * 60_000).toISOString()}`);
+      }
+    });
+  }
 
   if (!opts.i2) {
     test(`C02 [${name}] PENDING (S-LINK I2 part): counter-offer, query, availability and fit_ranges`,

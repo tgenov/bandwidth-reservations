@@ -103,7 +103,8 @@ function holdAt(seq: bigint, deadline: number, rate = 1): HoldCmd {
   return {
     link: 'P', receiverPartition: 'P', request: { partition: utf8('a'), seq }, account: utf8('a'), leg: 'l', holdKind: { kind: 'booking' },
     rateMbps: rate, window: { start: 1000, end: 1060 }, deadline, commitFence: deadline - 420, requestAge: tsAt(T0), wait: false,
-    receiptMinute: Math.floor(T0 / 60_000), policyVersion: 1n,
+    // The receipt minute is the window start, so that the window is valid (V4 … V6, S-LINK I4).
+    receiptMinute: 1000, policyVersion: 1n,
   };
 }
 

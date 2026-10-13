@@ -1,5 +1,5 @@
 /**
- * The link schedule owner on the C01 runtime (RFC-001 §7.2, §8), parts I1, I2 and I3.
+ * The link schedule owner on the C01 runtime (RFC-001 §7.2, §8), parts I1 … I4.
  *
  * - The C02 link hold port: `hold`, `convert`, `release`, `query`. Each command comes with its C01
  *   `CommandEnvelope`. The owner checks the routing, calls `admitCommand`, and queues the command for
@@ -14,6 +14,7 @@
  *   continues in `Tick` entries, in the same batch, before the next command (RFC-001 §4.3).
  * - Before a batch, the owner reads the `link_request` row of each command whose request record has gone
  *   from memory, so the repeat gets the recorded answer (C02 provider test 3).
+ * - The deployment command `deployPolicy` writes a `Policy(version, parameters)` entry (RFC-001 §7.3).
  * - Hooks: `onAcquire` and `onAdopt` rebuild the link by replay of its log. The replay compares each
  *   recorded outcome (RFC-001 §7.4). The first batch after a new epoch writes `Takeover(epoch)`.
  */
@@ -30,8 +31,8 @@ import { requestKey } from './c02.ts';
 import { declaration, ENTRY, LINK_KIND } from './declaration.ts';
 import type { LoggedEntry, LogReader } from './log-source.ts';
 import {
-  DEFAULT_POLICY, fenceBelow, LinkState, type Decision, type InitCmd, type LinkPolicy, type Outcome, type RequestRecord,
-  type WaitingNotice,
+  DEFAULT_POLICY, fenceBelow, LinkState, type Decision, type InitCmd, type LinkPolicy, type Outcome, type PolicyCmd,
+  type RequestRecord, type WaitingNotice,
 } from './state.ts';
 
 /**
@@ -43,6 +44,7 @@ import {
 export type LoggedPayload =
   | { v: 1; op: 'init'; init: InitCmd; outcome: Outcome }
   | { v: 1; op: 'takeover'; epoch: Epoch; generation: Generation; outcome: Outcome }
+  | { v: 1; op: 'policy'; policy: LinkPolicy; outcome: Outcome }
   | { v: 1; op: 'tick'; outcome: Outcome; notices?: WaitingNotice[]; records?: RequestRecord[] }
   | {
     v: 1; op: LinkOp; body: LinkCommand['body']; outcome: Outcome; sender: SenderRef; record?: RequestRecord;
@@ -88,11 +90,12 @@ export interface LinkOwnerOptions {
 }
 
 /** One decision as the owner made it: the command, its outcome, the batch ts and the entry sequence. */
-export interface DecidedRecord { link: LinkId; command: LinkCommand | InitCmd; outcome: Outcome; ts: HlcTs; seq?: Seq }
+export interface DecidedRecord { link: LinkId; command: LinkCommand | InitCmd | PolicyCmd; outcome: Outcome; ts: HlcTs; seq?: Seq }
 
 type Pending =
   | { t: 'cmd'; cmd: LinkCommand; sender: SenderRef; resolve: (r: unknown) => void; recalled?: RequestRecord }
-  | { t: 'init'; init: InitCmd; resolve: (r: unknown) => void };
+  | { t: 'init'; init: InitCmd; resolve: (r: unknown) => void }
+  | { t: 'policy'; policy: PolicyCmd; resolve: (r: unknown) => void };
 
 interface LinkMemory {
   link: LinkId;
@@ -239,6 +242,18 @@ export class LinkOwner implements OwnerHooks {
     const mem = this.memory(link);
     return new Promise((resolve) => {
       mem.queue.push({ t: 'init', init: { link, capacityMbps, policy }, resolve: resolve as (r: unknown) => void });
+      this.pump(mem);
+    });
+  }
+
+  /**
+   * The configuration deployment of a policy version (RFC-001 §2, §7.3): the `Policy(version, parameters)`
+   * entry. The answer comes after the batch commits. C02 does not freeze this command: it has no envelope.
+   */
+  async deployPolicy(link: LinkId, policy: LinkPolicy): Promise<Outcome | RoutingRefusal> {
+    const mem = this.memory(link);
+    return new Promise((resolve) => {
+      mem.queue.push({ t: 'policy', policy: { link, policy: structuredClone(policy) }, resolve: resolve as (r: unknown) => void });
       this.pump(mem);
     });
   }
@@ -414,7 +429,9 @@ export class LinkOwner implements OwnerHooks {
             mem.state.advance(seq, ctx.ts);
           }
           for (const p of batch) {
-            const d = p.t === 'init' ? mem.state.init(p.init) : mem.state.decide(p.cmd, ctx.ts, seq + 1n, p.recalled);
+            const d = p.t === 'init' ? mem.state.init(p.init)
+              : p.t === 'policy' ? mem.state.applyPolicy(p.policy)
+                : mem.state.decide(p.cmd, ctx.ts, seq + 1n, p.recalled);
             decisions.push(d);
             if (!d.entry) { seqs.push(undefined); continue; }
             seq += 1n;
@@ -422,6 +439,9 @@ export class LinkOwner implements OwnerHooks {
             mem.state.advance(seq, ctx.ts);
             if (p.t === 'init') {
               entries.push(this.entry(ENTRY.Init, `init:${p.init.link}`, { v: 1, op: 'init', init: p.init, outcome: d.outcome }));
+            } else if (p.t === 'policy') {
+              entries.push(this.entry(ENTRY.Policy, `policy:${p.policy.policy.version}`,
+                { v: 1, op: 'policy', policy: p.policy.policy, outcome: d.outcome }));
             } else {
               mem.state.recordFence(senderKey(p.sender.kind, p.sender.partition), p.sender);
               entries.push(this.commandEntry(p.cmd, p.sender, d));
@@ -502,13 +522,14 @@ export class LinkOwner implements OwnerHooks {
     batch.forEach((p, i) => {
       const d = decisions[i] as Decision;
       const seq = seqs[i];
-      this.o.onDecided?.({ link: mem.link, command: p.t === 'cmd' ? p.cmd : p.init, outcome: d.outcome, ts, ...(seq === undefined ? {} : { seq }) });
+      const command = p.t === 'cmd' ? p.cmd : p.t === 'init' ? p.init : p.policy;
+      this.o.onDecided?.({ link: mem.link, command, outcome: d.outcome, ts, ...(seq === undefined ? {} : { seq }) });
       if (d.alert) {
         const request = p.t === 'cmd' ? requestKey(p.cmd.body.request) : undefined;
         this.alert({ kind: d.alert, link: mem.link, ...(request ? { request } : {}) });
       }
       if (!this.rt.leaseValid(mem.slot).valid) { p.resolve({ code: 'NOT_OWNER' }); return; }
-      this.o.onReply?.(p.t === 'cmd' ? `${p.cmd.op}:${requestKey(p.cmd.body.request)}` : `init:${mem.link}`);
+      this.o.onReply?.(p.t === 'cmd' ? `${p.cmd.op}:${requestKey(p.cmd.body.request)}` : `${p.t}:${mem.link}`);
       const out = d.outcome;
       if ('result' in out) {
         const stamp: LinkStamp = { linkFence, linkSeq: seqs[i] ?? d.recordedSeq ?? mem.state.appliedSeq };
@@ -569,6 +590,7 @@ export class LinkOwner implements OwnerHooks {
     const p = e.payload as LoggedPayload;
     let d: Decision;
     if (p.op === 'init') d = mem.state.init(p.init);
+    else if (p.op === 'policy') d = mem.state.applyPolicy({ link: mem.link, policy: p.policy });
     else if (p.op === 'takeover') d = { outcome: { result: 'TAKEOVER' }, entry: true };
     else if (p.op === 'tick') d = mem.state.tick(e.ts, e.seq);
     else {

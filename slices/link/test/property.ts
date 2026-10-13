@@ -6,7 +6,10 @@
  * - the log holds exactly the decisions that wrote an entry, in log order;
  * - after each entry, occ_all ≤ C_ref at every minute, computed again from the log rows alone (P1-N1);
  * - one request gets one decision: at most one Hold and one Convert entry for each request, and each
- *   repeat gets the recorded state (so a wait = false refusal stays refused after its blocker goes).
+ *   repeat gets the recorded state (so a wait = false refusal stays refused after its blocker goes);
+ * - S-LINK I4: invalid requests are mixed in (V1 … V6, and an unapplied policy version). Each gets the
+ *   oracle's INVALID(rule) and a tombstone, or UNAVAILABLE with no entry. A hold with `wait = true` that breaks
+ *   a rule is refused INVALID(rule) and does not wait (check (4) before check (8), RFC-001 §4.1).
  *
  * With `waitShare` > 0 (S-LINK I3 exit criterion 4), that share of the holds has `wait = true`. The oracle then
  * also gives the waiting-port notices (grants, waiter refusals, waiting notices), and the run checks that the
@@ -16,8 +19,8 @@
 import assert from 'node:assert/strict';
 import { encodeJson, hex } from '@share/owner-runtime';
 import type { DecidedRecord, HoldCmd, LinkCommand, LinkPolicy, LoggedEntry, LoggedPayload, Outcome, WaitingNotice } from '../src/index.ts';
-import { requestKey } from '../src/index.ts';
-import { AccountStub, int, MinuteOracle, noticeForm, resultOf, rng } from './support.ts';
+import { DEFAULT_POLICY, requestKey } from '../src/index.ts';
+import { AccountStub, int, MinuteOracle, noticeForm, oracleHorizon, resultOf, rng } from './support.ts';
 
 export interface PropertyTarget {
   stub: AccountStub;
@@ -37,6 +40,25 @@ export interface PropertyTarget {
 export interface PropertyResult { counts: Record<string, number>; entries: number }
 
 const DOMAIN = 2_880;   // two days of minutes
+
+/**
+ * Make the hold break one rule (S-LINK I4 exit criterion 4): V1 … V6 against its receipt minute and the
+ * horizon of 12 months, or (kind 7) carry a policy version that the link has not applied (UNAVAILABLE).
+ */
+function breakRule(cmd: HoldCmd, kind: number, r: () => number): void {
+  const m0 = cmd.receiptMinute;
+  const h = oracleHorizon(m0, 12);
+  switch (kind) {
+    case 0: cmd.rateMbps = 0; break;
+    case 1: cmd.rateMbps = 2.5; break;
+    case 2: cmd.window = { start: cmd.window.start + 0.5, end: cmd.window.end }; break;
+    case 3: cmd.window = { start: cmd.window.start, end: cmd.window.start - int(r, 0, 5) }; break;
+    case 4: cmd.window = { start: m0 - int(r, 1, 600), end: m0 + 10 }; break;
+    case 5: cmd.window = { start: h + int(r, 0, 60), end: null }; break;
+    case 6: cmd.window = { start: h - 10, end: h + int(r, 1, 60) }; break;
+    default: cmd.policyVersion = 9n;
+  }
+}
 
 export async function propertyRun(t: PropertyTarget, seed: number, commands: number, clients: number): Promise<PropertyResult> {
   let sent = 0;
@@ -58,6 +80,8 @@ export async function propertyRun(t: PropertyTarget, seed: number, commands: num
         // I3: some holds take the request_age of the client's last hold, so the request-sequence tie of the order occurs.
         const last = mine.at(-1);
         if ((t.waitShare ?? 0) > 0 && last && r() < 0.3) cmd = { ...cmd, requestAge: last.requestAge };
+        // I4: 10 % of the holds break a rule (with wait = true too: they must be refused INVALID, not wait).
+        if (r() < 0.1) breakRule(cmd, int(r, 0, 7), r);
         mine.push(cmd);
         reply = await t.stub.hold(cmd);
       } else if (p < 0.58) {
@@ -98,7 +122,7 @@ export async function propertyRun(t: PropertyTarget, seed: number, commands: num
 
   // (2) The log holds exactly the decisions that wrote an entry, in log order. Tick entries continue a scan.
   const log = await t.readLog();
-  const cmdEntries = log.filter((e) => { const op = (e.payload as LoggedPayload).op; return op !== 'init' && op !== 'takeover' && op !== 'tick'; });
+  const cmdEntries = log.filter((e) => { const op = (e.payload as LoggedPayload).op; return op !== 'init' && op !== 'takeover' && op !== 'tick' && op !== 'policy'; });
   const withSeq = cmds.filter((d) => d.seq !== undefined);
   assert.deepEqual(cmdEntries.map((e) => e.seq), withSeq.map((d) => d.seq as bigint), `seed ${seed}: log sequences`);
   for (const [i, e] of cmdEntries.entries()) {
@@ -126,9 +150,14 @@ export async function propertyRun(t: PropertyTarget, seed: number, commands: num
   };
   for (const e of log) {
     const p = e.payload as LoggedPayload;
-    if (p.op === 'init' || p.op === 'takeover') continue;
+    if (p.op === 'init' || p.op === 'takeover' || p.op === 'policy') continue;
     if (p.op !== 'tick') {
       const key = requestKey(p.body.request);
+      // (5) An invalid request is refused INVALID(rule) and its entry records a tombstone until D + release_grace (S-LINK I4).
+      const reason = (p.outcome as { reason?: unknown }).reason;
+      if (p.op === 'hold' && typeof reason === 'object' && reason !== null && 'invalid' in reason) {
+        assert.equal(p.record?.tombstoneUntil, (p.body as HoldCmd).deadline + (t.policy ?? DEFAULT_POLICY).releaseGraceMs, `seed ${seed}: tombstone of ${key}`);
+      }
       if (p.op === 'hold') {
         assert.ok(!holdEntries.has(key), `seed ${seed}: two hold entries for ${key}`);
         holdEntries.add(key);

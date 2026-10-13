@@ -5,7 +5,7 @@
  */
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { CockroachOwnerRuntime, ManualLoad, MemoryPublisher, utf8 } from '@share/owner-runtime';
+import { CockroachOwnerRuntime, hlcToWallMs, ManualLoad, MemoryPublisher, utf8 } from '@share/owner-runtime';
 import { MemoryStore } from '@share/owner-runtime/testing';
 import { declaration, DEFAULT_POLICY, LinkOwner, runtimeLogReader, type DecidedRecord } from '../src/index.ts';
 import { propertyRun } from './property.ts';
@@ -28,6 +28,10 @@ test('should keep the P1-N1 properties when 50 clients send 8 seeds × 2,000 hol
   // The run covers every I1 outcome.
   for (const k of ['HELD', 'CONVERTED', 'RELEASED', 'REFUSED:"NO_FIT"', 'REFUSED:"IN_FLIGHT"', 'REFUSED:"DEADLINE_PASSED"',
     'REFUSED:"TOMBSTONED"', 'MISMATCH', 'NO_HOLD', 'TOMBSTONED']) {
+    assert.ok((total[k] ?? 0) > 0, `outcome ${k} occurs (${JSON.stringify(total)})`);
+  }
+  // S-LINK I4 exit criterion 4: invalid requests are mixed in; each rule and an unapplied policy version occur.
+  for (const k of ['V1', 'V2', 'V3', 'V4', 'V5', 'V6'].map((v) => `REFUSED:{"invalid":"${v}"}`).concat('UNAVAILABLE')) {
     assert.ok((total[k] ?? 0) > 0, `outcome ${k} occurs (${JSON.stringify(total)})`);
   }
 });
@@ -70,7 +74,9 @@ test('should keep the P1-N1 properties when 50 clients send 2 seeds × 1,000 com
       decided.length = 0;
       await owner.register(link, 10);
       const stub = new AccountStub(rt, owner, link);
-      await propertyRun({ stub, decided, capacity: 10, base: M(0), readLog: () => readLog(utf8(link), 0n) }, seed, 1_000, 50);
+      // The runtime core has a real clock: the windows start at its present minute, so that they are valid (V4).
+      const base = Math.floor(hlcToWallMs(rt.now().ts) / 60_000);
+      await propertyRun({ stub, decided, capacity: 10, base, readLog: () => readLog(utf8(link), 0n) }, seed, 1_000, 50);
     }
   } finally {
     await rt.stop();

@@ -12,6 +12,7 @@ Run: `npm run typecheck:link`, `npm run test:link`, `REQUIRE_DEV_CELL=1 npm run 
 | S-LINK-I1 Walking skeleton: hold, convert and release on one link | Delivered (`eb7895f`) | P1-S01 … S06, S08 … S10, S13, S14, S37, S77 |
 | S-LINK-I2 Counter-offers, request records and the availability query | Built, not committed | P1-S12, S15, S16, S17, S38, S39, S70, S73 |
 | S-LINK-I3 Waiting, grants and the waiting port | Built, not committed; manual proofs owed (see S-LINK-I3) | P1-S07, S11, S34 |
+| S-LINK-I4 Validity and the rolling horizon | Built, not committed (one manual proof owed) | P1-S18, S19, S20, S21, S22, S23, S74 |
 
 ## S-LINK-I2
 
@@ -92,7 +93,7 @@ machine is necessary (`mutate` now also has the I2 parts of `owner.ts`; the comm
 ### Left for later increments
 
 - Waiting (`WAITING`, `aheadDeadline` in `query`), grants and the waiting port: I3. `wait = true` that must wait still answers `UNAVAILABLE`.
-- Validity V4 … V6 and the `Policy` entry: I4. The horizon is in `counteroffer.ts` (`horizonMinute`) for I4 to use.
+- Validity V4 … V6 and the `Policy` entry: I4 (done, see the S-LINK-I4 section).
 - `query` fields `displacedBy`, `openYieldClaims`: I5, I11.
 - The `link_request` row TTL is declared and created (`ttl_expiration_expression`); its removal is not tested (the database job runs hourly).
 - The prune scan is linear in the records in memory, and runs only when the earliest due record is due (`nextPruneAt`). A heap by expiry is for SP4/I16.
@@ -177,3 +178,117 @@ Gates after the fixes: `npm run -s typecheck:link`, `typecheck:contracts` and `n
 - Scans after capacity rises (restoration, increase, offer release, leg changes): with those entries (I6, I12 … I15).
 - The scan copies the waiter keys of the range; an interval index of waiters is for SP4/I16.
 - The account link double has no I2 and no I3 part (account slice).
+
+## S-LINK-I4
+
+### What it adds
+
+| Part | Where |
+|---|---|
+| Validity V1 … V6 against the receipt minute `m0` that the hold carries, never against `ts`; the horizon H in calendar months in UTC with the month-end clamp (`horizonMinute`); the first rule that fails is the reason (C02 `hold` check (4), RFC-001 §2) | `src/state.ts` (`invalidRule`) |
+| `Policy(version, parameters)` entry from the deployment command `deployPolicy` (RFC-001 §7.3). The link keeps every version. A newer version gives the link parameters from its entry on; an older version deployed later is kept, but does not become current. A repeat with the same parameters writes nothing; other parameters give `MISMATCH` (alert `POLICY_MISMATCH`); a malformed policy gives `INVALID_POLICY` (alerted). Replay applies the Policy entries again | `src/state.ts` (`applyPolicy`), `src/owner.ts` (`deployPolicy`, replay) |
+| A hold with a policy version that the link has not applied gets `UNAVAILABLE` and writes no entry and no record (RFC-001 §2). The check comes after check (3) and before check (4) | `src/state.ts` |
+| `rate_min` and `selling_horizon` (validity and the counter-offer horizon) come from the version that the hold carries. `release_grace`, the record TTL and the counter-offer step bounds come from the current version | `src/state.ts` |
+| Contract suite: `runC02ProviderSuite(…, { i4: true })` adds C02 provider test 1 for check (4): V1 … V6 against `m0`, and the P1-S74 calendar cases on the carried receipt minute. The account link double has a PENDING entry (`contracts/suites/ISSUES.md`, "Known double gaps") | `contracts/suites/src/c02.ts` |
+| Oracle: `MinuteOracle` judges V1 … V6 (`oracleInvalid`, apart from the link's code) and the policy version | `test/support.ts` |
+
+### Exit criteria
+
+| # | Criterion | State | Proving tests |
+|---|---|---|---|
+| 1 | T-05 and T-06 pass | Met | T-05: `T-05 validity V1 … V6 equals the oracle at calendar edges for 8 seeds × 4,000 holds` (property: month ends, 29 February, horizons of 1 … 24 months, windows at the edges of m0 and H, the hold up to 90 s after receipt); `T-05 a hold that reaches the link one minute boundary after receipt …`; `T-05 a request received at hh:mm:59.98 whose intake commits after the boundary is valid from hh:mm`; `T-05 the rules are checked in the order V1 … V6 …`; `T-05 a receipt minute that is not a whole minute fails V4`; `T-05 a refusal for no fit is decided only after validity …`; `T-05 a refusal at ts ≥ D_c comes before validity`. T-06: `T-06 as the horizon rolls by days and months, every decision equals the oracle and no sale takes an open-ended reservation's minutes (4 seeds × 300 commands)` (property, rolls up to 200 days, against `MinuteOracle`); `T-06 as ts advances by days and months, no new sale takes an open-ended reservation's minutes` |
+| 2 | C02 provider test 1 (V1 … V6 with the calendar cases of P1-S74) | Met | `C02 1 [real link owner] hold: V1 … V6 against m0 give REFUSED(INVALID(rule)) …`; `C02 1 [real link owner] hold: the horizon is calendar months in UTC from the carried receipt minute m0 …` |
+| 3 | A hold with an unapplied policy version gets `UNAVAILABLE` and the log has no entry for it | Met on the runtime double and the C01 runtime core; on the dev cell: written, not run (manual proof owed) | `should answer UNAVAILABLE and write no log entry when a hold carries a policy version that the link has not applied`; `should answer UNAVAILABLE in a batch with other holds and write entries for the other holds only`; the property runs below (on the double and on `CockroachOwnerRuntime` with the memory store). Dev cell: `test/integration/link-i4-crdb.test.ts` `should write Policy entries, judge holds by their policy version and receipt minute, and rebuild them when run on the real runtime on the dev cell` — **written, not run (manual proof owed)** |
+| 4 | The I1 property test runs with invalid requests mixed in; each gets `INVALID` and a tombstone | Met | `should keep the P1-N1 properties when 50 clients send 8 seeds × 2,000 …` now mixes in 10 % holds that break V1 … V6 or carry an unapplied version; each outcome equals the oracle, each `INVALID` entry records a tombstone until D + release_grace (check (5) of `test/property.ts`), and every rule and `UNAVAILABLE` occur |
+
+Scenario tests: `P1-S18 …` (insufficient funds, failed, invalid), `P1-S19 …` (the 11 rows), `P1-S20 …` (3 rows),
+`P1-S21 …`, `P1-S22 …`, `P1-S23 …`, `P1-S74 …` (4 rows). Policy entry tests: `should write one Policy entry …`,
+`should give the counter-offer within the horizon of the policy version that the hold carries`, `should keep every
+applied version …`, `should answer a repeated deployment …`, `should refuse a deployment of an applied version
+with other parameters …`, `should refuse a malformed policy …`, `should answer UNKNOWN_LINK to a deployment …`,
+`should rebuild every policy version by replay of the Policy entries, with no outcome difference`.
+
+Deliberate breaks (shown once, then reverted): V6 as `e > H + 1` makes the T-05 property, the P1-S74 tests,
+the C02 P1-S74 suite case and two other tests fail. A no-fit check that reads `occ_firm` only for one day after
+`m0` makes the T-06 property and the I1/I2 property runs fail.
+
+### Changes to earlier tests (test data only; no assertion removed)
+
+- `test/counteroffer.unit.test.ts` `holdAt`: the receipt minute is the window start (minute 1000). The old receipt
+  minute (2026) made the 1970 window invalid (V4).
+- `test/property.ts`: 10 % of the holds break a rule (exit criterion 4); the log check skips `policy` entries.
+- `test/property.test.ts`: the run on the C01 runtime core (real clock) starts its windows at its present minute;
+  the old base (2 March 2026) made every hold invalid (V4). The double run adds the coverage of V1 … V6 and
+  `UNAVAILABLE`.
+- `test/integration/link-crdb.test.ts` (I1, dev cell): the windows start at the present minute for the same
+  reason. Not run by the agent.
+- `test/support.ts`: `harness({ startMs })`, `HoldArgs.policyVersion`, and the oracle above.
+
+### Gates (2026-10-13, agent run, contract and double based only)
+
+`npm run typecheck:link` clean; `npm run typecheck:contracts` clean; `npx eslint slices/link contracts` clean;
+`npm run test:link` 155 tests, 153 pass, 0 fail, 2 skipped (the two measurements, `LINK_MEASURE` not set);
+`npm run test:contracts` 81 tests, 77 pass, 0 fail, 4 todo (the PENDING entries, now with the account link
+double's I4 part). Not run by the agent: the integration tests (`link-crdb`, `link-i2-crdb`, `link-i4-crdb`),
+`npm run measure`, `npm run check`, Stryker. A person runs them before the merge.
+
+### Review 69 (test review) findings
+
+| Finding | State | Proving tests or note |
+|---|---|---|
+| TR-1 (Major) stale Stryker config | Fixed | `tools/mutation/link.stryker.json`: ranges at the current lines (`state.ts:197-528` with `init` and `applyPolicy`, `state.ts:553-600` with `atOrAfterMs`, `invalidRule`, `wellFormedPolicy`; `owner.ts` ranges moved, `deployPolicy` added). The command runs `validity`, `horizon` and `property.validity`. Stryker not run |
+| TR-2 (Major) counter-offer `rate_min` from the hold's version | Fixed | `should give the counter-offer largest rate by rate_min of the policy version that the hold carries` (kills `state.ts:392` → `this.policy.rateMinMbps`, by hand) |
+| TR-3 (Major) C02 I4 part: tombstone and nothing held | Fixed | `C02 1 … V1 … V6 … hold nothing`: a query after each refusal (tombstone), and the full capacity is `HELD` beside the invalid holds. Kills by hand: an invalid refusal with no record, and a V6 refusal that holds capacity |
+| TR-4 (Major) `wellFormedPolicy` lower bounds | Fixed | `should apply a policy with every parameter at its lower bound`; `counterofferBatchSteps: 0`, `requestRecordTtlMs: 0` in the `INVALID_POLICY` list (kill `releaseGraceMs ≥ 1`, `counterofferBatchSteps ≥ 0`, `requestRecordTtlMs ≥ 0`, by hand) |
+| TR-5 (Minor) exact outcome of a valid hold | Fixed | `T-05 validity … 8 seeds × 4,000 holds`: `HELD` if rate ≤ 10, else `NO_FIT` |
+| TR-6 (Minor) `UNKNOWN_LINK` deployment must-not | Fixed | `should answer UNKNOWN_LINK … and write and alert nothing` |
+| TR-7 (Minor) place of the `UNAVAILABLE` check | Fixed | `should refuse DEADLINE_PASSED before UNAVAILABLE …`, `should answer MISMATCH, not UNAVAILABLE, …` (the mutant "above (3)" is killed by name) |
+| TR-8 (Minor) cheap mutants | Fixed | `should compare policy versions as numbers …`, `should keep the deployed policy when the caller changes its object …`, `should record the reply to a deployment as policy:<link>`, version `5` (a number) in the `INVALID_POLICY` list. Each mutant killed by hand |
+| TR-9 (Minor) H out of the date range | Fixed | `T-05 a receipt minute beyond the date range fails V5` (kills `!(start < h)` → `start >= h`, by hand) |
+| TR-10 (Minor) `waitFor` polls; `close` in `finally` | Open | Integration test only (dev cell). The I1 file has the same pattern. A change for both files together |
+| TR-11 (Minor) V1 … V6 rows checked twice | Open | Kept: the scenario rows also check must-not (no hold, `occAll` empty, tombstone). The same decision as review 67 TR-12 |
+
+Gates after review 69: `npm run test:link` 163 tests, 161 pass, 0 fail, 2 skipped; `npm run test:contracts`
+81 tests, 77 pass, 0 fail, 4 todo; `typecheck:link`, `typecheck:contracts`, `npx eslint slices/link contracts` clean.
+
+### Merge with S-LINK-I3 (rebase on `7ff0d10`)
+
+I3 and I4 were built in parallel. The rebase of I4 on I3 keeps the behaviour of both increments:
+
+- **Check order on the hold path.** A hold with `wait = true` gets the `UNAVAILABLE` check (DI-18) and check (4)
+  (V1 … V6) before check (8). A hold that breaks a rule is refused `INVALID(rule)` with a tombstone and does not
+  wait. RFC-001 §4.1 and C02 give this order ((4) before (8)), so this is not a new design issue. Tests:
+  `T-05 a hold with wait = true that breaks a rule is refused INVALID(rule) at check (4) and does not wait (check (8))`;
+  `should answer UNAVAILABLE to a hold with wait = true that carries an unapplied version, and register no waiter`.
+- **A waiter refused for no fit in a scan** gets the counter-offer by `rate_min` and `selling_horizon` of the policy
+  version that the waiter carries (DI-17). The link keeps every version (DI-15), so that version is always there.
+  Test: `should give a waiter refused for no fit the counter-offer by rate_min of the policy version that it carries`.
+- **`scanSteps`** (I3) is a policy parameter. A `Policy` entry carries it (I3 DI-13); `wellFormedPolicy` refuses
+  `scanSteps` < 1 (`INVALID_POLICY`). It is a step bound, so it comes from the current version (DI-17).
+- **Property harness.** `propertyRun` keeps I3's `wait = true` share with equal `request_age` ties and I4's 10 %
+  invalid holds together. An invalid hold with `wait = true` must be refused `INVALID(rule)`, as the oracle says.
+- **Earlier test changed (test data only, no assertion removed).** `test/property.waiting.test.ts`, the run on the
+  C01 runtime core: the windows start at the core's present minute (real clock), for the same reason as the I4
+  change in `test/property.test.ts` (else every hold is V4-invalid and no notice occurs).
+- **Design issue numbers.** I3 has DI-10 … DI-13. The I4 design issues are DI-14 … DI-20 (were DI-10 … DI-16 before
+  the rebase; review 69 and the code comments use the new numbers).
+- **Stryker** (`tools/mutation/link.stryker.json`, not run): the union of the I3 and I4 ranges at the merged lines
+  (`state.ts:234-729`, `state.ts:760-826`; `owner.ts:153-236`, `253-260`, `388-395`, `410-463`, `543-560`,
+  `568-610`, `642-656`). The command runs the I3 tests (`waiting`, `property.waiting`) and the I4 tests (`validity`,
+  `horizon`, `property.validity`).
+
+Gates after the rebase (2026-10-13, agent run): `npm run -s typecheck:link`, `typecheck:contracts` and
+`npx eslint slices/link contracts` clean; `npm run -s test:link` 200 tests, 197 pass, 0 fail, 3 skipped (the
+measurements); `npm run -s test:contracts` 84 tests, 80 pass, 0 fail, 4 todo (PENDING entries).
+
+### Design issues found
+
+| Id | Where | Conflict | Proposed resolution |
+|---|---|---|---|
+| DI-14 | RFC-001 §7.3 `Policy` "from configuration deployment" | No contract names the deployment command: its sender, envelope, authority and reply | I4 has `LinkOwner.deployPolicy(link, policy)`, with no envelope (as the `Init` fixture). A contract (C01 or a configuration contract) for the command |
+| DI-15 | RFC-001 §2 "keeps every version that a live request can carry" | No rule says when a version can go | I4 keeps every version (a few per year). RFC-001: a version can go when it is superseded and the longest deadline plus the record TTL has passed |
+| DI-16 | C02 `HoldCmd.receiptMinute`; RFC-001 §2 | No rule for a receipt minute that is not a whole minute | The link answers `INVALID(V4)` (`s ≥ m0` cannot be shown). C02 erratum: `Minute` is an integer, or name the rule |
+| DI-17 | RFC-001 §2, §7.3 | "Parameters and algorithm version from this position" does not say which parameters come from the hold's version and which from the current `Policy` entry | `rate_min` and `selling_horizon` (validity and the counter-offer horizon H) from the hold's version; `release_grace`, the record TTL and the step bounds from the current version. RFC-001 erratum |
+| DI-18 | RFC-001 §2, §4.1 | The `UNAVAILABLE` for an unapplied version has no place in the order of the checks | After check (3) (`D_c` needs no policy), before check (4). RFC-001 erratum |
+| DI-19 | RFC-001 §7.3 | A version deployed after a newer one is not described | Kept for the holds that carry it; it does not become the current policy. RFC-001 erratum |
+| DI-20 | C02 link availability query | `AvailabilityQuery` has no policy version (as DI-1 has no `m0`) | The link uses its current policy for H. Part of the C02 minor version of DI-1 |

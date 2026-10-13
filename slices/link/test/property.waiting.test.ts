@@ -7,7 +7,7 @@
  */
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { CockroachOwnerRuntime, ManualLoad, MemoryPublisher, utf8 } from '@share/owner-runtime';
+import { CockroachOwnerRuntime, hlcToWallMs, ManualLoad, MemoryPublisher, utf8 } from '@share/owner-runtime';
 import { MemoryStore } from '@share/owner-runtime/testing';
 import { declaration, DEFAULT_POLICY, LinkOwner, runtimeLogReader, type DecidedRecord, type LinkPolicy } from '../src/index.ts';
 import { propertyRun } from './property.ts';
@@ -57,7 +57,9 @@ test('should keep the P1-N1 properties and the waiting oracle on the real C01 ru
     const policy = { ...DEFAULT_POLICY, scanSteps: 2 };
     await owner.register(link, 10, policy);
     const stub = new AccountStub(rt, owner, link);
-    const res = await propertyRun({ stub, decided, capacity: 10, base: M(0), policy, waitShare: 0.5, readLog: () => readLog(utf8(link), 0n) }, 61, 1_000, 50);
+    // The runtime core has a real clock: the windows start at its present minute, so that they are valid (V4, S-LINK I4).
+    const base = Math.floor(hlcToWallMs(rt.now().ts) / 60_000);
+    const res = await propertyRun({ stub, decided, capacity: 10, base, policy, waitShare: 0.5, readLog: () => readLog(utf8(link), 0n) }, 61, 1_000, 50);
     const notices = Object.entries(res.counts).filter(([k]) => k.startsWith('notice:')).reduce((n, [, v]) => n + v, 0);
     assert.ok(notices > 0, `notices occur (${JSON.stringify(res.counts)})`);
     const sent = publisher.sent.filter((m) => m.topic === 'link.notifications.v1');

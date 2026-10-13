@@ -55,9 +55,9 @@ export function doubleLogReader(rt: RuntimeDouble): LogReader {
     .map((e) => ({ seq: e.seq, ts: e.ts, epoch: e.epoch, kind: e.entry.kind, payload: e.entry.payload }));
 }
 
-export async function harness(opts: { link?: string; capacity?: number; policy?: LinkPolicy; owner?: Partial<LinkOwnerOptions> } = {}): Promise<Harness> {
+export async function harness(opts: { link?: string; capacity?: number; policy?: LinkPolicy; owner?: Partial<LinkOwnerOptions>; startMs?: number } = {}): Promise<Harness> {
   const link = opts.link ?? 'L1';
-  const rt = new RuntimeDouble({ declaration, startMs: START_MS });
+  const rt = new RuntimeDouble({ declaration, startMs: opts.startMs ?? START_MS });
   const decided: DecidedRecord[] = [];
   const pushed: NotificationOut[] = [];
   const owner = new LinkOwner(rt, {
@@ -82,6 +82,8 @@ export interface HoldArgs {
   /** Remaining deadline in ms from the runtime's present time. Default 20 s. */
   deadlineInMs?: number;
   account?: string; request?: RequestId; leg?: string;
+  /** The policy version recorded at intake. Default 1. */
+  policyVersion?: bigint;
 }
 
 /**
@@ -123,7 +125,7 @@ export class AccountStub {
     return {
       link: this.link, receiverPartition: this.link, request, account: utf8(account), leg: a.leg ?? 'leg-1',
       holdKind: { kind: 'booking' }, rateMbps: a.rate, window: a.window, deadline, commitFence: deadline - 420,
-      requestAge: this.rt.now().ts, wait: a.wait ?? false, receiptMinute: Math.floor(now / 60_000), policyVersion: 1n,
+      requestAge: this.rt.now().ts, wait: a.wait ?? false, receiptMinute: Math.floor(now / 60_000), policyVersion: a.policyVersion ?? 1n,
     };
   }
 
@@ -240,11 +242,19 @@ export class MinuteOracle {
   private waiters: Array<{ key: string; b: HoldCmd; ahead: number }> = [];
   /** The waiting-port notices, in the order that the link must send them. */
   readonly notices: OracleNotice[] = [];
+  /** The policy versions that the link has applied (RFC-001 §2). A hold judges validity by its own version. */
+  private readonly policies = new Map<string, LinkPolicy>();
 
   constructor(base: number, n: number, capacity: number, policy: LinkPolicy = DEFAULT_POLICY) {
     this.base = base; this.n = n; this.capacity = capacity; this.policy = policy; this.releaseGraceMs = policy.releaseGraceMs;
     this.firm = new Int32Array(n);
     this.all = new Int32Array(n);
+    this.policies.set(policy.version, policy);
+  }
+
+  /** A Policy entry: one more version that holds can carry. The parameters of `policy` stay those of the link. */
+  deploy(p: LinkPolicy): void {
+    this.policies.set(p.version, p);
   }
 
   /** The value of `occ_all` at minute m. */
@@ -261,10 +271,11 @@ export class MinuteOracle {
       this.batchLeft = this.policy.counterofferBatchSteps;
       this.cache.clear();
     }
+    const rules = this.policies.get(b.policyVersion.toString()) ?? this.policy;
     const free = this.capacity - this.peak(this.all, b.window);
-    const largestRateMbps = free < this.policy.rateMinMbps ? 0 : free;
+    const largestRateMbps = free < rules.rateMinMbps ? 0 : free;
     const length = b.window.end === null ? null : b.window.end - b.window.start;
-    const h = oracleHorizon(b.receiptMinute, this.policy.sellingHorizonMonths);
+    const h = oracleHorizon(b.receiptMinute, rules.sellingHorizonMonths);
     const key = `${b.window.start}|${length}|${b.rateMbps}|${h}`;
     const hit = this.cache.get(key);
     if (hit && hit.version === this.allVersion) return { largestRateMbps, earliest: hit.earliest };
@@ -374,8 +385,10 @@ export class MinuteOracle {
         return o;
       };
       if (tsNs >= BigInt(b.commitFence) * 1_000_000n) return refuse({ result: 'REFUSED', reason: 'DEADLINE_PASSED' });
-      if (!Number.isSafeInteger(b.rateMbps) || b.rateMbps < 1) return refuse({ result: 'REFUSED', reason: { invalid: 'V1' } });
-      if (b.window.end !== null && b.window.end <= b.window.start) return refuse({ result: 'REFUSED', reason: { invalid: 'V3' } });
+      const rules = this.policies.get(b.policyVersion.toString());
+      if (!rules) return { code: 'UNAVAILABLE' };
+      const rule = oracleInvalid(b, rules);
+      if (rule) return refuse({ result: 'REFUSED', reason: { invalid: rule } });
       if (this.peak(this.firm, b.window) + b.rateMbps > this.capacity) return refuse({ result: 'REFUSED', reason: 'NO_FIT', counterOffer: this.counterOffer(b, ts) });
       if (this.peak(this.all, b.window) + b.rateMbps <= this.capacity) {
         this.addTo(this.all, b.window, b.rateMbps);
@@ -493,4 +506,21 @@ export function oracleHorizon(m0: number, months: number): number {
   const daysInTarget = new Date(Date.UTC(target.getUTCFullYear(), target.getUTCMonth() + 1, 0)).getUTCDate();
   target.setUTCDate(Math.min(d.getUTCDate(), daysInTarget));
   return target.getTime() / 60_000;
+}
+
+/**
+ * The first rule of V1 … V6 (RFC-001 §2) that the hold breaks under `rules`, judged on its receipt minute m0.
+ * Written apart from the link's code, for the oracle.
+ */
+export function oracleInvalid(b: HoldCmd, rules: LinkPolicy): 'V1' | 'V2' | 'V3' | 'V4' | 'V5' | 'V6' | undefined {
+  const whole = (x: number): boolean => Number.isInteger(x) && Math.abs(x) <= Number.MAX_SAFE_INTEGER;
+  const { start, end } = b.window;
+  if (!whole(b.rateMbps) || b.rateMbps < rules.rateMinMbps) return 'V1';
+  if (!whole(start) || (end !== null && !whole(end))) return 'V2';
+  if (end !== null && !(end > start)) return 'V3';
+  if (!whole(b.receiptMinute) || start < b.receiptMinute) return 'V4';
+  const h = oracleHorizon(b.receiptMinute, rules.sellingHorizonMonths);
+  if (!(start < h)) return 'V5';
+  if (end !== null && end > h) return 'V6';
+  return undefined;
 }

@@ -1,5 +1,5 @@
 /**
- * The apply state machine of one link (RFC-001 §3.3, §4.1 … §4.4, §7.3, §7.4), parts I1, I2 and I3.
+ * The apply state machine of one link (RFC-001 §2, §3.3, §4.1 … §4.4, §7.3, §7.4), parts I1 … I4.
  *
  * `beginBatch(ts)` starts a batch at its commit timestamp `ts`. `decide(command, ts)` then applies one
  * command. It returns the outcome and tells if the command writes a log entry. A command that writes no
@@ -17,6 +17,10 @@
  * updates the waiting notice. If the budget binds, the scan is pending, and `tick` continues it: the owner writes
  * `Tick` entries before the next command. Each change for a waiter is a notice (`Decision.notices`).
  *
+ * Policy versions (§2, §7.3, I4). `Init` and each `Policy(version, parameters)` entry add a version. The link keeps
+ * every version, so it can judge each hold by the rules (V1 … V6, `rate_min`, `selling_horizon`) of the version
+ * that the hold carries. The newest version gives the other parameters of the link from its entry on.
+ *
  * Determinism (§7.4): the apply reads `ts`, never a clock. It uses integer arithmetic only. It
  * iterates maps in insertion order, which is a function of the log. The counter-offer budgets are step
  * counts that `beginBatch` resets. A replay calls `beginBatch` at each new `ts` (all entries of one batch
@@ -32,8 +36,9 @@ import { requestKey } from './c02.ts';
 import { CounterOfferBatch, earliest, fitRanges, horizonMinute, largestRate } from './counteroffer.ts';
 import { OccupancyTree } from './occupancy.ts';
 
-/** The policy parameters that I1 … I3 use (RFC-001 §7.3 `Init`; the full `Policy` entry is I4). */
+/** The policy parameters of one policy version (RFC-001 §7.3 `Init` and `Policy(version, parameters)`). */
 export interface LinkPolicy {
+  /** The policy version: a positive decimal integer, without leading zeros (C02 `policyVersion`). */
   version: string;
   /** POL-04, POL-26: 1 min. */
   releaseGraceMs: number;
@@ -59,11 +64,15 @@ export const DEFAULT_POLICY: LinkPolicy = {
 /** The fixture command that registers the link (RFC-001 §7.3 `Init`; the registry feed is I9). */
 export interface InitCmd { link: LinkId; capacityMbps: number; policy: LinkPolicy }
 
+/** The deployment command that gives the link a policy version (RFC-001 §7.3 `Policy(version, parameters)`). */
+export interface PolicyCmd { link: LinkId; policy: LinkPolicy }
+
 /** The outcome of one command, without the link stamp. */
 export type Outcome =
   | HoldOutcome | ConvertOutcome | ReleaseOutcome
   | { code: 'UNKNOWN_LINK' } | { code: 'UNAVAILABLE' }
-  | { result: 'INITIALISED' } | { result: 'TAKEOVER' } | { result: 'TICK' };
+  | { result: 'INITIALISED' } | { result: 'TAKEOVER' } | { result: 'TICK' }
+  | { result: 'POLICY_APPLIED'; version: string } | { code: 'INVALID_POLICY' };
 
 /**
  * A change for a waiter that an entry makes (RFC-001 §4.3, §11.1). The owner sends it to the waiter's account
@@ -162,6 +171,8 @@ export class LinkState {
   private finals: RequestRecord[] = [];
   /** Per sending partition: the highest (generation, epoch) applied (RFC-001 §3.3 "Sender fences"). */
   private readonly fences = new Map<string, WriterFence>();
+  /** Every policy version that the link has applied, by version (RFC-001 §2: "keeps every version"). */
+  private readonly policies = new Map<string, LinkPolicy>();
   private undo: Array<() => void> = [];
   /** The counter-offer budget and cache of the batch being decided (RFC-001 §4.2). */
   private batch = new CounterOfferBatch(DEFAULT_POLICY.counterofferSteps, DEFAULT_POLICY.counterofferBatchSteps);
@@ -296,8 +307,35 @@ export class LinkState {
     this.setScalar('link', cmd.link);
     this.setScalar('cRef', cmd.capacityMbps);
     this.setScalar('policy', cmd.policy);
+    this.setIn(this.policies, cmd.policy.version, cmd.policy);
     this.batch = new CounterOfferBatch(cmd.policy.counterofferSteps, cmd.policy.counterofferBatchSteps);
     return { outcome: { result: 'INITIALISED' }, entry: true };
+  }
+
+  /**
+   * The `Policy(version, parameters)` entry (RFC-001 §7.3). A new version is kept for the holds that carry
+   * it. If it is newer than the current policy, it gives the parameters of the link from this entry on. A
+   * version that the link has with the same parameters is a duplicate: no entry. The same version with other
+   * parameters is `MISMATCH`, and a malformed policy is `INVALID_POLICY`; both are alerted and write nothing.
+   */
+  applyPolicy(cmd: PolicyCmd): Decision {
+    if (this.link === undefined || cmd.link !== this.link) return { outcome: { code: 'UNKNOWN_LINK' }, entry: false };
+    const p = cmd.policy;
+    if (!wellFormedPolicy(p)) return { outcome: { code: 'INVALID_POLICY' }, entry: false, alert: 'INVALID_POLICY' };
+    const outcome: Outcome = { result: 'POLICY_APPLIED', version: p.version };
+    const known = this.policies.get(p.version);
+    if (known) {
+      if (digest(known) !== digest(p)) return { outcome: { code: 'MISMATCH' }, entry: false, alert: 'POLICY_MISMATCH' };
+      return { outcome, entry: false };
+    }
+    this.setIn(this.policies, p.version, p);
+    if (BigInt(p.version) > BigInt(this.policy.version)) this.setScalar('policy', p);
+    return { outcome, entry: true };
+  }
+
+  /** The policy version `v`, if the link has applied it. */
+  policyOf(v: bigint | string): LinkPolicy | undefined {
+    return this.policies.get(typeof v === 'string' ? v : v.toString());
   }
 
   /**
@@ -362,13 +400,17 @@ export class LinkState {
     }
     // (3) ts ≥ D_c (this also covers ts ≥ D).
     if (atOrAfterMs(ts, b.commitFence)) return this.refuse(b, { result: 'REFUSED', reason: 'DEADLINE_PASSED' });
-    // (4) Validity, the structural rules only. V4 … V6 (against m0 and the horizon) are I4.
-    const invalid = this.structurallyInvalid(b);
+    // RFC-001 §2: a version that the link has not applied yet gets UNAVAILABLE, and the link records nothing.
+    // The account owner sends the hold again.
+    const rules = this.policyOf(b.policyVersion);
+    if (!rules) return { outcome: { code: 'UNAVAILABLE' }, entry: false };
+    // (4) Validity V1 … V6 against the receipt minute m0, by the rules of the hold's policy version (§2).
+    const invalid = invalidRule(b, rules);
     if (invalid) return this.refuse(b, { result: 'REFUSED', reason: { invalid } });
     const { start, end } = b.window;
     // (5) No fit on committed capacity (P1-S37, I2 of §3.4), with the counter-offer beside held capacity (P1-S73).
     if (this.occFirm.peak(start, end) + b.rateMbps > this.cRef) {
-      return this.refuse(b, { result: 'REFUSED', reason: 'NO_FIT', counterOffer: this.counterOffer(b) });
+      return this.refuse(b, { result: 'REFUSED', reason: 'NO_FIT', counterOffer: this.counterOffer(b, rules) });
     }
     // (6) Fit beside every hold: HELD at attempt 1 (P1-S05, invariant I1).
     if (this.occAll.peak(start, end) + b.rateMbps <= this.cRef) {
@@ -387,7 +429,7 @@ export class LinkState {
     // (7) Only capacity in flight blocks it, and wait = false: IN_FLIGHT at once (P1-S12, P2-S112), with the
     // counter-offer beside held capacity and retry_after from the latest blocker (P1-S70).
     if (!b.wait) {
-      const counterOffer = this.counterOffer(b);
+      const counterOffer = this.counterOffer(b, rules);
       const retryAfterMs = this.retryAfterMs(b, ts);
       return this.refuse(b, { result: 'REFUSED', reason: 'IN_FLIGHT', counterOffer, retryAfterMs });
     }
@@ -414,18 +456,13 @@ export class LinkState {
     return { outcome, entry: true, final: rec };
   }
 
-  /** The POL-10 counter-offer of a refused hold, beside committed and held capacity (RFC-001 §4.2). */
-  private counterOffer(b: HoldCmd): CounterOffer {
-    const h = horizonMinute(b.receiptMinute, this.policy.sellingHorizonMonths);
-    return this.batch.offer(this.occAll, this.cRef, this.policy.rateMinMbps, b.window, b.rateMbps, h);
-  }
-
-  private structurallyInvalid(b: HoldCmd): 'V1' | 'V2' | 'V3' | undefined {
-    if (!Number.isSafeInteger(b.rateMbps) || b.rateMbps < this.policy.rateMinMbps) return 'V1';
-    const { start, end } = b.window;
-    if (!Number.isSafeInteger(start) || (end !== null && !Number.isSafeInteger(end))) return 'V2';
-    if (end !== null && end <= start) return 'V3';
-    return undefined;
+  /**
+   * The POL-10 counter-offer of a refused hold, beside committed and held capacity (RFC-001 §4.2), within the
+   * request's horizon H. H and `rate_min` come from the policy version that the hold carries (§2).
+   */
+  private counterOffer(b: HoldCmd, rules: LinkPolicy): CounterOffer {
+    const h = horizonMinute(b.receiptMinute, rules.sellingHorizonMonths);
+    return this.batch.offer(this.occAll, this.cRef, rules.rateMinMbps, b.window, b.rateMbps, h);
   }
 
   /**
@@ -547,7 +584,8 @@ export class LinkState {
   private refuseWaiter(key: string, w: Waiter): void {
     const b = w.cmd;
     this.removeWaiter(key);
-    const counterOffer = this.counterOffer(b);
+    // The waiter's policy version was applied when it registered, and the link keeps every version (§2).
+    const counterOffer = this.counterOffer(b, this.policyOf(b.policyVersion) as LinkPolicy);
     const rec = this.records.get(key) as RequestRecord;
     const next: RequestRecord = {
       ...rec, state: 'REFUSED', holdOutcome: { result: 'REFUSED', reason: 'NO_FIT', counterOffer },
@@ -751,6 +789,39 @@ function overlaps(w: Window, r: { start: number; end: number | null }): boolean 
   const wEndAfterRStart = w.end === null || w.end > r.start;
   const rEndAfterWStart = r.end === null || r.end > w.start;
   return wEndAfterRStart && rEndAfterWStart;
+}
+
+/** A validity rule of RFC-001 §2. */
+export type ValidityRule = 'V1' | 'V2' | 'V3' | 'V4' | 'V5' | 'V6';
+
+/**
+ * The first rule of V1 … V6 (RFC-001 §2, P1-S19, P1-S74) that the hold breaks, or undefined. The rules are
+ * relative to the receipt minute m0 that the hold carries, never to `ts`. H is `selling_horizon` calendar
+ * months after m0, in UTC, clamped to the month end. A receipt minute that is not a whole minute fails V4,
+ * because `s ≥ m0` cannot be shown (S-LINK I4 design issue DI-16).
+ */
+export function invalidRule(b: HoldCmd, rules: LinkPolicy): ValidityRule | undefined {
+  if (!Number.isSafeInteger(b.rateMbps) || b.rateMbps < rules.rateMinMbps) return 'V1';
+  const { start, end } = b.window;
+  if (!Number.isSafeInteger(start) || (end !== null && !Number.isSafeInteger(end))) return 'V2';
+  if (end !== null && end <= start) return 'V3';
+  if (!Number.isSafeInteger(b.receiptMinute) || start < b.receiptMinute) return 'V4';
+  const h = horizonMinute(b.receiptMinute, rules.sellingHorizonMonths);
+  // `!(s < H)`, so that an H out of the range of a date (NaN) also fails V5.
+  if (!(start < h)) return 'V5';
+  if (end !== null && end > h) return 'V6';
+  return undefined;
+}
+
+const VERSION = /^[1-9][0-9]*$/;
+
+/** True if the policy has a version and every parameter is a whole number in its range. */
+function wellFormedPolicy(p: LinkPolicy): boolean {
+  const atLeast = (x: number, min: number): boolean => Number.isSafeInteger(x) && x >= min;
+  return typeof p.version === 'string' && VERSION.test(p.version)
+    && atLeast(p.releaseGraceMs, 0) && atLeast(p.requestRecordTtlMs, 1) && atLeast(p.rateMinMbps, 1)
+    && atLeast(p.sellingHorizonMonths, 1) && atLeast(p.counterofferSteps, 1) && atLeast(p.counterofferBatchSteps, 1)
+    && atLeast(p.scanSteps, 1);
 }
 
 function fenceBelow(a: WriterFence, b: WriterFence): boolean {

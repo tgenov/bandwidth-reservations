@@ -1,4 +1,4 @@
-/** C02 provider suite (provider tests 1 to 4 and 13: the I1 subset, the I2 part and the I3 part) against the real link owner on the runtime double. */
+/** C02 provider suite (provider tests 1 to 4 and 13: the I1 subset, the I2 part, the I3 part and the I4 part) against the real link owner on the runtime double. */
 import { C02_SUITE_CAPACITY, runC02ProviderSuite, type C02NotificationCopy, type C02Subject } from '@share/contract-suites';
 import { hlcToWallMs, utf8 } from '@share/owner-runtime';
 import { LINK_KIND } from '../src/index.ts';
@@ -21,4 +21,4 @@ runC02ProviderSuite('real link owner', async (): Promise<C02Subject> => {
     notifications: () => ({ pushed: h.pushed as C02NotificationCopy[], relayed: h.rt.notificationsSent as C02NotificationCopy[] }),
     close: async () => { await h.owner.idle(); },
   };
-}, { i2: true, i3: true });
+}, { i2: true, i3: true, i4: true });

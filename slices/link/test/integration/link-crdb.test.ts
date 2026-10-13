@@ -7,12 +7,12 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { randomBytes } from 'node:crypto';
 import pg from 'pg';
-import { CockroachOwnerRuntime, ManualLoad, MemoryPublisher, PgStore, slotOfPartition, utf8 } from '@share/owner-runtime';
+import { CockroachOwnerRuntime, hlcToWallMs, ManualLoad, MemoryPublisher, PgStore, slotOfPartition, utf8 } from '@share/owner-runtime';
 import { migrateKinds } from '@share/owner-migrate';
 import { createTestDatabase, devCellSkip } from '@share/owner-runtime/testing';
 import { declaration, LinkOwner, runtimeLogReader, type DecidedRecord } from '../../src/index.ts';
 import { propertyRun } from '../property.ts';
-import { AccountStub, M, resultOf } from '../support.ts';
+import { AccountStub, resultOf } from '../support.ts';
 
 const URL = process.env['DATABASE_URL'] ?? 'postgresql://root@localhost:26257/defaultdb?sslmode=disable';
 
@@ -58,10 +58,12 @@ async function holdConvertReleaseRebuild(url: string): Promise<void> {
     const reg = await a.owner.register(link, 10);
     assert.equal(resultOf(reg), 'INITIALISED');
     const stub = new AccountStub(a.rt, a.owner, link);
-    const W = { start: M(10), end: M(11) };
+    // The real clock: windows start after the present minute, so that they are valid (S-LINK I4, V4).
+    const base = Math.floor(hlcToWallMs(a.rt.now().ts) / 60_000);
+    const W = { start: base + 60, end: base + 120 };
 
     // Exit criterion 1 again: one seed, 400 commands from 20 clients (real clock, so no clock moves).
-    const res = await propertyRun({ stub, decided, capacity: 10, base: M(0), readLog: () => runtimeLogReader(a.rt)(utf8(link), 0n) }, 21, 400, 20);
+    const res = await propertyRun({ stub, decided, capacity: 10, base, readLog: () => runtimeLogReader(a.rt)(utf8(link), 0n) }, 21, 400, 20);
     assert.ok((res.counts['HELD'] ?? 0) > 0);
 
     // Exit criterion 3 again (T-09).
@@ -74,7 +76,7 @@ async function holdConvertReleaseRebuild(url: string): Promise<void> {
 
     // Exit criterion 5 again: a sender below the recorded fence is refused.
     stub.epoch = 5n;
-    const kept = stub.holdCmd({ rate: 1, window: { start: M(30), end: M(31) } });
+    const kept = stub.holdCmd({ rate: 1, window: { start: base + 3_000, end: base + 3_001 } });
     assert.ok(['HELD', 'REFUSED:"NO_FIT"', 'REFUSED:"IN_FLIGHT"'].includes(resultOf(await stub.hold(kept))));
     stub.epoch = 4n;
     assert.equal(resultOf(await stub.hold(stub.holdCmd({ rate: 1, window: W }))), 'STALE_SENDER');
