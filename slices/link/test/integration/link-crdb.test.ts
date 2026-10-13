@@ -9,7 +9,7 @@ import { randomBytes } from 'node:crypto';
 import pg from 'pg';
 import { CockroachOwnerRuntime, ManualLoad, MemoryPublisher, PgStore, slotOfPartition, utf8 } from '@share/owner-runtime';
 import { migrateKinds } from '@share/owner-migrate';
-import { devCellSkip } from '@share/owner-runtime/testing';
+import { createTestDatabase, devCellSkip } from '@share/owner-runtime/testing';
 import { declaration, LinkOwner, runtimeLogReader, type DecidedRecord } from '../../src/index.ts';
 import { propertyRun } from '../property.ts';
 import { AccountStub, M, resultOf } from '../support.ts';
@@ -27,8 +27,8 @@ const SKIP = devCellSkip(dbError === undefined ? undefined : `CockroachDB at ${U
 const FAST = { sessionTtlMs: 1_500, sessionRenewMs: 200, renewRetryMs: 100, holderViewMs: 1_400, maxLoopDelayMs: 100 };
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
-async function start(link: string, decided: DecidedRecord[]) {
-  const store = new PgStore({ connectionString: URL });
+async function start(url: string, link: string, decided: DecidedRecord[]) {
+  const store = new PgStore({ connectionString: url });
   const slot = slotOfPartition(utf8(link), declaration.slotCount);
   const rt = new CockroachOwnerRuntime({ declaration, store, slots: [slot], publisher: new MemoryPublisher(), load: new ManualLoad(),
     testing: { sessionTimings: FAST } });
@@ -40,10 +40,19 @@ async function start(link: string, decided: DecidedRecord[]) {
 }
 
 test('should hold, convert, release, pass the T-09 cases and the property run, and rebuild when run on the real runtime on the dev cell', { skip: SKIP, timeout: 180_000 }, async () => {
-  await migrateKinds(URL, [declaration], { presplit: false });
+  const db = await createTestDatabase(URL, 'itest_link');
+  try {
+    await migrateKinds(db.url, [declaration], { presplit: false });
+    await holdConvertReleaseRebuild(db.url);
+  } finally {
+    await db.drop();
+  }
+});
+
+async function holdConvertReleaseRebuild(url: string): Promise<void> {
   const link = `itest-${randomBytes(4).toString('hex')}`;
   const decided: DecidedRecord[] = [];
-  const a = await start(link, decided);
+  const a = await start(url, link, decided);
   let closed = false;
   try {
     const reg = await a.owner.register(link, 10);
@@ -75,7 +84,7 @@ test('should hold, convert, release, pass the T-09 cases and the property run, a
     // Exit criterion 6 again: stop the owner process; a new holder rebuilds by replay and answers the repeat.
     await a.close();
     closed = true;
-    const b = await start(link, []);
+    const b = await start(url, link, []);
     try {
       assert.deepEqual(b.owner.alerts.filter((x) => x.kind === 'OUTCOME_MISMATCH_ON_REPLAY'), []);
       const stub2 = new AccountStub(b.rt, b.owner, link);
@@ -90,4 +99,4 @@ test('should hold, convert, release, pass the T-09 cases and the property run, a
   } finally {
     if (!closed) await a.close();
   }
-});
+}

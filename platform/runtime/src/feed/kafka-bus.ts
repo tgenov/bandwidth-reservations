@@ -1,7 +1,9 @@
 /** FeedBus on Kafka through kafkajs: idempotent producer with acks=all (C01 §3.5), manual offset commits. */
+import './kafkajs-request-queue.ts';
 import { Kafka, logLevel, type Admin, type Consumer, type Producer } from 'kafkajs';
 import { partitionForKey, type BusProduceRecord, type BusRecord, type BusSubscribeOptions, type BusSubscription, type FeedBus } from './bus.ts';
 import { systemClock, type WallClock } from '../clock.ts';
+import { waitForTopicLeaders } from './topic-leaders.ts';
 
 export interface KafkaBusOptions {
   brokers: string[];
@@ -51,7 +53,10 @@ export class KafkaBus implements FeedBus {
   async ensureTopic(topic: string, partitions: number, opts: { compacted?: boolean } = {}): Promise<void> {
     const admin = await this.getAdmin();
     const configEntries = opts.compacted ? [{ name: 'cleanup.policy', value: 'compact' }] : [];
-    await admin.createTopics({ waitForLeaders: true, topics: [{ topic, numPartitions: partitions, configEntries }] });
+    // kafkajs waitForLeaders fails on UNKNOWN_TOPIC_OR_PARTITION while the topic propagates: wait here instead.
+    const created = await admin.createTopics({ waitForLeaders: false, topics: [{ topic, numPartitions: partitions, configEntries }] });
+    // A topic that existed keeps its own partition count; wait for the leaders of what it has.
+    await waitForTopicLeaders((t) => admin.fetchTopicMetadata({ topics: [t] }), topic, created ? partitions : 1, { wallMs: this.wallMs });
     this.counts.delete(topic);
   }
 

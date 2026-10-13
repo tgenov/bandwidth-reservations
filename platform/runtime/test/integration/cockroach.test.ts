@@ -12,7 +12,7 @@ import pg from 'pg';
 import { Kafka, logLevel } from 'kafkajs';
 import type { EntryInput, OwnerDeclaration, OwnerHooks, ProjectionWrite, RowRef, SlotNo } from '../../src/index.ts';
 import {
-  CockroachOwnerRuntime, KafkaPublisher, ManualLoad, MemoryPublisher, PgStore, chainGenesis, chainNext,
+  CockroachOwnerRuntime, KafkaBus, KafkaPublisher, ManualLoad, MemoryPublisher, PgStore, chainGenesis, chainNext,
   compareHlc, hex, slotOfPartition, utf8,
 } from '../../src/index.ts';
 import { AmbiguousCommitError, retryableError } from '../../src/errors.ts';
@@ -312,10 +312,8 @@ test('should publish directly to Kafka after Committed (idempotent producer, ack
   const publisher = new KafkaPublisher({ brokers: BROKERS, clientId: `${KIND}-holder` });
   const { rt, close } = await boot([0, 1, 2, 3], publisher);
   const kafka = new Kafka({ clientId: 'itest-consumer', brokers: BROKERS, logLevel: logLevel.NOTHING });
-  const admin = kafka.admin();
-  await admin.connect();
-  await admin.createTopics({ topics: [{ topic: `${KIND}.counter.v1`, numPartitions: 4 }] });
-  await admin.disconnect();
+  const admin = new KafkaBus({ brokers: BROKERS, clientId: 'itest-admin' });
+  try { await admin.ensureTopic(`${KIND}.counter.v1`, 4); } finally { await admin.close(); }
   const consumer = kafka.consumer({ groupId: `itest-${KIND}` });
   await consumer.connect();
   open.push(() => consumer.disconnect());

@@ -1,4 +1,5 @@
 import { Kafka, type Producer, logLevel } from 'kafkajs';
+import './feed/kafkajs-request-queue.ts';
 import type { OutboxMessage } from './batch/attempt.ts';
 
 /** Direct publish after Committed (C01 §3.5). Best effort: the changefeed relay is the guaranteed path (I1b). */
