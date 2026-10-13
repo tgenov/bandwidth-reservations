@@ -2,56 +2,102 @@
   "_doc": "Slice registry. One slice = one primary spec prefix + one RFC (or one RFC part). Read by tools/impact.py and by the agents in .claude/agents. See docs/process/pipeline.md.",
   "architecture": {
     "rfc": "docs/03-rfcs/RFC-000-architecture.md",
-    "owns": "components, ownership, principles A1-A11, substrate (§5.5), contracts table (§8), allocation table (§7)"
+    "owns": "components, ownership, principles A1-A11, substrate (\u00a75.5), contracts table (\u00a78), allocation table (\u00a77)"
   },
   "slices": {
     "S-LINK": {
       "rfc": "docs/03-rfcs/RFC-001-link-admission.md",
-      "primary": ["P1"],
-      "discovery": ["docs/01-discovery/P1-link-admission.md"],
-      "features": ["docs/02-specs/P1-link-admission.feature"],
+      "primary": [
+        "P1"
+      ],
+      "discovery": [
+        "docs/01-discovery/P1-link-admission.md"
+      ],
+      "features": [
+        "docs/02-specs/P1-link-admission.feature"
+      ],
       "joint_with": [],
-      "focus": "link schedule owner, link registry, holds/tombstones, outages and reductions, offers"
+      "focus": "link schedule owner, link registry, holds/tombstones, outages and reductions, offers",
+      "test_script": "test:link"
     },
     "S-ACCT": {
       "rfc": "docs/03-rfcs/RFC-002-booking-coordination.md",
-      "primary": ["P2"],
-      "discovery": ["docs/01-discovery/P2-route-reservation.md"],
-      "features": ["docs/02-specs/P2-route-reservation.feature"],
-      "joint_with": ["S-MONEY"],
-      "focus": "account owner booking part, decision point, partner adapters, status reads"
+      "primary": [
+        "P2"
+      ],
+      "discovery": [
+        "docs/01-discovery/P2-route-reservation.md"
+      ],
+      "features": [
+        "docs/02-specs/P2-route-reservation.feature"
+      ],
+      "joint_with": [
+        "S-MONEY"
+      ],
+      "focus": "account owner booking part, decision point, partner adapters, status reads",
+      "test_script": "test:account"
     },
     "S-RATE": {
       "rfc": "docs/03-rfcs/RFC-003-rating-and-metering.md",
-      "primary": ["P3"],
-      "discovery": ["docs/01-discovery/P3-rating-and-metering.md"],
-      "features": ["docs/02-specs/P3-rating-and-metering.feature"],
+      "primary": [
+        "P3"
+      ],
+      "discovery": [
+        "docs/01-discovery/P3-rating-and-metering.md"
+      ],
+      "features": [
+        "docs/02-specs/P3-rating-and-metering.feature"
+      ],
       "joint_with": [],
-      "focus": "metering ingestion, attribution, quarantine, rating, catalogue"
+      "focus": "metering ingestion, attribution, quarantine, rating, catalogue",
+      "test_script": "test:rate"
     },
     "S-MONEY": {
       "rfc": "docs/03-rfcs/RFC-004-wallet-and-settlement.md",
-      "primary": ["P4"],
-      "discovery": ["docs/01-discovery/P4-wallet-and-settlement.md"],
-      "features": ["docs/02-specs/P4-wallet-and-settlement.feature"],
-      "joint_with": ["S-ACCT"],
-      "focus": "Part A funds and standing (in the account owner); Part B ledger, payments, payouts, reconciliation"
+      "primary": [
+        "P4"
+      ],
+      "discovery": [
+        "docs/01-discovery/P4-wallet-and-settlement.md"
+      ],
+      "features": [
+        "docs/02-specs/P4-wallet-and-settlement.feature"
+      ],
+      "joint_with": [
+        "S-ACCT"
+      ],
+      "focus": "Part A funds and standing (in the account owner); Part B ledger, payments, payouts, reconciliation",
+      "test_script": "test:account"
     },
     "S-SEC": {
       "rfc": "docs/03-rfcs/RFC-005-security-and-tenancy.md",
-      "primary": ["X1"],
-      "discovery": ["docs/01-discovery/X1-security-and-tenancy.md"],
-      "features": ["docs/02-specs/X1-security-and-tenancy.feature"],
+      "primary": [
+        "X1"
+      ],
+      "discovery": [
+        "docs/01-discovery/X1-security-and-tenancy.md"
+      ],
+      "features": [
+        "docs/02-specs/X1-security-and-tenancy.feature"
+      ],
       "joint_with": [],
-      "focus": "identity and access, tenancy, operator console, audit, personal-data store, encryption"
+      "focus": "identity and access, tenancy, operator console, audit, personal-data store, encryption",
+      "test_script": "test:sec"
     },
     "S-PLAT": {
       "rfc": "docs/03-rfcs/RFC-006-availability-and-operations.md",
-      "primary": ["X2"],
-      "discovery": ["docs/01-discovery/X2-non-functional-targets.md"],
-      "features": ["docs/02-specs/X2-non-functional.feature"],
+      "primary": [
+        "X2"
+      ],
+      "discovery": [
+        "docs/01-discovery/X2-non-functional-targets.md"
+      ],
+      "features": [
+        "docs/02-specs/X2-non-functional.feature"
+      ],
       "joint_with": [],
-      "focus": "CockroachDB/Kafka platform, owner leases, clocks, failover, probes, capacity, backups"
+      "focus": "CockroachDB/Kafka platform, owner leases, clocks, failover, probes, capacity, backups",
+      "test_script": "test:platform"
     }
   }
 }
