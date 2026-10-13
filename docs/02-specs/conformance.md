@@ -34,24 +34,24 @@ plan, not in the scenario.
 
 | Scenario | Title | Design | Tests | Status |
 |---|---|---|---|---|
-| P1-S01 | A booking is confirmed exactly when the peak leaves room for it | TBD | `test:link` › "tree: P1-S01 worked example of RFC-001 §3.2 (7 Mbps at [10:00, 11:00), ask [10:30, 11:30))"<br>`test:link` › "P1-S01 a booking is confirmed exactly when the peak leaves room for it" | met |
-| P1-S02 | Reservations that never coexist do not add up | TBD | `test:link` › "P1-S02 reservations that never coexist do not add up" | met |
-| P1-S03 | A booking needs room, not a completely free gap | TBD | `test:link` › "P1-S03 a booking needs room, not a completely free gap" | met |
-| P1-S04 | Back-to-back bookings each get the whole link | TBD | `test:link` › "tree: P1-S04 touching windows do not overlap; open-ended counts for ever"<br>`test:link` › "P1-S04 back-to-back bookings each get the whole link" | met |
-| P1-S05 | A booking is confirmed only if the link has room for it, beside every hold, when it is confirmed | TBD | `test:link` › "P1-S05 a booking is confirmed only if it fits beside every hold when it is held" | met |
-| P1-S37 | A booking is rejected for no fit only if it does not fit beside what is committed | TBD | `test:link` › "P1-S37 a booking is rejected for no fit only if it does not fit beside what is committed" | met |
-| P1-S06 | A year-long booking is checked at every minute of its window | TBD | `test:link` › "P1-S06 a year-long booking is checked at every minute of its window" | met |
+| P1-S01 | A booking is confirmed exactly when the peak leaves room for it | TBD | `test:link` › "tree: P1-S01 worked example of RFC-001 §3.2 (7 Mbps at [10:00, 11:00), ask [10:30, 11:30))"<br>`test:link` › "P1-S01 a booking is confirmed exactly when the peak leaves room for it"<br>`test:unit` › "tree: P1-S01 worked example of RFC-001 §3.2 (7 Mbps at [10:00, 11:00), ask [10:30, 11:30))"<br>`test:unit` › "P1-S01 a booking is confirmed exactly when the peak leaves room for it" | met |
+| P1-S02 | Reservations that never coexist do not add up | TBD | `test:link` › "P1-S02 reservations that never coexist do not add up"<br>`test:unit` › "P1-S02 reservations that never coexist do not add up" | met |
+| P1-S03 | A booking needs room, not a completely free gap | TBD | `test:link` › "P1-S03 a booking needs room, not a completely free gap"<br>`test:unit` › "P1-S03 a booking needs room, not a completely free gap" | met |
+| P1-S04 | Back-to-back bookings each get the whole link | TBD | `test:link` › "tree: P1-S04 touching windows do not overlap; open-ended counts for ever"<br>`test:link` › "P1-S04 back-to-back bookings each get the whole link"<br>`test:unit` › "tree: P1-S04 touching windows do not overlap; open-ended counts for ever"<br>`test:unit` › "P1-S04 back-to-back bookings each get the whole link" | met |
+| P1-S05 | A booking is confirmed only if the link has room for it, beside every hold, when it is confirmed | TBD | `test:link` › "P1-S05 a booking is confirmed only if it fits beside every hold when it is held"<br>`test:unit` › "P1-S05 a booking is confirmed only if it fits beside every hold when it is held" | met |
+| P1-S37 | A booking is rejected for no fit only if it does not fit beside what is committed | TBD | `test:link` › "P1-S37 a booking is rejected for no fit only if it does not fit beside what is committed"<br>`test:unit` › "P1-S37 a booking is rejected for no fit only if it does not fit beside what is committed" | met |
+| P1-S06 | A year-long booking is checked at every minute of its window | TBD | `test:link` › "P1-S06 a year-long booking is checked at every minute of its window"<br>`test:unit` › "P1-S06 a year-long booking is checked at every minute of its window" | met |
 | P1-S07 | Capacity held for a pending request is not sold to anyone else; the next booking waits | TBD | — | not assessed |
-| P1-S08 | Capacity held for a request that ends without confirmation is free again at once | TBD | `test:link` › "P1-S08 capacity held for a request that ends rejected is free again at once"<br>`test:link` › "P1-S08 capacity held for a request that ends failed is free again at once" | met |
-| P1-S09 | Confirming a pending request does not count its capacity twice | TBD | `test:link` › "P1-S09 confirming a pending request does not count its capacity twice" | met |
-| P1-S10 | A single-link booking is decided against capacity confirmed for routes | TBD | `test:link` › "P1-S10 a single-link booking is decided against capacity confirmed for routes" | met |
+| P1-S08 | Capacity held for a request that ends without confirmation is free again at once | TBD | `test:link` › "P1-S08 capacity held for a request that ends rejected is free again at once"<br>`test:link` › "P1-S08 capacity held for a request that ends failed is free again at once"<br>`test:unit` › "P1-S08 capacity held for a request that ends rejected is free again at once"<br>`test:unit` › "P1-S08 capacity held for a request that ends failed is free again at once" | met |
+| P1-S09 | Confirming a pending request does not count its capacity twice | TBD | `test:link` › "P1-S09 confirming a pending request does not count its capacity twice"<br>`test:unit` › "P1-S09 confirming a pending request does not count its capacity twice" | met |
+| P1-S10 | A single-link booking is decided against capacity confirmed for routes | TBD | `test:link` › "P1-S10 a single-link booking is decided against capacity confirmed for routes"<br>`test:unit` › "P1-S10 a single-link booking is decided against capacity confirmed for routes" | met |
 | P1-S11 | A single-link booking blocked only by capacity in flight waits, and is confirmed if that capacity is released within its deadline | TBD | — | not assessed |
 | P1-S12 | A single-link booking that asks not to wait is rejected at once with retry_after | TBD | — | not assessed |
 | P1-S34 | A single-link booking still waiting after ack_budget is answered pending | TBD | — | not assessed |
 | P1-S70 | A booking that asks not to wait, blocked by several requests in flight, gets the latest of their remaining deadlines as retry_after | TBD | — | not assessed |
-| P1-S13 | Concurrent bookings never oversell the link | TBD | `test:link` › "P1-S13 concurrent bookings never oversell the link" | met |
-| P1-S14 | Concurrent decisions are those of checking the bookings one at a time in the order they reach the link's schedule owner | TBD | `test:link` › "P1-S14 decisions are those of one-at-a-time checks in arrival order; a wait = false refusal stays refused" | met |
-| P1-S77 | Requests from different accounts are checked in the order they reach the link's schedule owner, not the order their accounts received them | TBD | `test:link` › "C02 provider test 2: arrival order (P1-S77); a hold sent again gets its first verdict"<br>`test:link` › "P1-S77 requests from different accounts are checked in the order they reach the link" | met |
+| P1-S13 | Concurrent bookings never oversell the link | TBD | `test:link` › "P1-S13 concurrent bookings never oversell the link"<br>`test:unit` › "P1-S13 concurrent bookings never oversell the link" | met |
+| P1-S14 | Concurrent decisions are those of checking the bookings one at a time in the order they reach the link's schedule owner | TBD | `test:link` › "P1-S14 decisions are those of one-at-a-time checks in arrival order; a wait = false refusal stays refused"<br>`test:unit` › "P1-S14 decisions are those of one-at-a-time checks in arrival order; a wait = false refusal stays refused" | met |
+| P1-S77 | Requests from different accounts are checked in the order they reach the link's schedule owner, not the order their accounts received them | TBD | `test:link` › "C02 provider test 2: arrival order (P1-S77); a hold sent again gets its first verdict"<br>`test:link` › "P1-S77 requests from different accounts are checked in the order they reach the link"<br>`test:unit` › "C02 provider test 2: arrival order (P1-S77); a hold sent again gets its first verdict"<br>`test:unit` › "P1-S77 requests from different accounts are checked in the order they reach the link" | met |
 | P1-S15 | A rejection states the largest rate that fits the requested window | TBD | — | not assessed |
 | P1-S16 | A rejection states the earliest window of the requested length that fits the requested rate | TBD | — | not assessed |
 | P1-S17 | A rejection discloses nothing about other buyers | TBD | — | not assessed |
@@ -78,7 +78,7 @@ plan, not in the scenario.
 | P1-S41 | A pending request that has not begun committing and no longer fits the reduced capacity is rejected, not confirmed | TBD | — | not assessed |
 | P1-S42 | A waiting request is decided against the reduced capacity | TBD | — | not assessed |
 | P1-S63 | A confirmation already being decided when an outage is recorded may complete, and its reservation is then affected | TBD | — | not assessed |
-| P1-S78 | Whether a confirmation had begun committing when a reduction was recorded is judged by whether it sees the reduction's displacement record | TBD | — | not assessed |
+| P1-S78 | Whether a confirmation had begun committing when a reduction was recorded is judged by whether it sees the reduction's displacement record | TBD | `test:platform` › "C02 / P1-S78: a displacement marker with ANY attempt fails displacementRead; ConditionFailed carries the marker"<br>`test:unit` › "C02 / P1-S78: a displacement marker with ANY attempt fails displacementRead; ConditionFailed carries the marker" | partly met |
 | P1-S72 | When a reservation ends during an outage, the others are no longer affected where they now fit, and their holders are told | TBD | — | not assessed |
 | P1-S75 | A holder whose webhook endpoint is down is still told within affected_notice_time | TBD | — | not assessed |
 | P1-S85 | While the link's schedule owner fails over, the holders are told within affected_notice_time plus release_grace | TBD | — | not assessed |
@@ -125,7 +125,7 @@ plan, not in the scenario.
 | P2-S04 | Whatever fails, a route never ends booked on some legs only | TBD | — | not assessed |
 | P2-S05 | A confirmed route ends only at its account's request or by Share's decision under the supply-loss, suspension and termination policies | TBD | — | not assessed |
 | P2-S06 | Every booking request gets a response within ack_budget | TBD | — | not assessed |
-| P2-S07 | A request whose outcome is known within ack_budget gets its final outcome | TBD | `test:account` › "C10 ack rule (CT-P01 subset, P2-S07, X2-S15): a single-link booking with no capacity in flight answers 200 confirmed within 200 ms at p99" | met |
+| P2-S07 | A request whose outcome is known within ack_budget gets its final outcome | TBD | `test:account` › "C10 ack rule (CT-P01 subset, P2-S07, X2-S15): a single-link booking with no capacity in flight answers 200 confirmed within 200 ms at p99"<br>`test:unit` › "C10 ack rule (CT-P01 subset, P2-S07, X2-S15): a single-link booking with no capacity in flight answers 200 confirmed within 200 ms at p99" | met |
 | P2-S08 | A request whose outcome is not yet known is pending, and the outcome can be polled with its idempotency key | TBD | — | not assessed |
 | P2-S09 | A buyer who registered a webhook is sent the outcome of each request answered pending, a change included | TBD | — | not assessed |
 | P2-S10 | An outcome never changes once reported | TBD | — | not assessed |
@@ -133,21 +133,21 @@ plan, not in the scenario.
 | P2-S107 | An outcome other than confirmed is reported once its Share-link releases are durable, within release_grace while a link's schedule owner is failing over | TBD | — | not assessed |
 | P2-S111 | While a request's decision record fails over before its deadline, a status read of an outcome not yet reported reads pending or the decided outcome, never a wrong outcome | TBD | — | not assessed |
 | P2-S108 | A reported outcome is reported by every later status read, even while the decision record is unavailable at the deadline | TBD | — | not assessed |
-| P2-S11 | A request without a deadline gets the default deadline | TBD | `test:account` › "P2-S11: a request without a deadline gets route_deadline_default (30 s) after it was received" | met |
-| P2-S12 | A deadline outside its bounds is invalid | TBD | `test:account` › "C10 invalid at the owner (P2-S12 deadline row): recorded under the key as invalid invalid_deadline, and a retry returns it" | met |
+| P2-S11 | A request without a deadline gets the default deadline | TBD | `test:account` › "P2-S11: a request without a deadline gets route_deadline_default (30 s) after it was received"<br>`test:unit` › "P2-S11: a request without a deadline gets route_deadline_default (30 s) after it was received" | met |
+| P2-S12 | A deadline outside its bounds is invalid | TBD | `test:account` › "C10 invalid at the owner (P2-S12 deadline row): recorded under the key as invalid invalid_deadline, and a retry returns it"<br>`test:unit` › "C10 invalid at the owner (P2-S12 deadline row): recorded under the key as invalid invalid_deadline, and a retry returns it" | met |
 | P2-S86 | A deadline at the edge of its bounds is valid | TBD | — | not assessed |
 | P2-S13 | A request whose partner never answers has failed by its deadline and holds nothing | TBD | — | not assessed |
-| P2-S55 | A request with a partner leg does not begin committing later than its deadline less commit_margin | TBD | `test:link` › "P2-S55 link part: D_c is taken as given; a hold at ts ≥ D_c is refused" | partly met |
+| P2-S55 | A request with a partner leg does not begin committing later than its deadline less commit_margin | TBD | `test:link` › "P2-S55 link part: D_c is taken as given; a hold at ts ≥ D_c is refused"<br>`test:unit` › "P2-S55 link part: D_c is taken as given; a hold at ts ≥ D_c is refused" | partly met |
 | P2-S109 | A request with a partner leg that begins committing by its deadline less commit_margin is confirmed by a decision before its deadline | TBD | — | not assessed |
-| P2-S110 | A request without a partner leg does not begin committing later than its deadline less ack_budget | TBD | `test:link` › "P2-S110 link part: refusal at ts ≥ D_c, with a tombstone" | partly met |
-| P2-S14 | Capacity held for a request that is not confirmed is free on Share links once the outcome is reported, and at a partner by the deadline | TBD | `test:link` › "P2-S14 link part: request-scoped release ends the hold and records a tombstone" | partly met |
+| P2-S110 | A request without a partner leg does not begin committing later than its deadline less ack_budget | TBD | `test:link` › "P2-S110 link part: refusal at ts ≥ D_c, with a tombstone"<br>`test:unit` › "P2-S110 link part: refusal at ts ≥ D_c, with a tombstone" | partly met |
+| P2-S14 | Capacity held for a request that is not confirmed is free on Share links once the outcome is reported, and at a partner by the deadline | TBD | `test:link` › "P2-S14 link part: request-scoped release ends the hold and records a tombstone"<br>`test:unit` › "P2-S14 link part: request-scoped release ends the hold and records a tombstone" | partly met |
 | P2-S93 | Share releases every hold of a request at its deadline, a partner hold included | TBD | — | not assessed |
 | P2-S100 | Share sets a partner hold to expire at the request's deadline | TBD | — | not assessed |
 | P2-S101 | Capacity held at a partner lapses at the deadline even when Share is unavailable then | TBD | — | not assessed |
 | P2-S104 | A request whose decision record is unavailable at its deadline is never confirmed, and its Share-link holds are released within release_grace | TBD | — | not assessed |
 | P2-S114 | A decision record unavailable within ack_budget before the deadline counts as unavailable at the deadline | TBD | — | not assessed |
 | P2-S106 | A confirmation decided in time may become known after the deadline, within release_grace, if the decision record was unavailable | TBD | — | not assessed |
-| P2-S56 | A buyer may withdraw a pending request | TBD | `test:link` › "P2-S56 link part: a release of a withdrawn request that the link has not seen is a tombstone" | partly met |
+| P2-S56 | A buyer may withdraw a pending request | TBD | `test:link` › "P2-S56 link part: a release of a withdrawn request that the link has not seen is a tombstone"<br>`test:unit` › "P2-S56 link part: a release of a withdrawn request that the link has not seen is a tombstone" | partly met |
 | P2-S57 | Withdrawing a request after its partner leg without holds was booked cancels that leg at Share's cost | TBD | — | not assessed |
 | P2-S15 | Competing requests that wait do not all lose | TBD | `test/routes.test.ts` › "randomised contention (seed 11/12/13): never oversold, competitors never all lose, all sagas finish" *(prior evidence, to be re-validated)* | not assessed |
 | P2-S16 | Under the request_age rule, the oldest waiting request gets capacity that is released | TBD | — | not assessed |
@@ -209,9 +209,9 @@ plan, not in the scenario.
 | P2-S42 | A suspended account cannot book, and is told the amount that would resume it | TBD | — | not assessed |
 | P2-S69 | A request not yet decided when its account is suspended is not confirmed | TBD | — | not assessed |
 | P2-S70 | Concurrent bookings by one account are funded as if their funds checks were made one at a time, in the order received | TBD | — | not assessed |
-| P2-S112 | Two concurrent requests may both be refused where checking one after the other's outcome would have confirmed one | TBD | `test:link` › "P2-S112 link part: IN_FLIGHT is decided at the link in the hold entry, with no waiter" | partly met |
+| P2-S112 | Two concurrent requests may both be refused where checking one after the other's outcome would have confirmed one | TBD | `test:link` › "P2-S112 link part: IN_FLIGHT is decided at the link in the hold entry, with no waiter"<br>`test:unit` › "P2-S112 link part: IN_FLIGHT is decided at the link in the hold entry, with no waiter" | partly met |
 | P2-S71 | Concurrent bookings by one agent key never together exceed its limits | TBD | — | not assessed |
-| P2-S92 | A request holds no capacity until its funds hold is taken | TBD | `test:link` › "P2-S92 link part: a hold counts only from its own entry"<br>`test:account` › "P2-S92: a request holds no capacity until its funds hold is taken; the other buyer is decided without waiting" | met |
+| P2-S92 | A request holds no capacity until its funds hold is taken | TBD | `test:link` › "P2-S92 link part: a hold counts only from its own entry"<br>`test:account` › "P2-S92: a request holds no capacity until its funds hold is taken; the other buyer is decided without waiting"<br>`test:unit` › "P2-S92 link part: a hold counts only from its own entry"<br>`test:unit` › "P2-S92: a request holds no capacity until its funds hold is taken; the other buyer is decided without waiting" | met |
 | P2-S72 | Revoking an agent key fails its pending requests and leaves its reservations with the account | TBD | — | not assessed |
 | P2-S103 | An event after a request's decision does not change its outcome, even while its status still reads pending | TBD | — | not assessed |
 | P2-S73 | A route counter-offer fits every leg, not only the blocking one | TBD | — | not assessed |
@@ -287,7 +287,7 @@ plan, not in the scenario.
 | P3-S54 | Burst is measured per minute, not per second | TBD | — | not assessed |
 | P3-S24 | Traffic above the reserved rate on a product without burst is dropped and not billed | TBD | — | not assessed |
 | P3-S41 | Excess carried despite policing on a product without burst is not billed to the buyer, and raises an incident | TBD | — | not assessed |
-| P3-S25 | Attributable traffic outside an active reservation is billed at usage_price and counts toward usage exposure | TBD | `test:rate` › "P3-S25: 1 GB of attachment-class traffic at 12:30 outside any reservation is charged 10,000 micro-USD and counts in U until posted" | met |
+| P3-S25 | Attributable traffic outside an active reservation is billed at usage_price and counts toward usage exposure | TBD | `test:rate` › "P3-S25: 1 GB of attachment-class traffic at 12:30 outside any reservation is charged 10,000 micro-USD and counts in U until posted"<br>`test:unit` › "P3-S25: 1 GB of attachment-class traffic at 12:30 outside any reservation is charged 10,000 micro-USD and counts in U until posted" | met |
 | P3-S53 | A record spread across the end of a reservation is covered for the minute inside it and billed for the minute outside | TBD | — | not assessed |
 | P3-S26 | Traffic that cannot be attributed is quarantined, not billed, and reported | TBD | — | not assessed |
 | P3-S77 | A record from an observation domain not registered to its exporter is kept and quarantined, and charged only if finance attributes it | TBD | — | not assessed |
@@ -331,9 +331,9 @@ plan, not in the scenario.
 | P4-S103 | The difference between the micros credited and the partner's USD amount is posted to Share's own account | TBD | — | not assessed |
 | P4-S58 | A payment arriving after fx_quote_validity is credited at the partner's rate at notification | TBD | — | not assessed |
 | P4-S07 | A provider amount in USD converts exactly into micros | TBD | — | not assessed |
-| P4-S08 | Confirming a reservation holds funds for the coverage window, without charging them | TBD | `test:account` › "P4-S08: confirming an open-ended reservation of 100 Mbps from now holds 0.288000 USD (24 h of charges) and charges nothing" | met |
-| P4-S09 | A reservation shorter than the coverage window is held in full | TBD | `test:account` › "P4-S09: a reservation of 100 Mbps for 2 h is held in full, 0.024000 USD" | met |
-| P4-S59 | A reservation that starts in the future has its first window held from admission until it starts | TBD | `test:account` › "P4-S59: open-ended reservation of 100 Mbps starting in 30 days has 288000 µ held from the moment it is confirmed until it starts"<br>`test:account` › "P4-S59: reservation of 100 Mbps for 2 h starting in 30 days has 24000 µ held from the moment it is confirmed until it starts" | met |
+| P4-S08 | Confirming a reservation holds funds for the coverage window, without charging them | TBD | `test:account` › "P4-S08: confirming an open-ended reservation of 100 Mbps from now holds 0.288000 USD (24 h of charges) and charges nothing"<br>`test:unit` › "P4-S08: confirming an open-ended reservation of 100 Mbps from now holds 0.288000 USD (24 h of charges) and charges nothing" | met |
+| P4-S09 | A reservation shorter than the coverage window is held in full | TBD | `test:account` › "P4-S09: a reservation of 100 Mbps for 2 h is held in full, 0.024000 USD"<br>`test:unit` › "P4-S09: a reservation of 100 Mbps for 2 h is held in full, 0.024000 USD" | met |
+| P4-S59 | A reservation that starts in the future has its first window held from admission until it starts | TBD | `test:account` › "P4-S59: open-ended reservation of 100 Mbps starting in 30 days has 288000 µ held from the moment it is confirmed until it starts"<br>`test:account` › "P4-S59: reservation of 100 Mbps for 2 h starting in 30 days has 24000 µ held from the moment it is confirmed until it starts"<br>`test:unit` › "P4-S59: open-ended reservation of 100 Mbps starting in 30 days has 288000 µ held from the moment it is confirmed until it starts"<br>`test:unit` › "P4-S59: reservation of 100 Mbps for 2 h starting in 30 days has 24000 µ held from the moment it is confirmed until it starts" | met |
 | P4-S10 | Charges accrue against the hold, and the hold rolls forward | TBD | — | not assessed |
 | P4-S60 | The hold follows every change to the reservation | TBD | — | not assessed |
 | P4-S11 | The unused hold is released when a reservation ends early | TBD | — | not assessed |
@@ -439,16 +439,16 @@ plan, not in the scenario.
 | P4-S109 | A payment received before the cut and posted after it, with its FX difference, is counted at the partner's USD amount and raises no alert | TBD | — | not assessed |
 | P4-S80 | Provider settlement reports and bank statements are reconciled daily by the same rule | TBD | — | not assessed |
 | P4-S81 | A reconciliation not completed by 12:00 UTC on the next day is an operational alert | TBD | — | not assessed |
-| X1-S01 | An unauthenticated request changes nothing and reveals nothing | TBD | `test:sec` › "X1-S01 row: book a route"<br>`test:sec` › "X1-S01 row: ask for a booking request's status"<br>`test:sec` › "X1-S01 row: cancel a reservation"<br>`test:sec` › "X1-S01 row: ask for a balance"<br>`test:sec` › "X1-S01 row: ask for a statement"<br>`test:sec` › "X1-S01 row: issue an agent key"<br>`test:sec` › "X1-S01: an unauthenticated request changes nothing and reveals nothing" | met |
+| X1-S01 | An unauthenticated request changes nothing and reveals nothing | TBD | `test:sec` › "X1-S01 row: book a route"<br>`test:sec` › "X1-S01 row: ask for a booking request's status"<br>`test:sec` › "X1-S01 row: cancel a reservation"<br>`test:sec` › "X1-S01 row: ask for a balance"<br>`test:sec` › "X1-S01 row: ask for a statement"<br>`test:sec` › "X1-S01 row: issue an agent key"<br>`test:sec` › "X1-S01: an unauthenticated request changes nothing and reveals nothing"<br>`test:unit` › "X1-S01 row: book a route"<br>`test:unit` › "X1-S01 row: ask for a booking request's status"<br>`test:unit` › "X1-S01 row: cancel a reservation"<br>`test:unit` › "X1-S01 row: ask for a balance"<br>`test:unit` › "X1-S01 row: ask for a statement"<br>`test:unit` › "X1-S01 row: issue an agent key"<br>`test:unit` › "X1-S01: an unauthenticated request changes nothing and reveals nothing" | met |
 | X1-S02 | Another account's data cannot be read, and its existence is not revealed | TBD | — | not assessed |
 | X1-S03 | Another account's reservation cannot be changed | TBD | — | not assessed |
 | X1-S04 | A supplier sees only its own links and settlements | TBD | — | not assessed |
 | X1-S28 | A supplier sees the reservations on its link, but not who holds them | TBD | — | not assessed |
 | X1-S30 | Withdrawn consent stops the supplier seeing the buyer's identity from then on | TBD | — | not assessed |
 | X1-S24 | A webhook goes only to its own account's endpoint and carries nothing about another account | TBD | — | not assessed |
-| X1-S05 | An agent key acts only for the account that issued it | TBD | `test:sec` › "X1-S05: an agent key acts only for the account that issued it"<br>`test:sec` › "X1-S05 / DT-4: the test owner refuses a context for another tenant and a context from a non-edge peer" | met |
+| X1-S05 | An agent key acts only for the account that issued it | TBD | `test:sec` › "X1-S05: an agent key acts only for the account that issued it"<br>`test:sec` › "X1-S05 / DT-4: the test owner refuses a context for another tenant and a context from a non-edge peer"<br>`test:unit` › "X1-S05: an agent key acts only for the account that issued it"<br>`test:unit` › "X1-S05 / DT-4: the test owner refuses a context for another tenant and a context from a non-edge peer" | met |
 | X1-S06 | A revoked agent key is refused within 60 s of its revocation | TBD | — | not assessed |
-| X1-S07 | An operation by an agent key records the key | TBD | `test:sec` › "X1-S07: an operation by an agent key records the key, as well as the account"<br>`test:sec` › "X1-S07 / C08 C-01, DT-25: invalid contexts change nothing at the test owner" | met |
+| X1-S07 | An operation by an agent key records the key | TBD | `test:sec` › "X1-S07: an operation by an agent key records the key, as well as the account"<br>`test:sec` › "X1-S07 / C08 C-01, DT-25: invalid contexts change nothing at the test owner"<br>`test:unit` › "X1-S07: an operation by an agent key records the key, as well as the account"<br>`test:unit` › "X1-S07 / C08 C-01, DT-25: invalid contexts change nothing at the test owner" | met |
 | X1-S41 | Every credential is refused within 60 s of its revocation | TBD | — | not assessed |
 | X1-S18 | An account administrator manages keys and their limits, users, administrator rights, webhook endpoints and consent | TBD | — | not assessed |
 | X1-S19 | An agent key cannot manage keys or limits, its own or another's | TBD | — | not assessed |
@@ -501,7 +501,7 @@ plan, not in the scenario.
 | X2-S03 | Admission sustains the design load, on the hottest link too, within its latency targets | TBD | — | not assessed |
 | X2-S04 | Metering keeps up with the design volume of traffic | TBD | — | not assessed |
 | X2-S05 | A single-link booking is answered, final or pending, within ack_budget, whatever the booking's length | TBD | — | not assessed |
-| X2-S15 | A single-link booking on a link with no capacity in flight gets its final answer within ack_budget | TBD | `test:account` › "C10 ack rule (CT-P01 subset, P2-S07, X2-S15): a single-link booking with no capacity in flight answers 200 confirmed within 200 ms at p99" | partly met |
+| X2-S15 | A single-link booking on a link with no capacity in flight gets its final answer within ack_budget | TBD | `test:account` › "C10 ack rule (CT-P01 subset, P2-S07, X2-S15): a single-link booking with no capacity in flight answers 200 confirmed within 200 ms at p99"<br>`test:unit` › "C10 ack rule (CT-P01 subset, P2-S07, X2-S15): a single-link booking with no capacity in flight answers 200 confirmed within 200 ms at p99" | partly met |
 | X2-S06 | A route booking is acknowledged within ack_budget and has its outcome by its deadline | TBD | — | not assessed |
 | X2-S07 | A top-up is credited within 10 s of the provider's notification | TBD | — | not assessed |
 | X2-S22 | An accepted record is counted in headroom within attribution_lag_max of its acceptance | TBD | — | not assessed |
@@ -524,17 +524,17 @@ plan, not in the scenario.
 
 ## Implementation summary
 
-Measured by `tools/conformance.py` on `integration` at `89cc7f9`.
+Measured by `tools/conformance.py` on `integration` at `75baa1e`.
 
 | Prefix | Met | Partly met | Not met | No test | Total |
 |---|---|---|---|---|---|
-| P1 | 13 | 0 | 0 | 72 | 85 |
+| P1 | 13 | 1 | 0 | 71 | 85 |
 | P2 | 4 | 5 | 0 | 113 | 122 |
 | P3 | 1 | 0 | 0 | 77 | 78 |
 | P4 | 3 | 0 | 0 | 117 | 120 |
 | X1 | 3 | 0 | 0 | 46 | 49 |
 | X2 | 0 | 1 | 0 | 32 | 33 |
-| **All** | **24** | **6** | **0** | **457** | **487** |
+| **All** | **24** | **7** | **0** | **456** | **487** |
 
 ## Mapping from the previous baseline
 
