@@ -2,7 +2,7 @@
 
 | | |
 |---|---|
-| Status | **Accepted, revision 7.** Accepted on 2026-10-13 after the post-C4 errata pass: it conforms to the frozen contracts C01 … C12 and requirements-v1.11, with coverage clean; no separate fix verification (orchestrator decision, to start C5 and C6). Revision 7 rebases revision 6 on the requirements at tag **`requirements-v1.11`** (from `requirements-v1.9`; [review 35](../reviews/35-requirements-amendments-before-c4.md) and [review 65](../reviews/65-requirements-amendments-after-c4.md)) and on RFC-000 **revision 4.5**, and makes RFC-006 conform to the **frozen contracts C01 … C12**. **C01 (platform contract) is the contract that RFC-006 provides**: where this RFC and C01 differ, C01 governs, and this revision changes the RFC to agree with it. Revision 7 applies every erratum, consumer obligation and settled item that names RFC-006 in C01 (§10.3, §11, review 47 D1 … D4, V59-1 … V59-7, N-01, N-12), C02, C03, C04, C05, C06, C07, C08, C09, C11 and C12, and the RFC-006 rows of RFC-000 revision 4.5 (with AI-41-5 and AI-48-3). See "Revision 7 resolution" at the end. Revision 6 was **accepted** at C3 on [fix verification 34](../reviews/34-rfc-006-fix-verification.md); it answered [review 33](../reviews/33-rfc-006-review.md) (D1 … D4). Revision 5 answered [review 27](../reviews/27-rfc-006-review.md) (D1 … D7); revision 4 answered [review 20](../reviews/20-rfc-006-review.md) (D1 … D7); revision 3 rebased on `requirements-v1.7`; revision 2 rewrote the platform for RFC-000 revision 4's substrate (CockroachDB at 2 + 2 + 1, NestJS owners, Kafka fed by a transactional outbox); revision 1's custom multi-group Raft platform is a rejected alternative (Competition). Each revision's resolution table is at the end |
+| Status | **Accepted, revision 7, with erratum 7.1.** Erratum 7.1 (2026-10-13, AI6-12) adds overload control to the owner runtime: admission control on database slowness, time-budgeted batch sizing, and no immediate fresh attempt after an abandon (§4.7 rule 5). It changes no logical design, no safety argument and no frozen contract (see "Erratum 7.1" at the end). Accepted on 2026-10-13 after the post-C4 errata pass: it conforms to the frozen contracts C01 … C12 and requirements-v1.11, with coverage clean; no separate fix verification (orchestrator decision, to start C5 and C6). Revision 7 rebases revision 6 on the requirements at tag **`requirements-v1.11`** (from `requirements-v1.9`; [review 35](../reviews/35-requirements-amendments-before-c4.md) and [review 65](../reviews/65-requirements-amendments-after-c4.md)) and on RFC-000 **revision 4.5**, and makes RFC-006 conform to the **frozen contracts C01 … C12**. **C01 (platform contract) is the contract that RFC-006 provides**: where this RFC and C01 differ, C01 governs, and this revision changes the RFC to agree with it. Revision 7 applies every erratum, consumer obligation and settled item that names RFC-006 in C01 (§10.3, §11, review 47 D1 … D4, V59-1 … V59-7, N-01, N-12), C02, C03, C04, C05, C06, C07, C08, C09, C11 and C12, and the RFC-006 rows of RFC-000 revision 4.5 (with AI-41-5 and AI-48-3). See "Revision 7 resolution" at the end. Revision 6 was **accepted** at C3 on [fix verification 34](../reviews/34-rfc-006-fix-verification.md); it answered [review 33](../reviews/33-rfc-006-review.md) (D1 … D4). Revision 5 answered [review 27](../reviews/27-rfc-006-review.md) (D1 … D7); revision 4 answered [review 20](../reviews/20-rfc-006-review.md) (D1 … D7); revision 3 rebased on `requirements-v1.7`; revision 2 rewrote the platform for RFC-000 revision 4's substrate (CockroachDB at 2 + 2 + 1, NestJS owners, Kafka fed by a transactional outbox); revision 1's custom multi-group Raft platform is a rejected alternative (Competition). Each revision's resolution table is at the end |
 | Satisfies | X2-S01 … X2-S33 (all 33 X2 scenarios, as primary RFC), including **X2-S33** (new in `requirements-v1.10`: a slot probed short is a probing fault, alerted to network operations), X2-S30 (amended in `requirements-v1.10`: a slot-minute fails when every probe the slot got failed, however few), X2-S31 and X2-S32 (new in `requirements-v1.8`) and X2-S27, X2-S29 (amended in v1.8). Contributes the platform (C01), history, notifier, alerting and backup contracts to P1-S26, P1-S33, P1-S40, P1-S78, P3-S71, X1-S39, P1-S50, P1-S54, P1-S62, P1-S63, P1-S72, P1-S75, P2-S04, P2-S09 (amended in v1.11: a change answered `pending` too), P2-S10, P2-S22, P2-S23, P2-S51, P2-S53, P2-S93, P2-S99, P2-S104, P2-S106, P2-S107, P2-S108, P2-S111, P3-S31, P3-S36, P3-S39, P4-S23, P4-S54, P4-S71, P4-S72, P4-S80, P4-S81, P4-S90, P4-S91, P4-S104, X1-S11 and X1-S24 (amended in v1.11: supplier webhooks too), X1-S14, X1-S15, X1-S31, X1-S34, X1-S37, whose primary RFC is named in the traceability table |
 | Policies | POL-04 (`ack_budget`, `status_staleness`, `webhook_retry`, "told": one delivery carries many notices, each first attempted when the delivery is), POL-06 (targets; the available minute; **v1.10: a failing slot-minute is a slot that got at least one probe in the minute, every one failing within `slot_probe_limit` (1 s), however few; a slot probed short (fewer than 3 probes, or from one location, none included) is a probing fault, alerted to network operations, and does not by itself make the minute unavailable**; probe accounts and probe supplier; p99 per calendar month and serving region; declared region disaster with four eyes, counted from the recorded loss or from the first of `disaster_probe_minutes` measured failing minutes, whichever is earlier; go-live fibre condition), POL-07 (`affected_notice_time`; "begun committing" judged by the displacement record; a maintenance booking cut at a reduction's effect is told to its supplier; **v1.11: a notice due while the link's schedule owner fails over is due within `affected_notice_time` + `release_grace`**), POL-14 (`attribution_lag_max`, `max_lateness`, the lateness bound), POL-15 (each probe account's `credit_limit`), POL-16 (notices), POL-18, POL-19 (`erasure_max` in every copy; a non-conforming payload unrecoverable in every copy by `dispute_window` + 7 days, kept only if the caps and the store allow; v1.11: a shared record erased whole, payout-destination details erased once their payouts are reconciled, RFC-005's, no change to the copies RFC-006 keeps), POL-24 (retention pending legal confirmation; v1.11 `provider_unreceived_alert`, RFC-004's, routed by §16), POL-26 (`release_grace`, the deadline, the commit fence), POL-29 (7-year identities), POL-32 (network operations declares and ends disasters with four eyes; `approval_expiry`; compliance four eyes for an erasure without request; v1.11: credit limits above `credit_limit_four_eyes_above` with four eyes, which no probe-account limit reaches, §17.4) |
 | Builds on | [RFC-000](RFC-000-architecture.md) **revision 4.5** (revision 4 and its errata 4.1 … 4.5), the requirements at tag **`requirements-v1.11`** (which include v1.6 … v1.10), and the frozen contracts **C01 … C12** in `docs/04-delivery/contracts/` (C01 version 1, provided by RFC-006; C02 1.0.0; C03 2.4; C04 2.3.1; C05 1; C06 1; C07 1.1; C08 1.1; C09 1.1; C10 1.0.0; C11 1.0.0; C12 1). From RFC-000: §1 principles A1 … A11 (A1 with the named platform read roles of revision 4.5), §2 components, §3 latency budget, §4.3 the confirm fence, `ε`, `δ_x_cfg`, `τ` and the monitored quantities, §4.5, §4.6, §5.1 topology, §5.2 owner leases, generations and fencing, §5.3, §5.4, §5.5, §6 sizing, §8 rows (each now a summary of its contract), R1, R2, R4, R13, R14, R16, R18 … R21, R23, R24 |
@@ -512,7 +512,7 @@ CREATE CHANGEFEED FOR TABLE account_outbox
 | Delegated snapshots | On, where the release supports them | A new R3 voter is bootstrapped from R3's existing replica, not across the Johannesburg path (§8.1) |
 | `storage.max_sync_duration` | 10 s | A node whose disk stalls that long terminates itself, a node loss, instead of stalling its ranges for longer |
 | Admission control | On (default) | Overload sheds at the database rather than queueing |
-| Timeouts (R6-17; RFC-000 AI-17-4) | Owner sessions: `idle_in_transaction_session_timeout` = **1 s**; `statement_timeout` = 2 s on every statement **except `COMMIT`**, which the runtime sends after `SET LOCAL statement_timeout = '15s'` (above the range-lease failover p99, §3.3); the runtime itself abandons (ROLLBACK) any batch not at `COMMIT` within 2 s of `BEGIN`. History and reporting: 30 s | A paused holder's open transaction is aborted by the database within 1 s, below the lease margin, so it cannot block a successor (AI-17-4); a `COMMIT` caught in a range-lease move waits for the new leaseholder instead of becoming `Ambiguous` and causing a reload storm as the range recovers (R6-17). Reloads are also rate-limited per process (§4.3) |
+| Timeouts (R6-17; RFC-000 AI-17-4) | Owner sessions: `idle_in_transaction_session_timeout` = **1 s**; `statement_timeout` = 2 s on every statement **except `COMMIT`**, which the runtime sends after `SET LOCAL statement_timeout = '15s'` (above the range-lease failover p99, §3.3); the runtime itself abandons (ROLLBACK) any batch not at `COMMIT` within 2 s of `BEGIN`, and then answers the batch's calls `Retry` with no fresh attempt; the abandon puts the slot into the overloaded state (§4.7 rule 5, AI6-12). History and reporting: 30 s | A paused holder's open transaction is aborted by the database within 1 s, below the lease margin, so it cannot block a successor (AI-17-4); a `COMMIT` caught in a range-lease move waits for the new leaseholder instead of becoming `Ambiguous` and causing a reload storm as the range recovers (R6-17). Reloads are also rate-limited per process (§4.3) |
 
 #### 3.7 Schema conventions for log tables
 
@@ -820,8 +820,10 @@ stateDiagram-v2
 
 **One batch transaction in flight per slot** (RFC-000 §3 and §5.5, revision 4.1, AI3-11).
 The runtime keeps, per slot, a queue of pending `append` calls. When no transaction of the
-slot is in flight, it takes **every** pending call, of every partition of the slot, into one
-transaction; calls that arrive while it commits form the next. So each partition still has
+slot is in flight, it takes the pending calls, of every partition of the slot, in queue
+order into one transaction, up to the batch's size cap (size limits below; at the design
+load the cap does not bind, so a batch takes **every** pending call); calls that arrive
+while it commits, and calls left by the cap, form the next. So each partition still has
 at most one transaction in flight, and its sequence stays contiguous and its `ts`
 monotone, because each partition reads and writes its own head row in the transaction.
 
@@ -875,8 +877,11 @@ COMMIT;
   partition's head row with the batch's `batch_id`**, a call with projections only
   included, so every committed call can be classified after an `Ambiguous` (C01 R47-14).
 - **Size limits.** A batch carries at most `slot_batch_max_entries` (2,000) entries or
-  `slot_batch_max_bytes` (4 MB); the rest wait for the next. Per-partition order is the
-  order of calls.
+  `slot_batch_max_bytes` (4 MB) (the hard caps), and at most the **time-budgeted cap**
+  `n_cap`, the number of entries whose expected duration, from the slot's measured time
+  per entry, is `batch_time_budget` (400 ms, est.) (§4.7 rule 5b, AI6-12); the rest wait
+  for the next. The runtime takes calls in queue order and never splits a call. Per-partition
+  order is the order of calls.
 - **Batching wait** (RFC-000 §3 revision 4.2, AI-17-5, AI-R6-4; R6-05). At the design load
   no admission slot is idle: an entry finds the lane busy with probability about the lane's
   occupancy ρ and waits the rest of the commit in flight. Slot counts are set for ρ of about
@@ -908,7 +913,11 @@ COMMIT;
   define it before any owner can use it. A dedicated hot link that needs more than one
   lane is a risk for RFC-001's measured ceiling (RB-11).
 - **Crash points.** Before `COMMIT` is sent: nothing committed; the callers get "not known
-  to be committed" only if the process dies, otherwise the runtime retries. After `COMMIT`
+  to be committed" only if the process dies. Otherwise the runtime retries after a 40001
+  (restarts, then one fresh attempt) and after a per-tier timeout (on the next tier, §4.7);
+  after an **abandon** (the batch not at `COMMIT` within `abandonBeforeCommitMs`) it rolls
+  back and answers every call of the batch `Retry`, with no fresh attempt, and the caller
+  re-proposes (§4.7 rule 5c, AI6-12). After `COMMIT`
   is sent and before the answer, or the 15 s `COMMIT` backstop expired: `Ambiguous` for
   **every** call in the batch. `COMMIT` is **never aborted blind** (C01 M1): before anything
   more is decided in **that slot**, the runtime runs the resolution steps 1 to 3 (§4.2); no
@@ -938,13 +947,13 @@ COMMIT;
   |---|---|---|---|
   | `Committed(seqFrom, seqTo, ts, streamSeqs)` | Durable on a majority spanning two regions; the **only** success | `COMMIT` answered | Apply to memory; acknowledge; the runtime publishes events and notifications (§5.3) |
   | `ConditionFailed(which)` | This call wrote nothing; the rest of the batch may have committed | A condition read, a `decide` returning null (`'decide'`) or a lock timeout (`'lockTimeout'`) | Owner-specific (for example "already decided") |
-  | `Retry` | Not committed | CockroachDB's **client-side retry protocol on the same transaction** (`SAVEPOINT cockroach_restart` … `ROLLBACK TO SAVEPOINT cockroach_restart`) restarts it at a higher timestamp **keeping its intents, locks and priority** (RFC-001 §5.1 and R1-1 rely on this for the capacity-decrease transaction; R27-12): it re-reads the epoch, heads and rows, runs every `decide` again and re-runs the writes, up to `batch_retries` (5) restarts; then the batch starts afresh **once**; if that also fails, the call gets `Retry` (C01 R47-12). The protocol keeps intents across a **restart** (a retryable 40001), not after an **abort** (`TransactionAbortedError`: pushed by a higher priority, a deadlock, an expired transaction record), which replaces the transaction and loses its intents (R33-17): then the batch starts afresh, re-reads everything and re-evaluates every condition, so RFC-001's capacity decrease re-lays its placeholder markers and re-checks the displacement markers, correct but without R1-1's no-push argument for that attempt. The spike counts restarts and aborts separately (§22.1) | Retry later with the **same identities**; map to the owner's POL-04 answer if a caller waits |
+  | `Retry` | Not committed | CockroachDB's **client-side retry protocol on the same transaction** (`SAVEPOINT cockroach_restart` … `ROLLBACK TO SAVEPOINT cockroach_restart`) restarts it at a higher timestamp **keeping its intents, locks and priority** (RFC-001 §5.1 and R1-1 rely on this for the capacity-decrease transaction; R27-12): it re-reads the epoch, heads and rows, runs every `decide` again and re-runs the writes, up to `batch_retries` (5) restarts; then the batch starts afresh **once**; if that also fails, the call gets `Retry` (C01 R47-12). The protocol keeps intents across a **restart** (a retryable 40001), not after an **abort** (`TransactionAbortedError`: pushed by a higher priority, a deadlock, an expired transaction record), which replaces the transaction and loses its intents (R33-17): then the batch starts afresh, re-reads everything and re-evaluates every condition, so RFC-001's capacity decrease re-lays its placeholder markers and re-checks the displacement markers, correct but without R1-1's no-push argument for that attempt. The spike counts restarts and aborts separately (§22.1). **Second cause: an abandon** (AI6-12): a batch not at `COMMIT` within `abandonBeforeCommitMs` is rolled back and each of its calls gets `Retry` at once, with **no** fresh attempt, because an abandon is an overload signal, not a contention signal (§4.7 rule 5c; C01 reading in CI6-5) | Retry later with the **same identities**; map to the owner's POL-04 answer if a caller waits |
   | `StaleEpoch` | The slot was taken | The epoch read differs from the holder's | Stop serving **that slot** (drop its memory, `onRelease`); fail its in-flight calls "not known to be committed"; the process's other slots continue (§4.4) |
   | `Moved(slot, generation)` | The partition is adopted in another slot | Head names another slot with `adopted` = true (§4.5) | Re-route to the named slot with the same identity |
   | `Moving` | Between `moved` and `adopt` (about 100 ms, est.) | Head names another slot unadopted, or this slot unadopted (§4.5) | Retry after a short wait (≥ 20 ms, backoff) with the same identity; never a failure to the buyer by itself |
   | `Stopped(detectionRef)` | Integrity stop open on the partition | The fence read sees a new `stops_version`; the stops re-read name the partition (§14.3) | Decide nothing; answer the caller "temporarily unavailable"; retry only after the stop is lifted |
   | `Ambiguous` | `COMMIT` sent and its answer lost (SQLSTATE 40003 or a lost connection), or the 15 s backstop expired | Resolved by steps 1 to 3 of §4.2 before the slot decides again (crash points above; R6-16) | Wait for the runtime's resolution; then `Committed` or re-run, as the runtime answers |
-  | `Overloaded(retryAfterMs)` | Back-pressure | **Only** admission control or event-loop shedding (§4.7), never exhausted retries (C01 R47-12) | Back-pressure to callers, mapped by the owner RFC to its POL-04 answer |
+  | `Overloaded(retryAfterMs)` | Back-pressure | **Only** admission control or event-loop shedding (§4.7), never exhausted retries or an abandon (C01 R47-12). Admission control is the queue cap (`slot_queue_max`) and the database-slowness rule (§4.7 rule 5a, AI6-12): a new call to an overloaded slot is answered at once and never queued | Back-pressure to callers, mapped by the owner RFC to its POL-04 answer |
 
   Every result except `Committed` and `ConditionFailed` means "not known to be committed". A
   consumer that receives a result it does not know treats it as `Retry` and alerts (C01 §8).
@@ -1283,8 +1292,10 @@ the `pg` driver with prepared statements and a pool per process to database node
 gateways) in the process's own facility, with **two fallbacks, always on** (decision D1,
 R27-04): the metro's other facility's gateways, then the **other Kenyan region's
 gateways**. A statement that fails for unreachability, or does not answer within its
-per-tier timeout, on one tier is retried on the next (a batch is abandoned and restarted
-there; a `COMMIT` without an answer is `Ambiguous`, §4.3). **Per-tier timeouts** (R33-09):
+per-tier timeout, on one tier is retried on the next (a batch is rolled back and restarted
+there once, as a fresh attempt; this is not an abandon in the sense of rule 5c, unless the
+batch has reached `abandonBeforeCommitMs` from `BEGIN`; a `COMMIT` without an answer is
+`Ambiguous`, §4.3). **Per-tier timeouts** (R33-09):
 the session renewal, the batch's epoch read and the standby's session poll use **400 ms**
 per tier (a metro statement normally takes about 1 ms), other statements the 2 s statement
 timeout. A **per-tier circuit breaker** opens on BFD loss of the metro link or placement's
@@ -1296,6 +1307,165 @@ only forwards to leaseholders, so a fallback costs about one extra Nairobi–Mom
 trip (about 10 ms, est.) and no rule; since R2 reaches every Kenyan facility in a metro
 split, every leaseholder stays reachable from either side of the split; Kafka uses `@confluentinc/kafka-javascript` (librdkafka); gRPC uses
 `@grpc/grpc-js`.
+
+**(5) Overload control for a slow database** (erratum 7.1, AI6-12). Rule 1 sheds load only
+when the event loop is slow. A slow database does not make the loop slow: the loop waits on
+I/O. Before this erratum the only other admission control was the queue cap
+(`slot_queue_max`, 10,000 queued calls per slot), so a slow database made the queue grow
+with no `Overloaded`. This gave a **metastable collapse**, seen on the dev cell
+(substrate bench of 2026-10-13: at 200 calls/s one run committed 198/s and another
+committed 23/s and did not recover, with 434 abandons and 221 fresh attempts) and
+reproduced by the runtime test `overload-collapse.test.ts` (commit `cb57ea3`: after a 3 s
+burst at 1,000/s, 30 s at 200/s commit 0/s, 16 of 21 transactions are abandoned, 14,607
+`Retry` answers, batches at the 2,000-entry cap; with no abandon budget the same run
+recovers). The loop is: (i) a longer queue makes a larger batch, up to the hard caps;
+(ii) a larger batch on a slow database does not reach `COMMIT` within
+`abandonBeforeCommitMs` (2 s) and is rolled back after it did all its reads and writes, so
+its database work is lost; (iii) the runtime started one fresh transaction at once with the
+same batch, which met the same fate, and then answered `Retry` with no retry-after;
+(iv) callers retried at once and the next batch was larger again. Goodput fell to zero
+while the offered load stayed the same. Rules 5a, 5b and 5c break each step of the loop.
+They change only **which** queued calls go into a batch, **when** a new call is admitted,
+and **whether** the runtime starts a fresh attempt after an abandon. §4.2, §4.3's
+transaction, fence, per-call outcomes and `Ambiguous` rule, and every C01 signature, stay
+as they are.
+
+- **5a. Admission control on database slowness** (breaks step iv). Per slot, the runtime
+  keeps two measures on the monotonic clock:
+
+  | Measure | Definition | Entry limit | Release limit |
+  |---|---|---|---|
+  | Queue age | Now minus the enqueue time of the **oldest** call still queued (not yet in a batch) | > `overload_queue_age` (**500 ms**, est.) | ≤ 250 ms |
+  | Batch duration | p99 of the durations (`BEGIN` to the `COMMIT` answer, or to the rollback) of the slot's batches that ended in the last `overload_window` (2 s); the maximum if fewer than 10 batches ended there | > `overload_batch` (**500 ms**, est.) | ≤ 250 ms |
+
+  The slot **enters** the overloaded state when either measure is above its entry limit at
+  2 consecutive checks (`overload_check`, every 100 ms), or at once on an abandon at the
+  default budget (rule 5c). It **leaves** only when both measures are at or below their
+  release limits for `overload_hold` (1 s) without a break, and not earlier than
+  `overload_hold` after the last entry trigger. While the slot is overloaded, every **new**
+  `append` call for it is answered `Overloaded(retryAfterMs)` at once and is not queued;
+  calls already queued stay queued and run (no deadline dropping, D4). The exceptions are
+  the move protocol's `moved` and `adopt` calls (§4.5) and calls with `exclusive` (RFC-001's
+  capacity-lowering entries, one per supply event): they are queued as before, because
+  delaying them delays a move or a capacity decrease, and they are few. Marker-only
+  transactions (§4.3), resolution reads (§4.2) and the session renewal are not `append`
+  calls and are never shed.
+
+  `retryAfterMs` = the time to drain what is queued, `q · t_entry` + `batch_time_budget`
+  (rule 5b; `q` the queued entries), held between 250 ms and 5,000 ms, then multiplied by a
+  random factor in [0.8, 1.2] so that the callers shed together do not come back together.
+  Before the slot has a `t_entry`, `retryAfterMs` = 500 ms with the same factor.
+
+  ```mermaid
+  stateDiagram-v2
+    [*] --> Admitting
+    Admitting --> Overloaded: queue age or batch p99 above 500 ms at 2 checks, or an abandon at the default budget
+    Overloaded --> Overloaded: an abandon at the default budget (hold restarts)
+    Overloaded --> Admitting: both measures at or below 250 ms for 1 s, and at least 1 s since the last trigger
+  ```
+
+  **Why these limits.** In every designed topology state a batch commits in about 30 ms and
+  waits at most about 65 to 70 ms at p99 (§4.3, est.), so 500 ms is about 7 times the worst
+  budgeted figure: a slot that meets its latency budget never sheds. One per-tier timeout
+  (400 ms) and the retry on the next tier (about 10 ms) stay below 500 ms, so a gateway
+  fallback alone does not trip the batch measure; the 2-check rule absorbs one longer
+  stall. 500 ms is one quarter of the 2,000 ms abandon budget: a batch at the limit can
+  become 4 times slower before it is abandoned, so shedding starts while batches still
+  commit. For the queue age, 500 ms is above `batch_time_budget` (400 ms) plus one design
+  commit: a queue that old holds more than the in-flight batch and one budgeted batch, so
+  it grows. The measure is the queue age, not the queue length, because the age is in
+  time, as the abandon budget is, and does not depend on the slot's rate (an account slot
+  has about 6 batches a second, the hottest link about 30, est.). The batch measure is a
+  p99 over 2 s, not a mean, so one slow batch among few counts. The **hysteresis** (release
+  at half the entry limits, 1 s held, 1 s minimum dwell) means that a slot changes state at
+  most about once a second in each direction; the release limits sit above the design
+  figures, so a recovered slot leaves the state within about 1 s of the queue draining.
+  Every figure is an estimate the spike measures (§22.1).
+
+- **5b. Time-budgeted batch sizing** (breaks step i). Per slot, the runtime keeps `t_entry`,
+  the measured time per entry: an exponentially weighted mean (weight 0.3 on the new
+  sample) of `d / n` over the slot's batches with at least 16 entries (`d` the batch
+  duration as in 5a, `n` its entries, counted as for `slot_batch_max_entries`); a smaller
+  batch is mostly fixed cost and would understate the slot's capacity. After an abandon,
+  `t_entry` = max(`t_entry`, `d / n`) at once, with no weighting, so the next batch is at
+  least 5 times smaller. The cap of the next batch is
+
+  `n_cap` = min(`slot_batch_max_entries`, max(16, ⌊`batch_time_budget` / `t_entry`⌋)),
+
+  with `slot_batch_max_bytes` as before; with no `t_entry` yet (a new holder) only the hard
+  caps apply. `batch_time_budget` is **400 ms** (est.): one fifth of the 2,000 ms abandon
+  budget, so a batch sized to its estimate can run 5 times slower than measured (the
+  estimate lags the database by about one batch) before it is abandoned; and about 13
+  times the 30 ms design commit, so at the design load the cap does not bind (the hottest
+  link's batch of about 150 entries at about 0.2 ms each, est., gives `n_cap` at the hard
+  cap). Because `t_entry` includes the fixed cost spread over the entries, the rule's
+  fixed point is a batch duration equal to `batch_time_budget` whatever the fixed cost:
+  a batch that took less than the budget raises the next cap, one that took more lowers
+  it. The floor of 16 entries keeps the slot making progress; a call with more entries
+  than `n_cap` goes alone and is never split. A batch whose calls set a lower
+  `abandonBeforeCommitMs` is sized with one fifth of that budget instead; in v1 only
+  RFC-001's `exclusive` calls do, and they go alone.
+
+  **Safety argument.** 5b changes only how many queued calls go into the next batch. The
+  runtime takes a prefix of the queue in queue order, and a prefix of the queue is, for
+  each partition, a prefix of that partition's calls; the rest wait for the next batch, as
+  they already do at the hard caps. So each partition still has at most one transaction in
+  flight, its calls commit in call order, its `seq` stays contiguous and its `ts` monotone,
+  and the fence read, the conditions, `decide` at `ctx.ts`, the head upserts with
+  `batch_id` and the `Ambiguous` rule are those of §4.3, unchanged. C01 gives no owner a
+  guarantee about which calls share a batch (CI6-6).
+
+- **5c. An abandon is an overload signal, not a contention signal** (breaks steps ii and
+  iii). When a batch is not at `COMMIT` within its `abandonBeforeCommitMs` (the
+  `AbandonSignal`), the runtime rolls it back (nothing committed, and this is known:
+  `COMMIT` was not sent), answers **every** call of the batch `Retry`, and does **not**
+  start a fresh transaction with the same batch. The abandoned batch is a sample for 5a and
+  for 5b's `t_entry`, and an abandon at the default budget (2,000 ms) puts the slot into
+  the overloaded state at once (5a). An abandon at an owner-set lower budget (RFC-001's
+  250 ms, met on a lock wait more often than on load) gets `Retry` with no fresh attempt as
+  well, but does not by itself enter the state. The owner's memory of the batch's
+  partitions is rebuilt before its next decision, as after any `Retry` (§4.3), and the
+  owner re-proposes with the **same identities** (C01 §3.2); a re-proposal that arrives
+  while the slot is overloaded is a new call and gets `Overloaded(retryAfterMs)`, which
+  gives the back-off that `Retry` alone does not. A fresh attempt redoes the same reads and
+  writes on the same slow database with the same large batch, so it is likely abandoned
+  too and doubles the lost work (in the bench, 221 fresh attempts for 434 abandons). The
+  **immediate fresh attempt stays** in the two cases where it helps: after `batch_retries`
+  exhausted 40001 restarts (contention between transactions, which a new transaction at a
+  higher timestamp resolves; C01 R47-12) and after a per-tier timeout (the fresh attempt
+  goes to another gateway tier, rule 4 above). A batch that reaches its abandon budget
+  during a per-tier retry is an abandon.
+
+  **Consistency with C01.** C01 §7 states "Abandon before `COMMIT` … ROLLBACK, re-propose"
+  and does not say who re-proposes; C01 §3.2 tells the caller of `Retry` to "retry later
+  with the same identities", which is a re-proposal; and RFC-001 §5.1 already has the owner
+  re-propose its abandoned capacity-lowering transaction. So C01 does not require the
+  runtime itself to re-propose, and 5c is the reading adopted here. C01 §2.4 and §3.2
+  describe `Retry` only as "after `batch_retries` restarts and one fresh attempt" and do
+  not name the abandon as a cause: CI6-5 asks C4 change control to add it. **If change
+  control rejects CI6-5**, the fallback inside C01 v1 is: after an abandon the runtime
+  makes its one fresh attempt with only the first `n_cap` entries of the abandoned batch
+  (5b's new cap, at least 5 times smaller) and leaves the other calls queued, and answers
+  `Retry` only if that attempt also fails; 5a and 5b are unchanged. 5a is admission
+  control, the case C01 R47-12 reserves `Overloaded` for, and needs no change.
+
+- **Crash points.** The state of 5a and 5b is in the process's memory, per slot. A process
+  crash or a takeover loses it: the new holder starts admitting, with only the hard caps;
+  if the database is still slow, its first slow batches (2 checks) or its first abandon
+  put the slot back into the overloaded state within about 0.2 to 2 s. An abandon decided
+  but not yet answered when the process dies: nothing committed, the callers get "not known
+  to be committed" (§4.3) and re-propose. `Overloaded` answers write nothing.
+
+- **Sizing at ×50 (est.).** About 100 bytes of state per slot (two measures, `t_entry`,
+  `n_cap`, the state, a ring of the last 2 s of batch durations: about 12 on an account
+  slot, about 60 on the hottest link), so about 25 kB per process of 256 slots and about
+  2.4 MB over about 23,600 slots. One process timer every 100 ms checks every slot it holds:
+  about 2,560 checks a second per process, each a few comparisons and a p99 over at most
+  about 60 values, well under 1% of a core. No database work.
+
+- **Monitoring.** The runtime exports per slot the state, the transitions, the
+  `Overloaded` answers, the abandons, `t_entry` and `n_cap`; §16 raises the **slot
+  overloaded** alarm from them.
 
 ### 5. Kafka and the outbox relay
 
@@ -2383,6 +2553,7 @@ are RPO, RTO, availability and latency in the serving regions.
 | A database node holding range leases, including those of session, slot or timing shards (R6-03) | Raft leader loss on its ranges; node liveness | The database re-elects each range's leader among survivors (R1 peer first) and moves the lease; processes whose sessions were in an affected shard keep their warm state and renew (or are taken over warm) when it returns (§4.4); after 5 min, replicas replaced in the same facility | RPO 0. Writes to its ranges, and the slots whose session, fence or timing shard was there, wait 4 to 9 s (est.); no cold reload. No unavailable minute (§10.2). Latency unchanged after |
 | A database node without leases | Liveness | Replicas replaced after 5 min in the same facility | None; its ranges have 4 of 5 meanwhile |
 | An owner process or host | Its session expires (3 s) | In-region hot standbys take its slots (§4.4) | RPO 0. About 3.3 to 3.8 s for its slots (§4.4). Latency unchanged |
+| A slow database under a slot (a hot range, a sick node, compaction), or offered load above the slot's capacity (AI6-12) | The slot's queue age or batch duration p99 above 500 ms, or an abandon (§4.7 rule 5a) | The slot answers new calls `Overloaded(retryAfterMs)` until both measures are back below 250 ms for 1 s; batches are sized to 400 ms of measured work (5b); an abandoned batch is answered `Retry` with no fresh attempt (5c); the slot overloaded alarm (§16) | Callers of that slot get their owner's POL-04 overload answer meanwhile; goodput stays near the slot's capacity instead of collapsing; the slot recovers within seconds of the cause ending (§22.1) |
 | A status-reader process | Its read leases lapse (400 ms) | The holder stops waiting for it; supervisor restarts it with fresh leases, reading older state only at or after `P_grant` (§4.6) | Reports wait at most one lease; polls retry to another reader (rule 4) |
 | An edge or stateless worker node | Load-balancer health check, 2 s | Removed from rotation | Requests in flight retried by clients (POL-29). None measurable |
 | A Kafka broker or controller | Kafka; broker session expiry (4 s) | Partition leaders move; the broker leaves the in-sync sets within about 4 s; controller quorum keeps 4 of 5; an active controller outside the preferred region is restarted in a controlled way (§5.2) | None on facts; produce to its partitions stalls up to about 4 s; no breaching feed minute (§10.3) |
@@ -2532,7 +2703,13 @@ entry, firing only makes an entry) §4.4 and §4.5; routing, `slotOf`, `reslot`,
 | Abandon before `COMMIT` (`abandonBeforeCommitMs`); displacement read lock timeout | 2,000 ms from `BEGIN` (an owner may set lower: RFC-001 250 ms); 10 ms | §4.3 |
 | Account, shared link slots | 16,384, 4,096 (est.; set by the spike) | §4.1 |
 | Second lane (account; deadline) | off; off below the `τ` cap (lane (c), a second batch of one partition, is excluded from C01 v1) | §4.3, §6.4 |
-| `slot_batch_max_entries`, `slot_batch_max_bytes` | 2,000, 4 MB | §4.3 |
+| `slot_batch_max_entries`, `slot_batch_max_bytes` (hard caps) | 2,000, 4 MB | §4.3 |
+| `slot_queue_max` (admission control by queue length) | 10,000 queued calls per slot | §4.3, §4.7 |
+| `overload_queue_age`, `overload_batch` (entry limits; release at half, 250 ms) (AI6-12) | 500 ms, 500 ms p99 over `overload_window` (est.; the spike measures them) | §4.7 rule 5a |
+| `overload_window`, `overload_check`, `overload_hold` | 2 s (the maximum if fewer than 10 batches), 100 ms (2 consecutive checks to enter), 1 s (held below the release limits; also the minimum dwell) | §4.7 rule 5a |
+| `retryAfterMs` of a database-slowness `Overloaded` | `q · t_entry` + `batch_time_budget`, held in [250 ms, 5,000 ms], × a random factor in [0.8, 1.2]; 500 ms before a `t_entry` exists | §4.7 rule 5a |
+| `batch_time_budget`; `t_entry` weight; batch floor (AI6-12) | 400 ms (one fifth of `abandonBeforeCommitMs`; est.); 0.3 over batches of at least 16 entries; 16 entries | §4.7 rule 5b, §4.3 |
+| After an abandon (AI6-12) | `Retry` to every call of the batch, no fresh attempt; the slot overloaded at once if the budget was the default 2,000 ms | §4.7 rule 5c |
 | `marker_max_wait` | 20 ms (markers due only on `report_wanted` or outcome entries) | §4.6 |
 | `republish_window`, `republish_rate` | 30 s (from the kind's closure position), 5,000 rows/s per process | §4.4 |
 | `home_space` | 2²⁰ | §3.7 |
@@ -2544,7 +2721,7 @@ entry, firing only makes an entry) §4.4 and §4.5; routing, `slotOf`, `reslot`,
 | Gateway tiers; per-tier timeout for renewals, epoch reads and session polls | own facility, metro peer, other Kenyan region; 400 ms, circuit breaker after 3 timeouts or on the topology state | §4.7 |
 | In-sync-driven `min.insync.replicas` drop | more than 2% of partitions with both replicas of one region out of sync for 2 s | §5.2, §7.3 |
 | Kafka leader consolidation on a metro split | admin calls through an R2 broker; in-sync R2 replica first, then the chosen facility's once in sync; controlled shutdown of cut-off brokers after 20 s | §7.3 |
-| `batch_retries` | 5 | §4.3 |
+| `batch_retries` | 5 restarts, then one fresh attempt (after 40001s; also after a per-tier timeout; never after an abandon, AI6-12) | §4.3, §4.7 |
 | `heartbeat_interval` (owner → readers) | 100 ms | §4.6 |
 | `read_lease` | 400 ms | §4.6 |
 | `status_shards` | 8 per facility | §4.6 |
@@ -3134,6 +3311,7 @@ reports, and every platform alarm in this RFC).
   | Integrity hold | The runtime holds a partition after a head-chain mismatch and `integrity_report` is not yet accepted (§3.7, §14.3) | Security and platform on-call | C08 R46-12 |
   | Partner run missing | No `RUN_COMPLETED` of a partner's daily reconciliation by 12:00 UTC on D + 1 | Network operations, finance; shown in the console | C12 m11 |
   | Provider payments not yet received | One provider's total of payments posted and not yet received above `provider_unreceived_alert` (raised by RFC-004's reconciliation; never stops a payment) | Finance | POL-24 (`requirements-v1.11`), RFC-004 |
+  | Slot overloaded (AI6-12) | A slot in the overloaded state of §4.7 rule 5a for more than 60 s (`warning`), or more than 1% of a kind's slots in it at once, or any slot for more than 5 min (`page`) | Platform on-call; the owner kind's team | §4.7 rule 5 |
   | Feed lag | A consumer more than 60 s behind a stream's head | The consumer's team | RFC-002 RB-13, RFC-004 |
   | Non-conforming payload drops | `ingest_log`'s drop alert (each drop), hourly drop report (counts by reason, withdrawals was kept / was absent), a withdrawal pending more than 10 min; relayed from the self-outboxed streams (§3.5) | Network operations | RFC-003 rev. 5; POL-19 v1.9, P3-S75 |
   | Closure lag (`CLOSURE_LAG`) | A kind's closure emitter `R_min` more than 10 s behind now (60 s while a drain is in progress, §3.5) (§5.3) | Platform on-call; the consumers' teams | RFC-001, RFC-003, C01 |
@@ -3652,6 +3830,7 @@ the owner runtime, status readers, the outbox and a Kafka cluster:
 | Transactions pushed by the closed timestamp (§3.4) | Below 0.01% |
 | Node.js pauses per process class (§4.7) | p99.9 ≤ 50 ms |
 | Account-owner process at 1,640 transactions a second (§19.2, R33-05) | Event-loop delay p99.9 ≤ 50 ms; else 128 slots per process |
+| **Overload recovery** (§4.7 rule 5, AI6-12). First, the capacity `C` of one account slot and of the hottest link's slot: the highest offered rate that commits in full for 60 s. Then, per slot: (a) a burst at 5 `C` for 3 s, then 0.8 `C` for 60 s, callers retrying `Retry` and `Overloaded` as the owners do; (b) 0.8 `C` with the database slowed under the slot (a leaseholder node's CPU throttled, or disk latency injected) for 30 s, then restored; (c) as (a) with one per-tier timeout injected (metro split) | Goodput back to the offered rate (≥ 95% of it, per 1 s) within **10 s** of the end of the burst or of the slowdown, and kept to the end; abandons during the whole run ≤ 1% of the slot's batches, and none after goodput is back; batch duration p99 ≤ 1,000 ms (half of `abandonBeforeCommitMs`) outside the 3 s burst; at most 2 state changes each way per run; in (c), no entry into the overloaded state. Otherwise `overload_queue_age`, `overload_batch` and `batch_time_budget` are re-chosen and the run repeated. Run (a) is also made with 5a to 5c turned off, as a control; the report gives both results |
 | Active SQL connections per node after a facility loss (about 420, §19.2) | Within the release's limits with p99 commit unchanged |
 | Kafka brokers and KRaft controllers at 12,000 partition replicas per broker (§19.2, after a doubling) | Produce p99 and controller failover unchanged within 25%; else 8 brokers per facility (RK36) |
 
@@ -3717,6 +3896,7 @@ Each cites the scenario it serves (docs/README.md conventions).
 | DT-47 **Outcome webhooks and suppliers' webhooks** (P2-S09, X1-S11, X1-S24 as amended in `requirements-v1.11`): a booking and a **change**, each answered `pending`, each get exactly one outcome webhook (by `answered_pending` or the first covering marker's `pendingAnswered`), also when the markers arrive out of order and after a holder takeover (the first marker lists every covered outcome); a withheld termination sends nothing; a maintenance booking of supplier `s1` cut at a reduction's effect is sent only to `s1`'s endpoint, carries nothing about `s2` or any account, and verifies with the secret Share gave `s1` | P2-S09, X1-S11, X1-S24 |
 | DT-48 **Affected notices on time** (C03 CT-6.1): `AFFECTED_NOTICE` is first attempted within 35 s of its feed publish with the endpoint down; `AFFECTED_CHANGED` alone sends nothing; a restoration notice goes to exactly the reservations with an earlier `AFFECTED_NOTICE` for the outage; with the link's schedule owner failing over, every such notice is told within `affected_notice_time` + `release_grace` | P1-S26, P1-S40, P1-S75 |
 | DT-49 **Restore of the personal-data store** (C09 test 29): the fence is set outside `pds` before the restore; `reapply` reads the feed itself from `from_as_of` − `max_offset` through the head read after the fence; an erasure committed but not yet relayed when the restore starts is re-applied, part by part; `expiry_destroyed` is re-applied from the feed; `reapply` on an unfenced store is refused; the AS OF time reaches identity before the fence is removed | X1-S39, P3-S71 (with RFC-005) |
+| DT-50 **Overload recovery** (AI6-12; the runtime test `overload-collapse.test.ts`): with the database slowed in a double, a burst at 1,000 calls/s for 3 s then 200 calls/s for 30 s on one slot: goodput returns to the offered rate and stays; new calls get `Overloaded(retryAfterMs)` only while the queue age or the batch p99 is above 500 ms, and admission resumes after both are at or below 250 ms for 1 s; no batch exceeds the time-budgeted cap; an abandoned batch's calls get `Retry` and no fresh transaction starts with that batch; a 40001-exhausted batch still gets one fresh attempt; per-partition order, `seq` and `ts` are as with no cap (C01 CP-1, CP-2) | X2-S03, X2-S10 |
 | DT-23b 10,000 affected notices to one endpoint are all first attempted within 60 s, in deliveries of at most 100: alive (about 1 s), refusing connections (about 13 s), accepting and never answering (about 32 s); first attempts keep 16 in flight whatever the retry lane's state; a delivery's first attempt starts without waiting for its predecessor's to finish | P1-S75, P1-S26 |
 | DT-24 An alert raised in an owner's log reaches the alert service after the alert service's holder is killed | P2-S53 |
 | DT-25 No personal data appears in any log table, outbox row, Kafka message, archive segment, checkpoint, backup of an owner table or application log (scanner over samples of each); an erased subject's data is unreadable in the live store at once; store backups have no revision history, carry every contained generation, hold no key, and are deleted at 7 days and within 24 h of a contained generation's destruction; the daily erasure-conformance check pages on any left; no changefeed exists on the store | X1-S34, X1-S37, X1-S39, P3-S71 (with RFC-005) |
@@ -3781,6 +3961,10 @@ writing consensus code.
 | **Managed globally distributed databases** (Google Cloud Spanner, Amazon Aurora DSQL, Azure Cosmos DB, the managed CockroachDB or YugabyteDB services) | **Not available in-region.** None runs in Share's Nairobi or Mombasa data centres or in any Kenyan cloud region (there is none); the nearest regions are Johannesburg and Cape Town. Every commit would then be in South Africa, the serving regions would hold no voter, a South African region loss would be a total outage, and RPO 0 "durable in two regions" would mean two South African regions. Spanner's TrueTime would give a tighter clock bound, but only inside Google's regions. Aurora Global Database and similar replicate asynchronously across regions (RPO above 0) |
 | **TiDB** | Placement rules can express 2 + 2 + 1 with leader preference, Raft per region, learners and stale reads, and TiCDC feeds Kafka. It speaks the MySQL protocol, not Postgres, which Share's TypeScript stack and RFC-000 assume; it splits SQL, storage and placement into three services (TiDB, TiKV, PD) to operate; and it offers nothing CockroachDB lacks for this design |
 | **Postgres with synchronous quorum replication** (a primary per shard, Patroni-style failover) | RFC-000 Competition: failover safety rests on an external lease manager and fencing scripts, and sharding and rebalancing are Share's to build |
+| **Deadline-based dropping of queued calls** (CoDel-style: drop a queued call older than a target, answer it `Overloaded`) (AI6-12) | Not in this erratum (coordinator decision D4). 5a stops new calls while the queue is old, and 5b keeps every batch inside the budget, so queued calls drain; dropping would also answer calls that the owner may already have told a caller are in progress. Kept as the next step if §22.1's runs show queued calls still waiting past their callers' budgets |
+| **Keep the immediate fresh attempt after an abandon, only smaller** | It is the fallback if C4 rejects CI6-5 (§4.7 rule 5c). It still runs one more transaction on a database that is already too slow, and it keeps the runtime, not the owner, deciding to re-propose; answering `Retry` and letting 5a and 5b act is simpler and wastes no further work |
+| **A lower static batch cap** (for example 200 entries) instead of 5b | Fixes one database speed only: too small at the design load on the hottest link (more transactions, more cost per entry, §19.2), still too large when the database slows by 10 times. The time budget adapts to the measured speed and does not bind at the design load |
+| **Shedding on queue length** (the existing `slot_queue_max`) with a lower value | A length means different times on an account slot (about 6 batches a second) and on the hottest link (about 30); the queue age and batch duration are in the same unit as the abandon budget |
 | **The database's multi-region SQL abstractions** (`PRIMARY REGION`, `SURVIVE REGION FAILURE`, regional tables) | They place voters by region and cannot state one voter per facility or the non-voter layout of §3.2; using them would mean overriding their zone configurations table by table, which the database discourages and which a later abstraction change could silently undo. Explicit zone configurations with a conformance check say exactly what RFC-000 §5.1 requires |
 | **Regional-by-row tables** (each account's rows homed in a chosen region) | Useful when writers live in several regions; here every range lease and slot is in one region by design (AI-3), so homing rows elsewhere would only split owners from leaseholders |
 | **One owner-lease row per slot with its own expiry** (RFC-000 §5.2 read literally) | About 47,000 two-region renewal writes a second for about 23,600 slots at a 500 ms renewal. Sessions renew once per process; slot rows change only on acquisition, handoff and re-home (AI6-1) |
@@ -3868,6 +4052,7 @@ writing consensus code.
 | RK34 | **Moves and doublings add protocol** (pre-warm, report fence, `onAdopt`, lazy splits, the splitting handshake `ackSplitting` and `listPartitions`, the stop fence `stops_version`) to the part of the runtime where single-writer bugs hide (RK1) | In the TLA+ model and the Jepsen harness (§22.2); C01's provider tests CP-1 … CP-14 in CI; DT-37, DT-41, DT-42, DT-45 |
 | RK36 | **Kafka partitions per broker** after an account slot doubling: about 11,700 replicas per broker (est., §19.2), above common operating practice | Growing a topic's count is optional and done only when its produce rate needs it; the spike measures 12,000 replicas per broker; more brokers (8 per facility) is the lever |
 | RK37 | **The v1.10 slot rule counts a short-probed slot whose few probes all fail** (§10.2): a probe estate that skips scheduled probes makes the rule weaker against probe errors (`p²` or `p` instead of `p³` for those slots) | Runners never skip a scheduled probe for load; every skip is a `PROBING_FAULT`; a skip rate above 10⁻⁴ per location pages; at that rate the extra risk is about 5×10⁻⁹ unavailable minutes a minute (§10.2) |
+| RK38 | **Overload control sheds callers** (AI6-12): limits set too low shed a slot that would have kept up (callers see their POL-04 overload answer; an admission probe that meets it fails); set too high, a slot can still approach the abandon budget before it sheds. The limits are estimates from the design commit (30 ms) and the abandon budget (2 s), not measurements | §22.1's overload-recovery runs set them before go-live; the slot overloaded alarm (§16); DT-50 in CI. The hysteresis keeps one state change a second at most, so a shed lasts at least 1 s and a probe 20 s later is not affected by the same episode |
 
 ## Requirements issues
 
@@ -3993,6 +4178,12 @@ here:
 **New.** None. Revision 7 changes no component, owner or principle of RFC-000; every
 change is C01's interface detail or a mechanism behind it.
 
+**Raised and resolved by erratum 7.1** (coordinator decisions D1 … D5 of 2026-10-13):
+
+| # | Issue (raised in) | Decision | Applied in |
+|---|---|---|---|
+| AI6-12 (erratum 7.1; substrate bench `tools/bench/substrate/results/2026-10-13-dev-cell/README.md` finding 4, on branch `worktree-agent-a51098798575766ab`; runtime test `platform/runtime/test/overload-collapse.test.ts`, commit `cb57ea3`) | **Metastable overload collapse of the owner runtime.** §4.7 shed only on event-loop delay and the queue cap (10,000 calls a slot), so a slow database grew the queue with no `Overloaded`; a longer queue made larger batches; a batch not at `COMMIT` within `abandonBeforeCommitMs` was rolled back after its work and at once re-run as a fresh attempt, then answered `Retry` with no retry-after; callers retried into a larger batch. Goodput fell to zero at a fixed offered load (dev cell: 23/s of 200/s; test: 0/s of 200/s, 16 of 21 transactions abandoned) | D1: admission control on queue age and batch p99 (500 ms each, release at 250 ms held 1 s); D2: batches capped to 400 ms of measured work, the hard caps kept; D3: an abandon answers `Retry` with no fresh attempt and puts the slot into the overloaded state, the fresh attempt after 40001s and per-tier timeouts kept; D4: no deadline dropping; D5: no logical, safety or contract change. **No RFC-000 amendment**: RFC-000 (§5.5, AI6-6) states that the runtime abandons a batch, not what follows, and R1's spike now measures the overload behaviour. C01 points are CI6-5 and CI6-6 (Contract issues) | §3.6 (timeouts row), §4.3 (batch take, size limits, crash points, `Retry` and `Overloaded` rows), §4.7 rule 5, §11, §12.10, §16 (slot overloaded alarm), §22.1 (overload recovery), DT-50, RK38, Competition |
+
 ## Contract issues
 
 Defects found in the frozen contracts while conforming to them. No contract is edited
@@ -4004,6 +4195,8 @@ here; each issue gives the reading this RFC adopts meanwhile.
 | CI6-2 | C01 v1 §3.6 (settled M7) and C06 v1 topic table | C01 lists six streams that carry closure; C06 marks six more topics "Yes" (`rating.unposted-usage.v1`, `account.usage-applied.v1`, `rating.charge-lines.v1`, `rating.affected-marks.v1`, `rating.quarantine-report.v1`, `rating.breach-report.v1`). C01 §2.2 lets any stream declare closure, so the mechanism does not change, but C01's list reads as complete | C01 §3.6: "Streams carrying closure (M7) **include** …; any stream declared with `closure` gets markers (C06)" | The union: every stream declared with closure gets markers, one relayed owner kind per closure topic (§5.3); sized in §5.3 and §19.3 (est., under 1 MB/s more) |
 | CI6-3 | C01 v1 §2.5 (producer ACL) and C06 v1 (`settlement.posting-acks.v1`) | C01's ACL rows are by name pattern (`<kind>.<feed>.v<n>`: the kind's holder and relay). C06's posting-acknowledgement topic has the ledger as producer through its outbox **and** settlement publishing directly, under a name of neither pattern owner. C01 §3.5 says events are published only after `Committed` through `append`; settlement's direct publish is outside that rule | C01 §2.5: "A topic named by an owner contract lists its producers there; direct publishes outside an outbox are allowed only on a topic that carries no closure markers (C06 m10)" | The ACL of that topic lists the ledger's holder and relay and settlement's principal; the topic carries no closure markers (§5.2, §5.3) |
 | CI6-4 | C05 v1 ("Gap recovery", consumer obligation to RFC-006) | C05 sizes `account.usage-applied.v1` at "9–18 TB at replication factor 3"; the cluster's replication factor is 4 (RFC-000 AI6-2, §5.2) | "About 3–6 TB per copy, 12–24 TB at the cluster's replication factor 4" | §19.4 sizes 12 to 24 TB (est.), inside the brokers' capacity |
+| CI6-5 (AI6-12) | C01 v1 §2.4 (`Retry` comment), §3.2 (`Retry` row), §7 (abandon row), CP-2 | `Retry` is described only as "not committed, after `batch_retries` restarts and one fresh attempt", and the abandon row says "ROLLBACK, re-propose" with no actor. The result an abandoned batch's calls get is not named. RFC-006 erratum 7.1 answers them `Retry` with no fresh attempt (§4.7 rule 5c) | §2.4 and §3.2: "`Retry`: not committed, after `batch_retries` restarts and one fresh attempt, **or after an abandon before `COMMIT` (no fresh attempt)**; the caller re-proposes with the same identities". §7 abandon row: "ROLLBACK; calls answered `Retry`; the caller re-proposes". CP-2: inject an abandon, expect `Retry` and no second transaction with that batch | C01 does not require the runtime itself to re-propose (§7 names no actor; §3.2's caller action is the re-proposal; RFC-001 §5.1 has the owner re-propose), so §4.7 rule 5c applies. If C4 rejects this erratum, the fallback of §4.7 rule 5c (one fresh attempt cut to `n_cap`, the rest queued) applies |
+| CI6-6 (AI6-12) | C01 v1 §3.2 (batch paragraph) | "carrying every pending call of every served partition of the slot (at most 2,000 entries or 4 MB)" lists only the hard caps; erratum 7.1 adds a time-budgeted cap below them (§4.7 rule 5b) | "carrying the pending calls of the served partitions of the slot in queue order, up to at most 2,000 entries or 4 MB **and the runtime's time-budgeted cap**; the rest go in the next batch" | The time cap is a cap like the hard caps: it chooses a prefix of the queue and changes no guarantee C01 gives (no owner is told which calls share a batch); §4.7 rule 5b applies now |
 
 ## Traceability
 
@@ -4022,7 +4215,7 @@ measurement observes.
 | X2-S27 Enough probe accounts that every account slot is probed, at least 3 times a minute from two locations *(amended in v1.8)* | §17.1, §7.1 (account slot map, one probe account per slot, refusals, doubling with pinned probe accounts, a slot published only once its probe account's limit is applied), §17.3 (probing fault), §12, DT-16, DT-41 | RFC-002 (reads the slot map), RFC-005 (edge routing by the map), RFC-004 (credit limits) |
 | X2-S21 Funds holds and headroom checks at admission's targets | §10.1, §4.4, §11, DT-03 | RFC-002, RFC-004 Part A (in the account owner) |
 | X2-S02 Ingestion may lag, never loses an accepted record | §9, §5.5, §13.2, DT-13, DT-14 | RFC-003 |
-| X2-S03 Admission sustains the design load | §19, §19.5 | RFC-001, RFC-002 |
+| X2-S03 Admission sustains the design load | §19, §19.5, §4.7 rule 5 (overload control, AI6-12), §22.1 (overload recovery), DT-50 | RFC-001, RFC-002 |
 | X2-S04 Metering keeps up with the design volume | §19, §19.5 | RFC-003 |
 | X2-S05 Single-link answer within `ack_budget`, any length *(amended: per month, per region)* | §18.1, §19.5, DT-20 | RFC-001, RFC-002 (path), RFC-000 §3 (budget) |
 | X2-S15 Final answer with no capacity in flight *(amended)* | §18.1, §8.5, DT-20 | RFC-001, RFC-002 |
@@ -4043,7 +4236,7 @@ measurement observes.
 | X2-S09 A fact survives a node or zone loss | §9, §11, §22.2, §4.2 (revocation), §4.3 (slot batches), DT-01, DT-04, DT-12, DT-27, DT-33 | — |
 | X2-S12 No fact lost on a region loss | §9, §7.4, §8.1, §11, §22.2, DT-02, DT-11, DT-14 | — |
 | X2-S14 Acknowledged only once durable in two regions | §9, §3.2, §4.3, §12, DT-01 | RFC-002, RFC-003, RFC-004 (each acknowledgement) |
-| X2-S10 Recovery time per capability and scope | §10.1, §4.4 (incl. link and identity hot standbys, present-time expiry poll, warm renewal and resume), §4.2 (ambiguous handoff), §4.5 (moves), §4.7 (gateway fallback), §3.2 (sharded control rows), §3.3, §7.3 (metro split), §7.4, §11, §22.2, DT-02, DT-28, DT-33, DT-35, DT-40, DT-42, DT-43 | — |
+| X2-S10 Recovery time per capability and scope | §10.1, §4.4 (incl. link and identity hot standbys, present-time expiry poll, warm renewal and resume), §4.2 (ambiguous handoff), §4.5 (moves), §4.7 (gateway fallback; rule 5, recovery from overload), §3.2 (sharded control rows), §3.3, §7.3 (metro split), §7.4, §11, §22.2, DT-02, DT-28, DT-33, DT-35, DT-40, DT-42, DT-43, DT-50 | — |
 | X2-S11 Retrieval at the end of the retention period | §13, §14.2, DT-21, DT-22 | — |
 
 **Other scenarios to which RFC-006 contributes a contract** (primary RFC named; the scenario
@@ -4358,3 +4551,30 @@ declares `ingest_log`'s hand-off stream with `identity-conflict` rows and its cl
 gives the notifier's delivery worker and the `ingest` relay their key-release entries,
 sends `integrity_report` intake, and verifies `probeSetSummary(v)` under placement's
 summary-signing key.
+
+## Erratum 7.1
+
+Erratum 7.1 (2026-10-13) applies the coordinator's binding decisions D1 … D5 on AI6-12,
+the metastable overload collapse of the owner runtime (sources in "Architecture issues").
+Revision 7's acceptance stands: no logical design, no safety argument of §4.2 or §4.3 and
+no frozen contract changes. `impact.py coverage S-PLAT` is unchanged by the erratum (no
+scenario is added or removed; X2-S03 and X2-S10 cite the new sections).
+
+| Finding or decision | Change in erratum 7.1 |
+|---|---|
+| AI6-12 mechanism (i): a slow database grew the queue with no `Overloaded`; only the event loop and the 10,000-call queue cap shed | D1: §4.7 rule 5a, admission control on the oldest queued call's age and the batch duration p99 over 2 s, each with a 500 ms entry limit (est.), release at 250 ms held 1 s, 2 checks to enter; `retryAfterMs` from the drain time with jitter; `moved`, `adopt` and `exclusive` calls not shed; §4.3 `Overloaded` row; §12.10 (`slot_queue_max` now listed) |
+| AI6-12 mechanism (ii): a longer queue made larger batches, up to 2,000 entries | D2: §4.7 rule 5b, `n_cap` from the measured time per entry and `batch_time_budget` 400 ms (est.), the hard caps kept; the safety argument (a prefix of the queue, per-partition order and §4.3 unchanged); §4.3 batch take and size limits |
+| AI6-12 mechanism (iii): an abandoned batch was re-run at once as a fresh attempt, then answered `Retry` | D3: §4.7 rule 5c, an abandon answers `Retry` with no fresh attempt and enters the overloaded state (default budget only); the fresh attempt after 40001s and after a per-tier timeout kept; §3.6 timeouts row, §4.3 crash points and `Retry` row, §4.7 rule 4 wording, §12.10 `batch_retries` and abandon rows |
+| D3: consistency with C01 | §4.7 rule 5c: C01 does not require the runtime to re-propose; the `Retry` description and CP-2 do not name the abandon, raised as CI6-5 with a fallback inside C01 v1 if C4 rejects it |
+| D2: consistency with C01 | CI6-6: C01 §3.2's "every pending call" lists only the hard caps; reading adopted, no guarantee changed |
+| D4: no deadline dropping | Not added; Competition row states when it would be |
+| D5: no contract edit | No file under `docs/04-delivery/contracts/` changed; CI6-5 and CI6-6 go to C4 change control |
+| Measurement row | §22.1 "Overload recovery": burst at 5 `C` for 3 s then 0.8 `C`, a database slowdown, and a metro-split variant; goodput ≥ 95% of offered within 10 s, abandons ≤ 1% of batches and none after recovery, a control run without rules 5a to 5c |
+| Operations and verification | §11 failure-mode row; §16 slot overloaded alarm; DT-50 (from the runtime test of commit `cb57ea3`); RK38; Competition rows; traceability (X2-S03, X2-S10) |
+
+**Interface points other RFCs must match** (no new contract obligation): every owner
+already handles `Overloaded(retryAfterMs)` and `Retry` (C01 §3.2); after this erratum it
+gets `Overloaded` also when the database under its slot is slow, and `Retry` also after an
+abandon, and it re-proposes on `Retry` with the same identities. RFC-001 §7.2 item (e)
+says "the runtime … re-proposes it" about an abandoned batch; its §5.1 already says the
+owner re-proposes, which is the reading this erratum needs (owner re-proposal on `Retry`).
