@@ -47,7 +47,10 @@
     "prepare": "git rev-parse --is-inside-work-tree >/dev/null 2>&1 && git config core.hooksPath .githooks || true",
     "measure": "LINK_MEASURE=1 SEC_MEASURE=1 npm run -s test:link && LINK_MEASURE=1 SEC_MEASURE=1 npm run -s test:sec",
     "typecheck:contracts": "tsc --noEmit -p contracts/suites",
-    "test:contracts": "node --test --test-concurrency=1 'contracts/*/test/contract.*.test.ts' 'platform/*/test/contract.*.test.ts' 'slices/*/test/contract.*.test.ts' 'slices/*/*/test/contract.*.test.ts'"
+    "test:contracts": "node --test --test-concurrency=1 'contracts/*/test/contract.*.test.ts' 'platform/*/test/contract.*.test.ts' 'slices/*/test/contract.*.test.ts' 'slices/*/*/test/contract.*.test.ts'",
+    "mutation:link": "stryker run tools/mutation/link.stryker.json",
+    "mutation:rate": "stryker run tools/mutation/rate.stryker.json",
+    "mutation:account": "stryker run tools/mutation/account.stryker.json"
   },
   "dependencies": {
     "pg": "^8.13.1"
@@ -57,7 +60,8 @@
     "@types/pg": "^8.11.10",
     "eslint": "10.11.0",
     "typescript": "~5.9.3",
-    "typescript-eslint": "8.71.1"
+    "typescript-eslint": "8.71.1",
+    "@stryker-mutator/core": "9.6.1"
   },
   "engines": {
     "node": ">=24"

@@ -19,6 +19,7 @@ files once per session, not per step.
 | `fix-verifier` | C2–C5 | confirm a revision fixes a named review |
 | `contract-author` | C4 | freeze one contract |
 | `plan-author` | C5 | plan one slice |
+| `test-reviewer` | C6 | grade the tests of one slice increment (mutation adequacy, Stryker) |
 
 Never use a generic agent for these jobs. The agent files carry the rules, read scopes,
 conventions and output formats, so briefs stay short. Never paste conventions into a
