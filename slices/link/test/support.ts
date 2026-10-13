@@ -6,9 +6,9 @@
  * - the per-minute oracle (T-01), one cell per minute, for hold, convert and release, extended with POL-05
  *   waiting (I3): waiters in priority order, and the scan of each release and conversion.
  */
-import type { CommandEnvelope, HlcTs, NotificationOut, OwnerRuntime, PartitionKey } from '@share/owner-runtime';
+import type { AppendResult, BatchContext, CommandEnvelope, HlcTs, NotificationOut, OwnerRuntime, PartitionKey } from '@share/owner-runtime';
 import { hlcToWallMs, utf8 } from '@share/owner-runtime';
-import { RuntimeDouble } from '@share/owner-runtime/testing';
+import { RuntimeDouble, type ScriptedAppend } from '@share/owner-runtime/testing';
 import type {
   ConvertCmd, ConvertReply, CounterOffer, HoldCmd, HoldReply, LinkCommand, LinkPolicy, Outcome, ReleaseCmd, ReleaseReply, RequestId, Window,
 } from '../src/index.ts';
@@ -36,6 +36,20 @@ export const START_MS = DAY_MS + 9 * 3_600_000;
 export const DAY_MIN = DAY_MS / 60_000;
 /** The minute index of hh:mm on the scenario day. */
 export const M = (hh: number, mm = 0): number => DAY_MIN + hh * 60 + mm;
+
+/**
+ * A stepped wall clock for the real C01 runtime core and its in-memory store (engineering §5): it starts at
+ * `startMs` and moves only when the run calls `advance`. The sum of all steps stays below `limitMs`, so the session
+ * of the runtime (C01 `session_ttl` 3 s, renewed by the runtime's own timer) never expires by a step of the run.
+ */
+export function steppedClock(startMs = START_MS, limitMs = 2_000): { now: () => number; advance: (ms: number) => void; stepped: () => number } {
+  let t = startMs;
+  return {
+    now: () => t,
+    advance: (ms) => { t += Math.max(0, Math.min(ms, startMs + limitMs - t)); },
+    stepped: () => t - startMs,
+  };
+}
 
 // ---------------- harness on the runtime double ----------------
 
@@ -71,6 +85,22 @@ export async function harness(opts: { link?: string; capacity?: number; policy?:
   const r = await owner.register(link, opts.capacity ?? 10, opts.policy ?? DEFAULT_POLICY);
   if (!('result' in r) || r.result !== 'INITIALISED') throw new Error(`register failed: ${JSON.stringify(r)}`);
   return { rt, owner, decided, link, stub: new AccountStub(rt, owner, link), pushed };
+}
+
+/**
+ * An append that runs `decide` (so the link changes its state in memory, as on the real runtime), then does not
+ * commit and answers `result`. A scripted result alone of the runtime double does not run `decide`.
+ */
+export function decidedThen(h: Harness, result: AppendResult): ScriptedAppend {
+  return (call) => {
+    const ctx: BatchContext = {
+      ts: h.rt.now().ts, timing: h.rt.timing(), conditionResults: {},
+      head: (p) => h.rt.headOf(p),
+      read: () => { throw new Error('the link reads no row in decide'); },
+    };
+    call.decide?.(ctx);
+    return result;
+  };
 }
 
 // ---------------- recorded account-owner stub ----------------

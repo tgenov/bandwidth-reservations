@@ -14,7 +14,7 @@ import {
   declaration, DEFAULT_POLICY, LINK_KIND, LinkOwner, runtimeLogReader, type DecidedRecord, type RequestId, type WaitingNotification,
 } from '../src/index.ts';
 import { propertyRun } from './property.ts';
-import { AccountStub, doubleLogReader, harness, M } from './support.ts';
+import { AccountStub, doubleLogReader, harness, M, steppedClock } from './support.ts';
 
 function yieldRequestsOf(pushed: NotificationOut[]): () => Array<{ request: RequestId; attempt: number; claim: bigint }> {
   return () => pushed.map((n) => n.body as WaitingNotification)
@@ -49,28 +49,33 @@ test('T-08 the P1-N1 properties, the waiting oracle and the yield oracle hold wh
   }
 });
 
-test('should keep the P1-N1 properties and the yield oracle on the real C01 runtime core (in-memory store) with marks and yield answers', async () => {
-  const store = new MemoryStore();
+test('should keep the P1-N1 properties and the yield oracle when 50 clients send marks and yield answers on the real C01 runtime core (in-memory store)', async () => {
+  const clock = steppedClock();
+  const store = new MemoryStore({ wallMs: clock.now });
   store.seedSlots('link', declaration.slotCount);
   const publisher = new MemoryPublisher();
-  const rt = new CockroachOwnerRuntime({ declaration, store, publisher, load: new ManualLoad(),
+  const rt = new CockroachOwnerRuntime({ declaration, store, publisher, load: new ManualLoad(), wallMs: clock.now,
     slots: Array.from({ length: declaration.slotCount }, (_, i) => i) });
   const decided: DecidedRecord[] = [];
   const pushed: NotificationOut[] = [];
   const readLog = runtimeLogReader(rt);
-  const owner = new LinkOwner(rt, { readLog, onDecided: (d) => decided.push(d), onNotify: (n) => pushed.push(n) });
+  // The stepped clock moves less than the re-send interval, so no re-send of a yield request changes the run.
+  const owner = new LinkOwner(rt, { readLog, onDecided: (d) => decided.push(d), onNotify: (n) => pushed.push(n), yieldResendMs: 60_000 });
   await rt.start(owner);
   try {
     const link = 'core-yield-81';
     await owner.register(link, 10, DEFAULT_POLICY);
     const stub = new AccountStub(rt, owner, link);
-    // The runtime core has a real clock: the windows start at its present minute (V4, S-LINK I4).
+    // The runtime core runs on the stepped clock: the windows start at its present minute (V4, S-LINK I4).
     const base = Math.floor(hlcToWallMs(rt.now().ts) / 60_000);
     const res = await propertyRun({
       stub, decided, capacity: 10, base, waitShare: 0.5, yieldShare: 0.25, yieldRequests: yieldRequestsOf(pushed),
-      readLog: () => readLog(utf8(link), 0n),
+      readLog: () => readLog(utf8(link), 0n), advance: (ms) => clock.advance(Math.floor(ms / 100)),
     }, 81, 1_000, 50);
-    assert.ok((res.counts['notice:YIELD_REQUEST'] ?? 0) > 0 && (res.counts['ACCEPTED'] ?? 0) > 0, `yields occur (${JSON.stringify(res.counts)})`);
+    for (const k of ['notice:YIELD_REQUEST', 'ACCEPTED', 'STALE_ATTEMPT']) {
+      assert.ok((res.counts[k] ?? 0) > 0, `seed 81: ${k} occurs (${JSON.stringify(res.counts)})`);
+    }
+    assert.ok(clock.stepped() > 0, 'seed 81: the run moves the stepped clock');
   } finally {
     await rt.stop();
   }

@@ -348,6 +348,32 @@ load and `typecheck:link` reported errors in `platform/runtime/src/standby/grpc.
 `node_modules/@grpc` to the installed copy of another worktree (untracked; not a code change). A person runs
 `npm ci` in each checkout.
 
+### Review 75 (test review) findings
+
+Each listed mutant was checked by hand (edit, `npm run -s test:link`, restore; the source files were restored from a
+copy and compared). Line numbers are those after the fixes.
+
+| Finding | State | Proving tests or note |
+|---|---|---|
+| TR-1 (Blocker) property run on the C01 runtime core uses the system clock | Fixed | `steppedClock` (`test/support.ts`) is the `wallMs` of `CockroachOwnerRuntime` and of its `MemoryStore` in the core runs of I1 (`property.test.ts`, seeds 11, 12), I3/I4 (`property.waiting.test.ts`, seed 61) and I5 (`property.yields.test.ts`, seed 81). The run moves it (`advance`: 1/100 of the step of the double run; the sum stays below 2 s, so the 3 s session never expires by a step). The I5 run sets `yieldResendMs` 60 s, so no re-send changes the run. The I5 run asserts `YIELD_REQUEST`, `ACCEPTED` and `STALE_ATTEMPT` with the seed. Test data and setup only; no assertion weakened. Reproduction shown once: two full `test:link` runs gave the same SHA-256 over (command, outcome, ts, seq) of every decision: core-11 `63162283f590eb42`, core-12 `17a49174d2cb0354`, core-wait-61 `fb7226abfec44695`, core-yield-81 `a0d2e57386d41d9a` (a temporary print, removed) |
+| TR-2 (Major) one re-send only | Fixed | `should send each open yield request again every yieldResendMs when no entry answers it` (3 pushes, each equal to the first; timer at now + 1 s). Kills M1 (`owner.ts:378` re-arm in `onTimer` removed) |
+| TR-3 (Major) re-sends stop after a failed append | Fixed, **code defect** | `onTimer` returned while `rebuild !== 'none'` and did not arm the timer again, so after any append that did not commit the re-sends stopped on an idle link (C02 "YIELD_REQUEST": an unanswered request is sent again; DI-25). Now `onTimer` catches up first, then sends and arms again; if the catch-up fails it alerts `TIMER_FAILED` and arms the timer again. Tests (written first, failed first): `should go on sending the open yield requests when an append fails with MOVING / OVERLOADED / STOPPED / STALE_EPOCH` (decide runs, then the result), `should alert TIMER_FAILED and arm the re-send timer again when the catch-up of the timer fails`. Kills "return while rebuild pending" and "no re-arm after TIMER_FAILED" |
+| TR-4 (Major) no failed append on `mark_waiting` or a yield answer | Fixed | `decidedThen(h, result)` in `test/support.ts` (decide runs, then the scripted result; same name as the S-LINK-I6 helper in `legs.test.ts`, which also takes the harness). For each of MOVING after decide and `scriptRestarts(2)`: `should leave the claims, the requests and the mark unchanged when the append of a mark_waiting is not committed …`, `… of a yield_accept …`, `should accept the re-send of a yield_accept …`, `… of a yield_refuse … and raise the new claim on the re-send`. They compare the open requests, the waiters, the `query` of both requests and `occ_all`. Kills `state.ts:860` `this.deleteIn(this.claims, ck)` → `this.claims.delete(ck)` (2 tests). No code defect: the rollback is correct |
+| TR-5 (Major) DI-23 untested | Fixed | `T-08 an accepted claim with no open request left keeps a younger waiter in its ranges from a grant until its older waiter ends (DI-23)`: the yielder (8 Mbps, fits) is not granted in the accept entry; the release of O (a waiter) writes no notice (see DI-28); the next scan grants Y at attempt 2. Kills "end the accepted claim when it has no open request" |
+| TR-6 (Minor) `onMovedOut` cancel | Fixed | `should cancel the re-send timer of a link when the link moves out` (`rt.moveOut`). Kills M2 |
+| TR-7 (Minor) open-request skip in `markWaiting` | Fixed | `should raise no new claim when a holder sets its mark again and an older waiter has an open request on its attempt` (a marked waiter X is granted outside the claimed ranges and becomes a candidate with no request from O). Kills M6 (`state.ts:747`) |
+| TR-8 (Minor) two rules killed only by property runs | Fixed | (a) `T-08 a marked younger holder outside the conflict ranges of the waiter is not asked` kills M3 (`state.ts:809`); (b) `should record a second yield_refuse of the same attempt with another claim as a new answer, not as the recorded reply` kills M4 (`state.ts:764`) |
+| TR-9 (Minor) names without `when` | Fixed | Three tests in `yields.test.ts` and the core run in `property.yields.test.ts` renamed to `should … when …` |
+| TR-10 (Minor) DI-27 not visible | Fixed | Review 17 loop test: `query(y1)` is `{ state: 'WAITING', attempt: 2, aheadDeadline: 0 }` ("DI-27") |
+| TR-11 (Minor) DI-21 not in the test name | Fixed | `P2-S15 link part: … (DI-21, open)` |
+| TR-12 (Minor) oracle copies the DI rule choices | Open | An oracle-free claim check from the log rows is not added in this round |
+| TR-13 (Minor) Stryker ranges; C02 suite I5 part | (a) Fixed, (b) Open | (a) `tools/mutation/link.stryker.json`: `owner.ts:525-533` (the arm after commit) added; the later `owner.ts` ranges moved by the 8 new lines. (b) The C02 suite has no `advance` on `C02Subject` yet: a contract change, left for the C02 suite owner |
+| DI-21 (orchestrator: conform to RFC-001 §4.3 "a new claim for each one") | **Stopped, not changed** | Conforming breaks C02. C02 sets `ClaimSeq` = the log sequence of the entry that raised the claim, and the identity of a `YIELD_REQUEST` and of `yield_accept` / `yield_refuse` is (link, request, attempt, kind, claim). A mark that checks two older waiters blocked by one holder attempt (P2-S15: r1 and r2 wait on r3) would raise two requests with the same identity in one entry; the relay drops the second as a duplicate, and an answer cannot name its waiter. A Tick entry for each further claim would give each its own sequence, but RFC-001 says the mark raises them "in the same entry". Code and the P2-S15 assertion are unchanged; C02 must resolve CS-11 first (claim identity (sequence, index), or one claim per holder attempt per entry) |
+
+Gates after the fixes: `npm run -s typecheck:link`, `typecheck:contracts` and `npx eslint slices/link contracts` clean;
+`npm run -s test:link` 258 tests, 255 pass, 0 fail, 3 skipped (measurements); `npm run -s test:contracts` 97 tests,
+94 pass, 0 fail, 3 todo.
+
 ### Design issues found
 
 | Id | Where | Conflict | Proposed resolution |
@@ -359,6 +385,7 @@ load and `typecheck:link` reported errors in `platform/runtime/src/standby/grpc.
 | DI-25 | C02 "YIELD_REQUEST" re-send; C01 §2.4 hooks | No interval is stated for the re-send of an unanswered request. The C01 timer fires through the runtime option `onTimer`, which `OwnerHooks` does not list | 1 s (est., as the other C02 re-sends), as a push of the same identity and content (not a new outbox row). C02 parameter; C01 note: `onTimer` in `OwnerHooks` (as CS-2) |
 | DI-26 | RFC-001 §4.3 `request_yields` | The scan skips a waiter at or after its `D_c`, but `request_yields` from a mark or a refusal has no such rule, so a holder could yield for a request that cannot commit | No yield request for a waiter at or after its `D_c`. RFC-001 erratum |
 | DI-27 | RFC-001 §4.3; C02 `AcceptReply` | `ACCEPTED` has no `aheadDeadline`. The yielder's waiting notice comes from the scan, but the scan skips it while it is inside a live claim, so its `aheadDeadline` (and `query`) can be 0 until a later scan | Accept (the 5 s `query` reconcile and the next scan correct it; the blocker is older), or the accept entry sends the yielder's `WAITING_NOTICE` after its scan |
+| DI-28 | RFC-001 §4.3 scan triggers | The release of a waiter ends its yield claim, but it frees no occupancy, so it does not scan. A younger waiter that only the claim kept from a grant waits until the next entry that scans (review 75 TR-5 pins this) | Accept (the next release or conversion scans), or RFC-001: the end of a live claim scans its ranges |
 
 ### Left for later increments
 

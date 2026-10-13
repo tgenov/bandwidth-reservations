@@ -358,12 +358,17 @@ export class LinkOwner implements OwnerHooks {
   /**
    * A C01 timer of a link partition is due (the runtime's `onTimer`). For `YIELD_RESEND_TIMER`: send each open yield
    * request of the link again, with the same claim and content, after `leaseValid` (C01 CC-7), and arm the timer again.
+   * After an append that did not commit, the state must catch up first: the timer does that, so the re-sends go on
+   * when no later command comes (C02 "YIELD_REQUEST": an unanswered request is sent again; S-LINK I5 DI-25). If the
+   * catch-up fails, the timer is armed again and the link alerts `TIMER_FAILED`.
    */
   async onTimer(partition: PartitionKey, key: string): Promise<void> {
     const mem = this.links.get(Buffer.from(partition).toString('utf8'));
     if (key !== YIELD_RESEND_TIMER || !mem) return;
     await this.serialise(mem, async () => {
-      if (mem.rebuild !== 'none' || mem.stopped || !this.rt.leaseValid(mem.slot).valid) return;
+      if (!this.rt.leaseValid(mem.slot).valid) return;
+      if (mem.rebuild !== 'none') await this.rebuild(mem);
+      if (mem.stopped || !this.rt.leaseValid(mem.slot).valid) return;
       const fence = { generation: this.rt.generation(mem.partition), epoch: this.rt.epoch(mem.slot) };
       for (const y of mem.state.openYieldRequests()) {
         this.o.onNotify?.(this.notification(mem.link, {
@@ -371,6 +376,9 @@ export class LinkOwner implements OwnerHooks {
         }, y.claim, fence));
       }
       this.armYieldResend(mem);
+    }).catch((e: unknown) => {
+      this.alert({ kind: 'TIMER_FAILED', link: mem.link, detail: String(e) });
+      this.rt.timer(mem.partition, YIELD_RESEND_TIMER, hlcAddMs(this.rt.now().ts, this.o.yieldResendMs));
     });
   }
 

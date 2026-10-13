@@ -11,7 +11,7 @@ import { CockroachOwnerRuntime, hlcToWallMs, ManualLoad, MemoryPublisher, utf8 }
 import { MemoryStore } from '@share/owner-runtime/testing';
 import { declaration, DEFAULT_POLICY, LinkOwner, runtimeLogReader, type DecidedRecord, type LinkPolicy } from '../src/index.ts';
 import { propertyRun } from './property.ts';
-import { AccountStub, harness, M } from './support.ts';
+import { AccountStub, harness, M, steppedClock } from './support.ts';
 
 async function onDouble(seeds: number[], policy: LinkPolicy, commands: number): Promise<Record<string, number>> {
   const total: Record<string, number> = {};
@@ -43,10 +43,11 @@ test('T-07 the waiting oracle holds when the scan budget binds (scan_steps 1): T
 });
 
 test('should keep the P1-N1 properties and the waiting oracle on the real C01 runtime core (in-memory store) with wait = true', async () => {
-  const store = new MemoryStore();
+  const clock = steppedClock();
+  const store = new MemoryStore({ wallMs: clock.now });
   store.seedSlots('link', declaration.slotCount);
   const publisher = new MemoryPublisher();
-  const rt = new CockroachOwnerRuntime({ declaration, store, publisher, load: new ManualLoad(),
+  const rt = new CockroachOwnerRuntime({ declaration, store, publisher, load: new ManualLoad(), wallMs: clock.now,
     slots: Array.from({ length: declaration.slotCount }, (_, i) => i) });
   const decided: DecidedRecord[] = [];
   const readLog = runtimeLogReader(rt);
@@ -57,9 +58,10 @@ test('should keep the P1-N1 properties and the waiting oracle on the real C01 ru
     const policy = { ...DEFAULT_POLICY, scanSteps: 2 };
     await owner.register(link, 10, policy);
     const stub = new AccountStub(rt, owner, link);
-    // The runtime core has a real clock: the windows start at its present minute, so that they are valid (V4, S-LINK I4).
+    // The runtime core runs on the stepped clock: the windows start at its present minute, so that they are valid (V4, S-LINK I4).
     const base = Math.floor(hlcToWallMs(rt.now().ts) / 60_000);
-    const res = await propertyRun({ stub, decided, capacity: 10, base, policy, waitShare: 0.5, readLog: () => readLog(utf8(link), 0n) }, 61, 1_000, 50);
+    const res = await propertyRun({ stub, decided, capacity: 10, base, policy, waitShare: 0.5, readLog: () => readLog(utf8(link), 0n),
+      advance: (ms) => clock.advance(Math.floor(ms / 100)) }, 61, 1_000, 50);
     const notices = Object.entries(res.counts).filter(([k]) => k.startsWith('notice:')).reduce((n, [, v]) => n + v, 0);
     assert.ok(notices > 0, `notices occur (${JSON.stringify(res.counts)})`);
     const sent = publisher.sent.filter((m) => m.topic === 'link.notifications.v1');

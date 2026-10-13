@@ -38,7 +38,7 @@ export interface PropertyTarget {
   /** The base minute of the windows. */
   base: number;
   readLog: () => Promise<LoggedEntry[]>;
-  /** Moves the clock of a double forward. Undefined on a runtime with a real clock. */
+  /** Moves the stepped clock of the run forward: the clock of the runtime double, or the stepped clock of the runtime core. */
   advance?: (ms: number) => void;
   /** The policy that the link was registered with (the counter-offer budgets). Default: DEFAULT_POLICY. */
   policy?: LinkPolicy;

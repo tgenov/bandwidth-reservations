@@ -9,7 +9,7 @@ import { CockroachOwnerRuntime, hlcToWallMs, ManualLoad, MemoryPublisher, utf8 }
 import { MemoryStore } from '@share/owner-runtime/testing';
 import { declaration, DEFAULT_POLICY, LinkOwner, runtimeLogReader, type DecidedRecord } from '../src/index.ts';
 import { propertyRun } from './property.ts';
-import { AccountStub, harness, M } from './support.ts';
+import { AccountStub, harness, M, steppedClock } from './support.ts';
 
 const SEEDS = [1, 2, 3, 4, 5, 6, 7, 8];
 
@@ -59,9 +59,10 @@ test('T-04 counter-offers equal the oracle with the step bound and the batch bud
 });
 
 test('should keep the P1-N1 properties when 50 clients send 2 seeds × 1,000 commands on the real C01 runtime core (in-memory store)', async () => {
-  const store = new MemoryStore();
+  const clock = steppedClock();
+  const store = new MemoryStore({ wallMs: clock.now });
   store.seedSlots('link', declaration.slotCount);
-  const rt = new CockroachOwnerRuntime({ declaration, store, publisher: new MemoryPublisher(), load: new ManualLoad(),
+  const rt = new CockroachOwnerRuntime({ declaration, store, publisher: new MemoryPublisher(), load: new ManualLoad(), wallMs: clock.now,
     slots: Array.from({ length: declaration.slotCount }, (_, i) => i) });
   const decided: DecidedRecord[] = [];
   // The runtime's own readLog: opened payloads, sender-fence envelope unwrapped (S-PLAT I1b).
@@ -74,9 +75,10 @@ test('should keep the P1-N1 properties when 50 clients send 2 seeds × 1,000 com
       decided.length = 0;
       await owner.register(link, 10);
       const stub = new AccountStub(rt, owner, link);
-      // The runtime core has a real clock: the windows start at its present minute, so that they are valid (V4).
+      // The runtime core runs on the stepped clock: the windows start at its present minute, so that they are valid (V4).
       const base = Math.floor(hlcToWallMs(rt.now().ts) / 60_000);
-      await propertyRun({ stub, decided, capacity: 10, base, readLog: () => readLog(utf8(link), 0n) }, seed, 1_000, 50);
+      await propertyRun({ stub, decided, capacity: 10, base, readLog: () => readLog(utf8(link), 0n), advance: (ms) => clock.advance(Math.floor(ms / 100)) },
+        seed, 1_000, 50);
     }
   } finally {
     await rt.stop();

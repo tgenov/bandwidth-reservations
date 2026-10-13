@@ -10,11 +10,12 @@
  */
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { hlcToWallMs, utf8, type HlcTs } from '@share/owner-runtime';
+import { hlcAddMs, hlcToWallMs, utf8, type AppendResult, type HlcTs } from '@share/owner-runtime';
+import { RESULTS } from '@share/owner-runtime/testing';
 import {
-  ENTRY, LINK_KIND, LinkOwner, requestKey, type HoldCmd, type RequestId, type WaitingNotification, type YieldAnswerCmd,
+  ENTRY, LINK_KIND, LinkOwner, requestKey, YIELD_RESEND_TIMER, type HoldCmd, type RequestId, type WaitingNotification, type YieldAnswerCmd,
 } from '../src/index.ts';
-import { AccountStub, doubleLogReader, harness, M, resultOf, type Harness } from './support.ts';
+import { AccountStub, decidedThen, doubleLogReader, harness, M, resultOf, type Harness } from './support.ts';
 
 const W = { start: M(10), end: M(11) };
 
@@ -131,7 +132,7 @@ test('P2-S118 link part: a holder that starts to wait later yields: its mark rai
   assert.deepEqual(kinds(h).slice(-2), [ENTRY.MarkWaiting, ENTRY.YieldAccept]);
 });
 
-test('P2-S15 link part: yields break contention among waiting requests; the oldest is granted, then confirmed, and the others are refused for no fit', async () => {
+test('P2-S15 link part: yields break contention among waiting requests; the oldest is granted, then confirmed, and the others are refused for no fit (DI-21, open)', async () => {
   const h = await harness();
   const t0 = nowMs(h);
   const [r1, r2, r3] = [3, 2, 1].map((i) => aged(h.stub.holdCmd({ rate: 8, window: W, account: `r${i}`, wait: true }), t0 - i)) as [HoldCmd, HoldCmd, HoldCmd];
@@ -254,6 +255,7 @@ test('T-08 review 17 loop: with yields sufficient, a yielder is not granted agai
   const a1 = await answer(h.stub, y1.request, 1, c, 'yield_accept');
   assert.deepEqual(body(a1), { result: 'ACCEPTED', newWaiterAttempt: 2 });
   assert.deepEqual(notesOf(h, h.link, seqOf(a1)), [], 'Y1 is not granted again, and O is not granted yet');
+  assert.deepEqual(await query(h.stub, y1.request), { state: 'WAITING', attempt: 2, aheadDeadline: 0 }, 'DI-27');
   const st = h.owner.stateOf(h.link);
   assert.equal(st?.occAll.peak(W.start, W.end), 7, '3 Mbps is free, and Y1 needs 3');
   assert.deepEqual(st?.waitersInOrder().map((w) => requestKey(w.cmd.request)), [requestKey(o.request), requestKey(y1.request)]);
@@ -504,7 +506,7 @@ test('T-08 the release of a waiter ends its claim; the holder is asked nothing m
   assert.deepEqual(body(await answer(h.stub, y.request, 1, c, 'yield_accept')), { result: 'STALE_ATTEMPT' });
 });
 
-test('should apply mark_waiting only above the last applied position; an older or equal position gets IGNORED_OLDER and writes no entry', async () => {
+test('should answer IGNORED_OLDER and write no entry when a mark has a position at or below the last applied one, and apply it when the position is above', async () => {
   const { h, y, o } = await oneCrossing();
   const first = await mark(h.stub, y.request, false, 5n);
   assert.deepEqual(body(first), { result: 'APPLIED' });
@@ -519,7 +521,7 @@ test('should apply mark_waiting only above the last applied position; an older o
   assert.deepEqual(body(await mark(h.stub, o.request, true, 1n)), { result: 'APPLIED' }, 'a waiter can carry the mark');
 });
 
-test('should answer IGNORED_OLDER to a mark for a request that the link has not seen (alert MARK_WITHOUT_REQUEST) or whose state is final, and write nothing', async () => {
+test('should answer IGNORED_OLDER and write no entry when a mark names a request that is unseen (alert MARK_WITHOUT_REQUEST) or final', async () => {
   const h = await harness();
   const unseen = h.stub.holdCmd({ rate: 1, window: W, account: 'u' });
   const logLen = h.rt.log(utf8(h.link)).length;
@@ -534,7 +536,7 @@ test('should answer IGNORED_OLDER to a mark for a request that the link has not 
   assert.equal(h.owner.alerts.length, 1);
 });
 
-test('should replay marks, claims and yield answers to the same state and notices after a takeover, and re-arm the open yield requests', async () => {
+test('should replay marks, claims and yield answers to the same state and notices, and re-arm the open yield requests, when a new owner takes over the link', async () => {
   const h = await harness();
   const t0 = nowMs(h);
   const y = aged(h.stub.holdCmd({ rate: 8, window: W, account: 'y' }), t0 - 1);
@@ -569,6 +571,259 @@ test('should replay marks, claims and yield answers to the same state and notice
   const claim = (pushed2[0] as { body: { claim: bigint } }).body.claim;
   assert.deepEqual(body(await answer(stub2, y.request, 1, c1, 'yield_refuse')), { result: 'REFUSED_RECORDED' }, 'the recorded reply after the takeover');
   assert.deepEqual(body(await answer(stub2, y.request, 1, claim, 'yield_accept')), { result: 'ACCEPTED', newWaiterAttempt: 2 });
+});
+
+// ---------------- re-sends, failed appends, DI-23 (review 75) ----------------
+
+/** The pushed YIELD_REQUESTs (the C01 notifications) from index `from` on. */
+function pushedYields(h: Harness, from = 0): Array<{ claim: bigint; request: string; push: unknown }> {
+  return h.pushed.slice(from).filter((n) => n.id.kind === 'YIELD_REQUEST')
+    .map((n) => ({ claim: (n.body as { claim: bigint }).claim, request: requestKey((n.body as { request: RequestId }).request), push: n }));
+}
+
+test('should send each open yield request again every yieldResendMs when no entry answers it', async () => {
+  const { h, y } = await oneCrossing();
+  const c = seqOf(await mark(h.stub, y.request, true, 1n));
+  const first = h.pushed.find((n) => n.id.kind === 'YIELD_REQUEST');
+  assert.ok(first);
+  const from = h.pushed.length;
+  for (let i = 0; i < 3; i++) {
+    h.rt.advance(1_000);
+    await h.owner.idle();
+  }
+  assert.equal(h.pushed.length - from, 3, 'one re-send each second');
+  for (const n of h.pushed.slice(from)) assert.deepEqual(n, first, 'the same identity, claim and content');
+  assert.equal((first.body as { claim: bigint }).claim, c);
+  assert.deepEqual(h.rt.timersOf(utf8(h.link)), [{ key: YIELD_RESEND_TIMER, atTs: hlcAddMs(h.rt.now().ts, 1_000) }], 'armed again');
+});
+
+const FAILED_APPENDS: Array<[string, () => AppendResult, Record<string, unknown>]> = [
+  ['MOVING', () => RESULTS.Moving(), { code: 'MOVING', retryAfterMs: 100 }],
+  ['OVERLOADED', () => RESULTS.Overloaded(50), { code: 'OVERLOADED', retryAfterMs: 50 }],
+  ['STOPPED', () => RESULTS.Stopped(), { code: 'STOPPED' }],
+  ['STALE_EPOCH', () => RESULTS.StaleEpoch(), { code: 'STALE_EPOCH', current: 1n }],
+];
+
+for (const [name, result, reply] of FAILED_APPENDS) {
+  test(`should go on sending the open yield requests when an append fails with ${name}`, async () => {
+    const { h, y } = await oneCrossing();
+    const c = seqOf(await mark(h.stub, y.request, true, 1n));
+    h.rt.scriptAppend(decidedThen(h, result()));
+    assert.deepEqual(await h.stub.hold(h.stub.holdCmd({ rate: 1, window: { start: M(12), end: M(13) }, account: 'z' })), reply);
+    const from = h.pushed.length;
+    for (let i = 0; i < 2; i++) {
+      h.rt.advance(1_000);
+      await h.owner.idle();
+    }
+    assert.deepEqual(pushedYields(h, from).map((n) => [n.request, n.claim]), [[requestKey(y.request), c], [requestKey(y.request), c]],
+      'the re-send timer is armed again after the catch-up (C02 "YIELD_REQUEST")');
+    assert.deepEqual(h.rt.timersOf(utf8(h.link)).map((t) => t.key), [YIELD_RESEND_TIMER]);
+  });
+}
+
+test('should alert TIMER_FAILED and arm the re-send timer again when the catch-up of the timer fails', async () => {
+  let failRead = false;
+  let rt: Harness['rt'] | undefined;
+  const h = await harness({ owner: { readLog: async (p, after) => {
+    if (failRead) throw new Error('log read failed');
+    return rt ? doubleLogReader(rt)(p, after) : [];
+  } } });
+  rt = h.rt;
+  const t0 = nowMs(h);
+  const y = aged(h.stub.holdCmd({ rate: 8, window: W, account: 'y' }), t0 - 1);
+  const o = aged(h.stub.holdCmd({ rate: 8, window: W, account: 'o', wait: true }), t0 - 5);
+  await h.stub.hold(y);
+  await h.stub.hold(o);
+  const c = seqOf(await mark(h.stub, y.request, true, 1n));
+  h.rt.scriptAppend(decidedThen(h, RESULTS.Moving()));
+  assert.equal(resultOf(await h.stub.hold(h.stub.holdCmd({ rate: 1, window: W, account: 'z' }))), 'MOVING');
+  failRead = true;
+  const from = h.pushed.length;
+  h.rt.advance(1_000);
+  await h.owner.idle();
+  assert.deepEqual(h.owner.alerts.map((a) => [a.kind, a.detail]), [['TIMER_FAILED', 'Error: log read failed']]);
+  assert.deepEqual(pushedYields(h, from), [], 'nothing is sent from a state that did not catch up');
+  assert.deepEqual(h.rt.timersOf(utf8(h.link)), [{ key: YIELD_RESEND_TIMER, atTs: hlcAddMs(h.rt.now().ts, 1_000) }]);
+  failRead = false;
+  h.rt.advance(1_000);
+  await h.owner.idle();
+  assert.deepEqual(pushedYields(h, from).map((n) => [n.request, n.claim]), [[requestKey(y.request), c]], 'the next timer catches up and sends');
+});
+
+/** The yield state of the link as a test can see it: the open requests, the query of each request, and occ_all on W. */
+async function yieldView(h: Harness, ...requests: RequestId[]): Promise<unknown> {
+  const st = h.owner.stateOf(h.link);
+  return {
+    open: st?.openYieldRequests().map((v) => [v.holder, v.attempt, v.claim, v.waiter]),
+    waiters: st?.waitersInOrder().map((v) => [requestKey(v.cmd.request), v.attempt]),
+    queries: await Promise.all(requests.map((r) => query(h.stub, r))),
+    occ: st?.occAll.peak(W.start, W.end),
+  };
+}
+
+/** Each way that `decide` runs and the batch then does not commit, or runs again from the committed state. */
+const NOT_COMMITTED: Array<[string, (h: Harness) => void, unknown]> = [
+  ['MOVING after decide', (h) => h.rt.scriptAppend(decidedThen(h, RESULTS.Moving())), { code: 'MOVING', retryAfterMs: 100 }],
+  ['a restart of decide (2 restarts)', (h) => h.rt.scriptRestarts(2), undefined],
+];
+
+for (const [how, fail, failReply] of NOT_COMMITTED) {
+  test(`should leave the claims, the requests and the mark unchanged when the append of a mark_waiting is not committed (${how}), and apply the re-send`, async () => {
+    const { h, y, o } = await oneCrossing();
+    const before = await yieldView(h, y.request, o.request);
+    fail(h);
+    const m = await mark(h.stub, y.request, true, 1n);
+    if (failReply !== undefined) {
+      assert.deepEqual(m, failReply);
+      assert.deepEqual(await yieldView(h, y.request, o.request), before, 'no claim, no request, no mark');
+      assert.deepEqual(pushedYields(h), []);
+      const again = await mark(h.stub, y.request, true, 1n);
+      assert.deepEqual(body(again), { result: 'APPLIED' }, 'the mark was not kept: the same position applies');
+      assert.deepEqual(notesOf(h, h.link), [yr(h.link, seqOf(again), y, 1, seqOf(again), o)]);
+    } else {
+      assert.deepEqual(body(m), { result: 'APPLIED' });
+      assert.deepEqual(notesOf(h, h.link), [yr(h.link, seqOf(m), y, 1, seqOf(m), o)], 'one claim, from the decide that committed');
+      assert.deepEqual(h.owner.stateOf(h.link)?.openYieldRequests().map((v) => v.claim), [seqOf(m)]);
+    }
+  });
+
+  test(`should leave the hold, the claims and the recorded answers unchanged when the append of a yield_accept is not committed (${how}), and accept the re-send`, async () => {
+    const { h, y, o } = await oneCrossing();
+    const c = seqOf(await mark(h.stub, y.request, true, 1n));
+    const before = await yieldView(h, y.request, o.request);
+    fail(h);
+    const a = await answer(h.stub, y.request, 1, c, 'yield_accept');
+    if (failReply !== undefined) {
+      assert.deepEqual(a, failReply);
+      assert.deepEqual(await yieldView(h, y.request, o.request), before, 'Y holds 8 at attempt 1 with claim c open; O waits');
+      assert.deepEqual(body(await answer(h.stub, y.request, 1, c, 'yield_refuse')), { result: 'REFUSED_RECORDED' },
+        'no recorded accept: a refusal of the same claim is recorded');
+      return;
+    }
+    assert.deepEqual(body(a), { result: 'ACCEPTED', newWaiterAttempt: 2 });
+    assert.deepEqual(notesOf(h, h.link, seqOf(a))[0], granted(h.link, seqOf(a), o));
+    assert.deepEqual(await yieldView(h, y.request, o.request), {
+      open: [], waiters: [[requestKey(y.request), 2]],
+      queries: [{ state: 'WAITING', attempt: 2, aheadDeadline: o.deadline }, { state: 'HELD', attempt: 1 }], occ: 8,
+    });
+  });
+
+  test(`should accept the re-send of a yield_accept when its first append is not committed (${how})`, async () => {
+    const { h, y, o } = await oneCrossing();
+    const c = seqOf(await mark(h.stub, y.request, true, 1n));
+    fail(h);
+    await answer(h.stub, y.request, 1, c, 'yield_accept');
+    const again = await answer(h.stub, y.request, 1, c, 'yield_accept');
+    assert.deepEqual(body(again), { result: 'ACCEPTED', newWaiterAttempt: 2 });
+    assert.deepEqual(await query(h.stub, o.request), { state: 'HELD', attempt: 1 });
+    assert.equal(h.owner.stateOf(h.link)?.occAll.peak(W.start, W.end), 8);
+  });
+
+  test(`should leave the claim and its request unchanged when the append of a yield_refuse is not committed (${how}), and raise the new claim on the re-send`, async () => {
+    const { h, y, o } = await oneCrossing();
+    const c1 = seqOf(await mark(h.stub, y.request, true, 1n));
+    const before = await yieldView(h, y.request, o.request);
+    fail(h);
+    const r = await answer(h.stub, y.request, 1, c1, 'yield_refuse');
+    let ref = r;
+    if (failReply !== undefined) {
+      assert.deepEqual(r, failReply);
+      assert.deepEqual(await yieldView(h, y.request, o.request), before, 'claim c1 is open on Y');
+      ref = await answer(h.stub, y.request, 1, c1, 'yield_refuse');
+    }
+    assert.deepEqual(body(ref), { result: 'REFUSED_RECORDED' });
+    const c2 = seqOf(ref);
+    assert.deepEqual(notesOf(h, h.link, c2), [yr(h.link, c2, y, 1, c2, o)], 'c1 ends and the mark raises c2 in the same entry');
+    assert.deepEqual(h.owner.stateOf(h.link)?.openYieldRequests().map((v) => v.claim), [c2]);
+    assert.deepEqual(body(await answer(h.stub, y.request, 1, c1, 'yield_accept')), { result: 'STALE_ATTEMPT' });
+    assert.deepEqual(body(await answer(h.stub, y.request, 1, c2, 'yield_accept')), { result: 'ACCEPTED', newWaiterAttempt: 2 });
+    assert.deepEqual(await query(h.stub, o.request), { state: 'HELD', attempt: 1 });
+  });
+}
+
+test('T-08 an accepted claim with no open request left keeps a younger waiter in its ranges from a grant until its older waiter ends (DI-23)', async () => {
+  const h = await harness();
+  const t0 = nowMs(h);
+  const y = aged(h.stub.holdCmd({ rate: 8, window: W, account: 'y' }), t0 - 1);
+  const o = aged(h.stub.holdCmd({ rate: 9, window: W, account: 'o', wait: true, deadlineInMs: 25_000 }), t0 - 5);
+  await h.stub.hold(y);
+  assert.equal(resultOf(await h.stub.hold(o)), 'WAITING');
+  const c = seqOf(await mark(h.stub, y.request, true, 1n));
+  assert.deepEqual(notesOf(h, h.link, c), [yr(h.link, c, y, 1, c, o)]);
+  const z = h.stub.holdCmd({ rate: 2, window: W, account: 'z' });
+  assert.equal(resultOf(await h.stub.hold(z)), 'HELD', 'a claim reserves nothing against arrivals');
+  const acc = await answer(h.stub, y.request, 1, c, 'yield_accept');
+  assert.deepEqual(body(acc), { result: 'ACCEPTED', newWaiterAttempt: 2 });
+  assert.deepEqual(notesOf(h, h.link, seqOf(acc)).filter((n) => n['kind'] === 'GRANTED'), [],
+    'O (9) does not fit beside Z (2); Y (8) fits, but it is younger than O and inside the live claim c');
+  assert.deepEqual(h.owner.stateOf(h.link)?.openYieldRequests(), [], 'the claim has no open request left');
+  assert.equal(h.owner.stateOf(h.link)?.occAll.peak(W.start, W.end), 2);
+  const relO = await h.stub.release(h.stub.releaseCmd(o.request, o.deadline, 'WITHDRAWN'));
+  assert.deepEqual(notesOf(h, h.link, seqOf(relO)), [], 'the release of a waiter frees no capacity, so it does not scan');
+  const relZ = await h.stub.release(h.stub.releaseCmd(z.request, z.deadline, 'FAILED'));
+  assert.deepEqual(notesOf(h, h.link, seqOf(relZ)), [granted(h.link, seqOf(relZ), y, 2)], 'the claim ended with O: Y is granted at the next scan');
+});
+
+test('should cancel the re-send timer of a link when the link moves out', async () => {
+  const { h, y } = await oneCrossing();
+  await mark(h.stub, y.request, true, 1n);
+  assert.deepEqual(h.rt.timersOf(utf8(h.link)).map((t) => t.key), [YIELD_RESEND_TIMER]);
+  const slot = h.rt.route(LINK_KIND, utf8(h.link)).slot;
+  h.rt.moveOut(utf8(h.link), (slot + 1) % 256);
+  assert.deepEqual(h.rt.timersOf(utf8(h.link)), [], 'C02: onMovedOut cancels those timers');
+});
+
+test('should raise no new claim when a holder sets its mark again and an older waiter has an open request on its attempt', async () => {
+  const h = await harness();
+  const t0 = nowMs(h);
+  const ow = { start: M(10), end: M(12) };
+  const y = aged(h.stub.holdCmd({ rate: 8, window: W, account: 'y' }), t0 - 1);
+  const o = aged(h.stub.holdCmd({ rate: 8, window: ow, account: 'o', wait: true, deadlineInMs: 25_000 }), t0 - 9);
+  await h.stub.hold(y);
+  assert.equal(resultOf(await h.stub.hold(o)), 'WAITING');
+  const c1 = seqOf(await mark(h.stub, y.request, true, 1n));
+  assert.deepEqual(notesOf(h, h.link, c1), [yr(h.link, c1, y, 1, c1, o)], 'the claim of O covers [10:00, 11:00) only');
+  const w2 = { start: M(11), end: M(12) };
+  const b = h.stub.holdCmd({ rate: 5, window: w2, account: 'b' });
+  assert.equal(resultOf(await h.stub.hold(b)), 'HELD');
+  const x = aged(h.stub.holdCmd({ rate: 8, window: w2, account: 'x', wait: true }), t0 - 2);
+  assert.equal(resultOf(await h.stub.hold(x)), 'WAITING');
+  assert.deepEqual(body(await mark(h.stub, x.request, true, 1n)), { result: 'APPLIED' }, 'the waiter X carries the mark');
+  const rel = await h.stub.release(h.stub.releaseCmd(b.request, b.deadline, 'FAILED'));
+  assert.deepEqual(notesOf(h, h.link, seqOf(rel)).filter((n) => n['kind'] === 'GRANTED'), [granted(h.link, seqOf(rel), x)],
+    'X is outside the claimed ranges: it holds now, with the mark, and has no request from O');
+  const open = h.owner.stateOf(h.link)?.openYieldRequests();
+  const pushed = yieldRequests(h).length;
+  assert.deepEqual(body(await mark(h.stub, y.request, true, 2n)), { result: 'APPLIED' });
+  assert.equal(yieldRequests(h).length, pushed, 'O has an open request on the attempt of Y: the mark of Y checks O no more');
+  assert.deepEqual(h.owner.stateOf(h.link)?.openYieldRequests(), open);
+});
+
+test('T-08 a marked younger holder outside the conflict ranges of the waiter is not asked', async () => {
+  const h = await harness();
+  const t0 = nowMs(h);
+  const y = aged(h.stub.holdCmd({ rate: 8, window: W, account: 'y' }), t0 - 1);
+  const k = aged(h.stub.holdCmd({ rate: 1, window: { start: M(11), end: M(12) }, account: 'k' }), t0 - 1);
+  await h.stub.hold(y);
+  await h.stub.hold(k);
+  await mark(h.stub, y.request, true, 1n);
+  await mark(h.stub, k.request, true, 1n);
+  const o = aged(h.stub.holdCmd({ rate: 8, window: { start: M(10), end: M(12) }, account: 'o', wait: true }), t0 - 9);
+  const r = await h.stub.hold(o);
+  assert.deepEqual(notesOf(h, h.link), [yr(h.link, seqOf(r), y, 1, seqOf(r), o)], 'K (1 Mbps at [11:00, 12:00), where 1 + 8 fits) is not asked');
+});
+
+test('should record a second yield_refuse of the same attempt with another claim as a new answer, not as the recorded reply', async () => {
+  const { h, y, o } = await oneCrossing();
+  const c1 = seqOf(await mark(h.stub, y.request, true, 1n));
+  const ref1 = await answer(h.stub, y.request, 1, c1, 'yield_refuse');
+  const c2 = seqOf(ref1);
+  const logLen = h.rt.log(utf8(h.link)).length;
+  const ref2 = await answer(h.stub, y.request, 1, c2, 'yield_refuse');
+  assert.deepEqual(body(ref2), { result: 'REFUSED_RECORDED' });
+  assert.ok(seqOf(ref2) > seqOf(ref1), 'its own entry');
+  assert.equal(h.rt.log(utf8(h.link)).length, logLen + 1);
+  assert.deepEqual(notesOf(h, h.link, seqOf(ref2)), [yr(h.link, seqOf(ref2), y, 1, seqOf(ref2), o)], 'c2 ends and the mark raises c3');
 });
 
 // ---------------- joint traces (exit criterion 3) ----------------
