@@ -1,0 +1,135 @@
+provider	consumer	part	source
+S-PLAT-I1	S-LINK-I1	C01 PLAT-A: owner decl, link tables, append static+decide, results, sessions, route, envelope, encryption binding (double until then)	S-LINK.md §4.1 PLAT-A
+S-PLAT-I1	S-LINK-I2	C01 PLAT-B: projections with rowTtl and deletable (double until then)	S-LINK.md §4.1 PLAT-B
+S-PLAT-I1	S-LINK-I3	C01 PLAT-C: notification outbox, relay, onNotification, gap fill (double until then)	S-LINK.md §4.1 PLAT-C
+S-PLAT-I1	S-LINK-I5	C01 PLAT-C: notification outbox, onNotification (double until then)	S-LINK.md §6 S-LINK-I5 Contracts consumed
+S-PLAT-I1	S-LINK-I7	C01 PLAT-D: Kafka relay, producer ACL, closure emitter, alert episodes (double until then)	S-LINK.md §4.1 PLAT-D
+S-PLAT-I2	S-LINK-I7	C01 PLAT-D: streams with emitFn, self-outboxed log (double until then)	S-LINK.md §4.1 PLAT-D
+S-PLAT-I5	S-LINK-I7	C01 PLAT-D: history query and sealer (double until then)	S-LINK.md §4.1 PLAT-D
+S-PLAT-I1	S-LINK-I8	C01 PLAT-E: timer, handoff, re-home, standby role, Overloaded (double until then)	S-LINK.md §4.1 PLAT-E
+S-PLAT-I2	S-LINK-I8	C01 PLAT-E: checkpoints, hot standbys by push (double until then)	S-LINK.md §4.1 PLAT-E
+S-PLAT-I3	S-LINK-I8	C01 PLAT-E: move protocol, onMovedOut, onAdopt, Stopped (double until then)	S-LINK.md §4.1 PLAT-E
+S-PLAT-I1	S-LINK-I9	C01 subscribe for registry, policy and key-certification feeds (double until then)	S-LINK.md §6 S-LINK-I9 Contracts consumed
+S-PLAT-I1	S-LINK-I11	C01 PLAT-F: AppendOptions, batch retries keep intents, displacementRead (double until then)	S-LINK.md §4.1 PLAT-F
+S-PLAT-I4	S-LINK-I11	PLAT-F: 2 + 2 + 1 cluster	S-LINK.md §4.1 PLAT-F
+S-PLAT-I1	S-LINK-I12	C01 PLAT-D: Kafka relay, closure emitter, alert episodes (double until then)	S-LINK.md §6 S-LINK-I12 Dependencies
+S-PLAT-I2	S-LINK-I12	C01 PLAT-D: streams with emitFn (double until then)	S-LINK.md §6 S-LINK-I12 Dependencies
+S-PLAT-I5	S-LINK-I12	C01 PLAT-D: history query (double until then)	S-LINK.md §6 S-LINK-I12 Dependencies
+S-PLAT-I6	S-LINK-I12	PLAT-G: notifier consumes AFFECTED_NOTICE (end-to-end only)	S-LINK.md §4.1 PLAT-G
+S-PLAT-I4	S-LINK-I16	PLAT-G: 2 + 2 + 1 cluster with R3 non-voter, region-wide lease move	S-LINK.md §4.1 PLAT-G
+S-PLAT-I8	S-LINK-I16	PLAT-G: disaster mode	S-LINK.md §4.1 PLAT-G
+S-SEC-I1	S-LINK-I9	C08 audit_append, key-certification stream (double until then)	S-LINK.md §4.2 SEC-A
+S-SEC-I2	S-LINK-I9	C08 principal context complete, policy feed (double until then)	S-LINK.md §4.2 SEC-A
+S-SEC-I3	S-LINK-I9	C08 operator envelope, operator_check, target summary (double until then)	S-LINK.md §4.2 SEC-A
+S-SEC-I5	S-LINK-I9	C08 read grant (double until then)	S-LINK.md §4.2 SEC-A
+S-SEC-I9	S-LINK-I9	RFC-005 C11 supplier-authority library	S-SEC.md §8 item 2
+S-SEC-I1	S-LINK-I11	C08 audit_append, key-certification stream (double until then)	S-LINK.md §6 S-LINK-I11 Dependencies (SEC-A)
+S-SEC-I2	S-LINK-I11	C08 principal context complete, policy feed (double until then)	S-LINK.md §6 S-LINK-I11 Dependencies (SEC-A)
+S-SEC-I3	S-LINK-I11	C08 operator envelope, operator_check, target summary (double until then)	S-LINK.md §6 S-LINK-I11 Dependencies (SEC-A)
+S-SEC-I5	S-LINK-I11	C08 read grant (double until then)	S-LINK.md §6 S-LINK-I11 Dependencies (SEC-A)
+S-SEC-I2	S-LINK-I13	C08 supplier principal checks (double until then)	S-LINK.md §6 S-LINK-I13 Contracts consumed; §4.2
+S-PLAT-I1	S-SEC-I1	C01 I1 subset: owner decl, tables with chain, roles, append, hooks, consistentRead, outbox, closure, route, envelope, encryption binding (double until then)	S-SEC.md §3
+S-PLAT-I3	S-SEC-I1	C01 slotOf with headDecides (double until then)	S-SEC.md §3
+S-PLAT-I1	S-SEC-I2	C01 decide form with reads; Ambiguous (double until then)	S-SEC.md §3
+S-PLAT-I3	S-SEC-I2	C01 Moved, Moving, Stopped, onMovedOut, onAdopt; probe flag (double until then)	S-SEC.md §3
+S-PLAT-I1	S-SEC-I4	C01 timer, alert stream (double until then)	S-SEC.md §3
+S-PLAT-I3	S-SEC-I4	C01 probeAccountSet, probeSetSummary (double until then)	S-SEC.md §3
+S-PLAT-I3	S-SEC-I11	C01 integrity stop Stop/Resume, placement_integrity_stops, restore role (double until then)	S-SEC.md §3
+S-PLAT-I5	S-SEC-I12	C01 history query as read-grant reader (double until then)	S-SEC.md §3
+S-PLAT-I1	S-SEC-I17	C01 timer (double until then)	S-SEC.md §5 S-SEC-I17 Contracts consumed
+S-PLAT-I1	S-SEC-I18	C01 §3.12 sealed columns (double until then)	S-SEC.md §5 S-SEC-I18 Contracts consumed
+MONEY-I26	S-SEC-I16	DestinationVersionSettled event (CI4-1)	S-ACCT-S-MONEY.md §8.1 CI4-1
+S-PLAT-I1	AM-I1	C01 owner decl, tables, append with decide, displacementRead, hooks, outbox, closure, markers, envelope, route, encryption binding (double until then)	S-ACCT-S-MONEY.md §3
+S-PLAT-I3	AM-I1	C01 slotOf with headDecides (double until then)	S-ACCT-S-MONEY.md §3
+S-PLAT-I1	MONEY-I2	C01 owner decl, roles, grants conformance (double until then)	S-ACCT-S-MONEY.md §3
+S-PLAT-I1	ACCT-I4	C01 status-reader runtime, read leases, pendingAnswered (double until then)	S-ACCT-S-MONEY.md §3
+S-PLAT-I3	ACCT-I4	C01 isMovedOut (double until then)	S-ACCT-S-MONEY.md §3
+S-PLAT-I1	ACCT-I7	C01 onResolved, closure topics (double until then)	S-ACCT-S-MONEY.md §3
+S-PLAT-I1	ACCT-I8	C01 timer, alert stream (double until then)	S-ACCT-S-MONEY.md §3
+S-PLAT-I1	AM-I9	C01 onResolved, closure topics (double until then)	S-ACCT-S-MONEY.md §3
+S-PLAT-I1	MONEY-I12	C01 owner decl and migration (double until then)	S-ACCT-S-MONEY.md §3
+S-PLAT-I1	ACCT-I15	C01 owner decl and migration, adapter kind (double until then)	S-ACCT-S-MONEY.md §3
+S-PLAT-I1	AM-I23	C01 Ambiguous with 15 s backstop (double until then)	S-ACCT-S-MONEY.md §3
+S-PLAT-I3	AM-I23	C01 Moved, Moving, Stopped, onMovedOut, onAdopt, splitting, integrity stop (double until then)	S-ACCT-S-MONEY.md §3
+S-PLAT-I5	AM-I23	C01 history query (double until then)	S-ACCT-S-MONEY.md §3
+S-PLAT-I3	AM-I24	C01 probeAccountSet, probeSetSummary (double until then)	S-ACCT-S-MONEY.md §3
+S-PLAT-I1	MONEY-I25	C01 owner decl; onResolved on movement feed (double until then)	S-ACCT-S-MONEY.md §3
+S-PLAT-I1	MONEY-I26	C01 owner decl; closedTimestamp historical read (double until then)	S-ACCT-S-MONEY.md §3
+S-PLAT-I1	MONEY-I27	C01 owner decl and migration (double until then)	S-ACCT-S-MONEY.md §3
+S-SEC-I1	AM-I1	C08 §A principal context at the edge (double until then)	S-ACCT-S-MONEY.md §6 AM-I1 Doubles
+S-SEC-I2	AM-I1	C08 §B catch_up snapshot (double until then)	S-ACCT-S-MONEY.md §6 AM-I1 Contracts consumed
+S-SEC-I2	ACCT-I7	C08 edge 400 malformed, exact poll limiter (double until then)	S-ACCT-S-MONEY.md §6 ACCT-I7 Doubles
+S-SEC-I2	AM-I9	C08 §B identity status push, catch_up (double until then)	S-ACCT-S-MONEY.md §6 AM-I9 Doubles
+S-SEC-I6	MONEY-I12	RFC-005 C7 verifier, edge payment ingress (double until then)	S-ACCT-S-MONEY.md §6 MONEY-I12 Doubles
+S-SEC-I3	MONEY-I12	C08 §E operator envelope (double until then)	S-ACCT-S-MONEY.md §6 MONEY-I12 Contracts consumed
+S-SEC-I3	AM-I19	C08 §E envelope, §F operator_check (double until then)	S-ACCT-S-MONEY.md §6 AM-I19 Doubles
+S-SEC-I12	AM-I19	C08 §H read grant (double until then)	S-ACCT-S-MONEY.md §6 AM-I19 Doubles
+S-SEC-I4	AM-I24	C08 §E four eyes, §F operator_check (double until then)	S-ACCT-S-MONEY.md §6 AM-I24 Doubles
+S-SEC-I13	MONEY-I26	C07 op 5 payout destination (C16) (double until then)	S-ACCT-S-MONEY.md §6 MONEY-I26 Doubles
+S-SEC-I5	MONEY-I28	C09 get, C08 §H read grant (double until then)	S-ACCT-S-MONEY.md §6 MONEY-I28 Doubles
+S-SEC-I10	MONEY-I28	C08 §D visibility and reference library (double until then)	S-ACCT-S-MONEY.md §6 MONEY-I28 Doubles
+S-LINK-I1	AM-I1	C02 hold, convert (double until then)	S-ACCT-S-MONEY.md §6 AM-I1 Contracts consumed; S-LINK.md §1 rule 3
+S-LINK-I11	AM-I1	C02 link displacement read (double until then)	S-ACCT-S-MONEY.md §6 AM-I1 Contracts consumed
+S-LINK-I1	ACCT-I8	C02 release (double until then)	S-ACCT-S-MONEY.md §6 ACCT-I8 Contracts consumed
+S-LINK-I2	ACCT-I8	C02 counter-offer, link availability query (double until then)	S-ACCT-S-MONEY.md §6 ACCT-I8 Contracts consumed
+S-LINK-I8	ACCT-I8	C02 expire_if_undecided (double until then)	S-ACCT-S-MONEY.md §6 ACCT-I8 Contracts consumed
+S-LINK-I2	ACCT-I10	C02 query (double until then)	S-ACCT-S-MONEY.md §6 ACCT-I10 Contracts consumed
+S-LINK-I3	ACCT-I10	C02 link waiting port (double until then)	S-ACCT-S-MONEY.md §6 ACCT-I10 Contracts consumed
+S-LINK-I5	ACCT-I10	C02 yields, mark_waiting (double until then)	S-ACCT-S-MONEY.md §6 ACCT-I10 Contracts introduced
+S-LINK-I11	ACCT-I10	C02 displacement read (double until then)	S-ACCT-S-MONEY.md §6 ACCT-I10 Contracts consumed
+S-LINK-I6	ACCT-I13	C02 end_leg, reduce_parts, leg-command replies (double until then)	S-ACCT-S-MONEY.md §6 ACCT-I13 Contracts consumed
+S-LINK-I6	AM-I14	C02 hold kind change, convert (double until then)	S-ACCT-S-MONEY.md §6 AM-I14 Contracts consumed
+S-LINK-I14	ACCT-I20	C02 cut_target; C03 CUT_DECIDED, REDUCTION_FINAL (double until then)	S-ACCT-S-MONEY.md §6 ACCT-I20 Contracts
+S-LINK-I13	ACCT-I21	C03 REDUCTION_AFFECTED (double until then)	S-ACCT-S-MONEY.md §6 ACCT-I21 Contracts consumed
+S-LINK-I15	ACCT-I21	C02 offer commands (double until then)	S-ACCT-S-MONEY.md §6 ACCT-I21 Contracts consumed
+S-RATE-I1	ACCT-I7	C06 §2 catalogue closure (double until then)	S-ACCT-S-MONEY.md §6 ACCT-I7 Contracts consumed
+S-RATE-I6	ACCT-I15	C06 §2 partner terms (double until then)	S-ACCT-S-MONEY.md §6 ACCT-I15 Contracts consumed
+S-RATE-I6	ACCT-I17	C06 §2 partner terms with effectiveFrom (double until then)	S-ACCT-S-MONEY.md §6 ACCT-I17 Contracts consumed
+S-RATE-I6	AM-I22	C06 §2 reservation_price with oeEffective (double until then)	S-ACCT-S-MONEY.md §6 AM-I22 Contracts consumed
+S-PLAT-I1	S-RATE-I1	C01 owner leases, slot batch transactions, closure emitter, account slot map	S-RATE.md §9 B-1
+S-PLAT-I2	S-RATE-I1	C01 self-outboxed log with relay, slot groups	S-RATE.md §9 B-1
+S-PLAT-I1	S-RATE-I5	C01 CommandEnvelope, admitCommand	S-RATE.md §6 S-RATE-I5 Contracts consumed
+S-PLAT-I1	S-RATE-I8	C01 account slot map	S-RATE.md §6 S-RATE-I8 Contracts consumed
+S-PLAT-I1	S-RATE-I13	C01 alert feed	S-RATE.md §6 S-RATE-I13 Contracts consumed; §9 B-1
+S-PLAT-I1	S-RATE-I17	C01 alert feed	S-RATE.md §6 S-RATE-I17 Contracts consumed; §9 B-1
+S-PLAT-I5	S-RATE-I19	C01 history service and query	S-RATE.md §9 B-2
+S-PLAT-I3	S-RATE-I20	C01 move protocol, integrity stop	S-RATE.md §9 B-1; §6 S-RATE-I20
+S-PLAT-I4	S-RATE-I20	2 + 2 + 1 topology	S-RATE.md §9 B-1
+S-SEC-I1	S-RATE-I1	C08 §A principal context (double until then)	S-RATE.md §6 S-RATE-I1 Contracts consumed; §4
+S-SEC-I9	S-RATE-I2	C08 exporter credentials and revocation (double until then)	S-RATE.md §6 S-RATE-I2 Contracts consumed; §4
+S-SEC-I3	S-RATE-I5	C08 operator envelope, operator_check (double until then)	S-RATE.md §6 S-RATE-I5 Contracts consumed; §4
+S-SEC-I1	S-RATE-I6	C08 audit_append (double until then)	S-RATE.md §4; §6 S-RATE-I6 Components
+S-SEC-I3	S-RATE-I6	C08 §E envelope, §F operator_check, §G target summary (double until then)	S-RATE.md §6 S-RATE-I6 Contracts consumed; §4
+S-SEC-I4	S-RATE-I6	C08 four eyes for prices and weights (double until then)	S-RATE.md §6 S-RATE-I6 Components; §4
+S-SEC-I3	S-RATE-I10	C08 finance envelope, operator_check (double until then)	S-RATE.md §6 S-RATE-I10 Contracts consumed; §4
+S-SEC-I3	S-RATE-I15	C08 finance envelope, operator_check (double until then)	S-RATE.md §6 S-RATE-I15 Contracts consumed; §4
+S-SEC-I9	S-RATE-I16	C08 certificate serial, exporter principal (double until then)	S-RATE.md §6 S-RATE-I16 Contracts consumed; §4
+S-SEC-I14	S-RATE-I17	C09 put_payload, withdraw_payload, digest_key (double until then)	S-RATE.md §6 S-RATE-I17 Contracts consumed; S-SEC.md §5 S-SEC-I14
+S-SEC-I5	S-RATE-I19	C08 read grant (double until then)	S-RATE.md §6 S-RATE-I19 Contracts consumed; §4
+AM-I6	S-RATE-I1	C06 §4 usage-applied acknowledgement (double until then)	S-ACCT-S-MONEY.md §1 rule 4; S-RATE.md §6 S-RATE-I1
+MONEY-I3	S-RATE-I1	C06 §7 posting acknowledgement, usage batches (double until then)	S-ACCT-S-MONEY.md §1 rule 4; S-RATE.md §6 S-RATE-I1
+MONEY-I3	S-RATE-I4	C06 §7 posting acknowledgement, amendments (double until then)	S-RATE.md §6 S-RATE-I4 Contracts consumed; S-ACCT-S-MONEY.md MONEY-I3
+MONEY-I3	S-RATE-I5	C06 §7 posting acknowledgement, every exclusion reason (double until then)	S-RATE.md §6 S-RATE-I5 Contracts consumed; S-ACCT-S-MONEY.md MONEY-I3
+AM-I6	S-RATE-I7	C06 §4 usage-applied acknowledgement; C05 usage_applied_since (double until then)	S-RATE.md §6 S-RATE-I7 Contracts consumed; S-ACCT-S-MONEY.md AM-I6
+MONEY-I2	S-RATE-I8	C06 §7, §8 posting of reservation batches (double until then)	S-ACCT-S-MONEY.md §1 rule 4; §6 MONEY-I2 Goal
+AM-I1	S-RATE-I8	C04 lifecycle feed confirmed, markers (double until then)	S-RATE.md §6 S-RATE-I8 Contracts consumed
+ACCT-I13	S-RATE-I8	C04 lifecycle ends, E11 and E12 (double until then)	S-RATE.md §6 S-RATE-I8 Components
+S-LINK-I7	S-RATE-I8	C03 schedule feed CLOSED, feed_seq (double until then)	S-RATE.md §6 S-RATE-I8 Contracts consumed
+ACCT-I18	S-RATE-I9	C04 partner_leg_affected (double until then)	S-RATE.md §6 S-RATE-I9 Contracts consumed
+ACCT-I20	S-RATE-I9	C04 cut, ended(revoked) (double until then)	S-RATE.md §6 S-RATE-I9 Contracts consumed
+S-LINK-I10	S-RATE-I9	C03 CAPACITY_CHANGED for maintenance (double until then)	S-RATE.md §6 S-RATE-I9 Components
+S-LINK-I11	S-RATE-I9	C03 CAPACITY_CHANGED for outage, restoration, increase (double until then)	S-RATE.md §6 S-RATE-I9 Components
+S-LINK-I12	S-RATE-I9	C03 AFFECTED_CHANGED (double until then)	S-RATE.md §6 S-RATE-I9 Components
+S-LINK-I13	S-RATE-I9	C03 CAPACITY_CHANGED(reduction announced) (double until then)	S-RATE.md §6 S-RATE-I9 Components
+S-LINK-I14	S-RATE-I9	C03 REDUCTION_EFFECTIVE, REDUCTION_SET_EXTENDED, CUT_DECIDED, REDUCTION_FINAL (double until then)	S-RATE.md §6 S-RATE-I9 Components
+AM-I1	S-RATE-I10	C04 lifecycle read model, locked prices (double until then)	S-RATE.md §6 S-RATE-I10 Contracts consumed
+MONEY-I3	S-RATE-I10	C06 posting of price_correction amendments (double until then)	S-ACCT-S-MONEY.md §6 MONEY-I3 Goal
+ACCT-I21	S-RATE-I11	C04 moved (double until then)	S-RATE.md §6 S-RATE-I11 Contracts consumed
+AM-I22	S-RATE-I11	C04 price_step (double until then)	S-RATE.md §6 S-RATE-I11 Contracts consumed
+MONEY-I3	S-RATE-I11	C06 posting of dearer_path cost lines (double until then)	S-ACCT-S-MONEY.md §6 MONEY-I3 Goal
+ACCT-I17	S-RATE-I12	C04 fees on lifecycle events (double until then)	S-RATE.md §6 S-RATE-I12 Contracts consumed
+MONEY-I3	S-RATE-I12	C06 posting of fee lines (double until then)	S-ACCT-S-MONEY.md §6 MONEY-I3 Goal
+MONEY-I3	S-RATE-I13	C06 posting of carried_excess cost lines (double until then)	S-ACCT-S-MONEY.md §6 MONEY-I3 Goal
+MONEY-I3	S-RATE-I18	C06 §9 movement feed complete (double until then)	S-RATE.md §6 S-RATE-I18 Contracts consumed
+S-LINK-I9	S-RATE-I6	link-registry feed, route-leg check (no frozen contract)	S-RATE.md §9 B-3; S-LINK.md §4.3 BL-2
+S-LINK-I9	S-RATE-I15	link-registry feed, supplier of a link (no frozen contract)	S-RATE.md §9 B-3; S-LINK.md §4.3 BL-2
