@@ -1,5 +1,10 @@
-/** C06 settlement and ledger suite against the settlement double of the rate slice (its §7 and §8 provider). */
-import { runC06ProviderSuite, type C06LineAck, type C06Subject } from '@share/contract-suites';
+/**
+ * C06 settlement and ledger suites against the settlement double of the rate slice (its §7 and §8 provider):
+ * usage batches (runC06ProviderSuite) and reservation batches (runC06ReservationSuite).
+ */
+import {
+  C06_SUITE_WEIGHTS, runC06ProviderSuite, runC06ReservationSuite, type C06LineAck, type C06ReservationSubject, type C06Subject,
+} from '@share/contract-suites';
 import type { PostingAck } from '@share/rate-common';
 import { CatalogueReplica, TOPIC_CHARGES, TOPIC_POSTING_ACKS } from '../src/index.ts';
 import { Bus, LedgerDouble, SettlementDouble } from '../testing/index.ts';
@@ -35,6 +40,30 @@ runC06ProviderSuite('settlement double', async (): Promise<C06Subject> => {
     },
     post: async (req, account) => ledger.post(req, account),
     route: ROUTE, weightsVersion: WEIGHTS, supplier: SUPPLIER,
+    integrityAlerts: () => ledger.integrityAlerts.length,
+    close: async () => {},
+  };
+});
+
+runC06ReservationSuite('settlement double', async (): Promise<C06ReservationSubject> => {
+  const bus = new Bus(START_MS);
+  const catalogue = new CatalogueReplica();
+  catalogue.applyEvent({
+    type: 'CatalogueEvent', schemaVersion: 1,
+    eventId: { partition: `split_weights:${C06_SUITE_WEIGHTS.weightsVersion}`, stream: 'catalogue', streamSeq: '1', generation: 0, epoch: 1 },
+    entityVersion: '1', committedAt: '0.0000000000', principal: 'commercial-1', body: C06_SUITE_WEIGHTS,
+  });
+  const ledger = new LedgerDouble(() => bus.nowMs, (v) => catalogue.weightsVersion(v));
+  new SettlementDouble(bus, catalogue, ledger);
+  const acks: PostingAck[] = [];
+  bus.on(TOPIC_POSTING_ACKS, (e) => { if (isPostingAck(e)) acks.push(e); });
+  return {
+    settle: async (batch): Promise<C06LineAck[]> => {
+      await bus.publish(TOPIC_CHARGES, batch.batch.account, 'charges', batch);
+      await bus.settle();
+      return acks.filter((a) => a.batchId === batch.batch.id).flatMap((a) => a.lines);
+    },
+    post: async (req, account) => ledger.post(req, account),
     integrityAlerts: () => ledger.integrityAlerts.length,
     close: async () => {},
   };

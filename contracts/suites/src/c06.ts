@@ -5,7 +5,8 @@
  *
  * `runC06ProviderSuite` (usage batches) runs against the settlement double of the rate slice and against the
  * real ledger and settlement (S-MONEY MONEY-I3). `runC06ReservationSuite` (reservation batches: CT-L1
- * reservation rows, CT-L3, CT-L4 (1), CT-L5, CT-L6) runs against the real ledger and settlement (MONEY-I2).
+ * reservation rows, CT-L3, CT-L4 (1), CT-L5, CT-L6) runs against the real ledger and settlement (MONEY-I2) and
+ * against the settlement double of the rate slice (S-RATE-I4).
  *
  * The types are copied from C06 "Schema" (the subset that the tests use).
  */

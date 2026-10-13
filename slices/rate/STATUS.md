@@ -8,9 +8,9 @@ runtime double (`@share/owner-runtime/testing`). Other slices are contract doubl
 |---|---|---|
 | `@share/rate-common` | `common/` | C06 and C11 types, C06 CT-R1 schema checks, canonical `SourceRef`, ELA (RFC-003 §2), time helpers, append policy, feed cursor, alerts |
 | `@share/ingestion` | `ingestion/` | Metering ingestion (IPFIX, one exporter, outcome "accepted"), `ingest_log` self-outboxed, hand-off events. Reference exporter in `testing/` |
-| `@share/rating-owner` | `rating-owner/` | Catalogue (fixture writes, lead times), attribution stage A and stage B, rating (usage lines, figure, gated usage batches, posting acks). World, bus, account-owner and settlement doubles in `testing/` |
+| `@share/rating-owner` | `rating-owner/` | Catalogue (fixture writes, lead times), attribution stage A and stage B, rating (usage lines, closure, late-traffic amendments by total, late originals, figure, gated usage batches, posting acks). World, bus, account-owner and settlement doubles in `testing/` |
 
-Run: `npm run typecheck:rate`, `npm run test:rate`, `npm run mutation:rate` (by hand; 66.9% after I1; 73.85% for `ela.ts` and `time.ts` in review 66). The `mutate` list now also has `stage-a.ts`, `catalogue/replica.ts` and `rating/owner.ts`; the score of this wider list is not recorded yet. No integration tests yet.
+Run: `npm run typecheck:rate`, `npm run test:rate`, `npm run mutation:rate` (by hand; 66.9% after I1; 73.85% for `ela.ts` and `time.ts` in review 66). The `mutate` list now also has `stage-a.ts`, `catalogue/replica.ts` and `rating/owner.ts`; the score of this wider list is not recorded yet. Integration: `npm run test:rate:integration` (by hand, on the dev cell); its one test is a measurement and runs only with `RATE_MEASURE=1` (`npm run measure`).
 
 ## Increments
 
@@ -19,6 +19,7 @@ Run: `npm run typecheck:rate`, `npm run test:rate`, `npm run mutation:rate` (by 
 | I1 Walking skeleton | Done | P3-S25 | `rating-owner/test/walking-skeleton.test.ts`, `owners.test.ts`, `contract.c06.test.ts` |
 | I2 Record identity, deduplication and outcomes | Not started | — | — |
 | I3 Spread and exact usage lines | Done (uncommitted); review 66 findings TR-1 … TR-13 fixed | P3-S18, P3-S19, P3-S21, P3-S48, P3-S51, P3-S52 | `rating-owner/test/spread-and-lines.test.ts`, `rating-owner/test/ela.property.test.ts`, `rating-owner/test/owners.test.ts`, `common/test/common.test.ts` |
+| I4 Late traffic and amendments by total | Built (uncommitted), not reviewed. Exit criteria 1 … 6 met on the doubles; 7 written, not run (manual proof owed). SP1 and SP3 not done | P3-S15, P3-S17, P3-S20, P3-S32, P3-S33, P3-S35 | `rating-owner/test/late-traffic.test.ts`, `rating-owner/test/order.property.test.ts`, `rating-owner/test/contract.c06.test.ts`, `rating-owner/test/integration/usage-timeliness.test.ts` (not run) |
 
 ### I3 exit criteria
 
@@ -57,7 +58,57 @@ their scenario and property tests.
    such a line is numbered (an original with `seq` 0, or an amendment). Proposed: RFC-003 §5.6 says a
    line closed at 0 is not emitted, and a later non-zero total is its original (`seq` 0).
 
+### I4 exit criteria
+
+| # | Criterion | State | Proof |
+|---|---|---|---|
+| 1 | The six scenarios pass | Met on the doubles (P3-S32 second row: see design issue (I4) 1) | `late-traffic.test.ts` (`P3-S17`, `P3-S20`, `P3-S32` ×2, `P3-S35`), `order.property.test.ts` (`P3-S15`, `P3-S33`, 4 seeds each) |
+| 2 | Order independence: in order, and shuffled with 30% repeats and 20% after closure, give equal posted totals | Met | `order.property.test.ts`: 24 random records a seed (spread over 12:16 … 12:22 across the 12:20 price change, some with e = s, bytes up to 2^32) through exporter → ingestion → stage A → stage B → rating → settlement double, twice. Each posted line total equals the other run and an independent `bigint` rational reference. Seeds 1, 2, 3, 20261013; `RATE_ORDER_SEED=<n>` runs one seed. Checked once: the test fails when late parts of a closed line are not amended |
+| 3 | Closure race: records around the closing entry are each in the original or in an amendment, exactly once | Met on the runtime double | `P3-S17 …`: four records a second from 12:10:05 to 12:10:25 (closing entry at 12:10:15). The original equals the parts in `inputs` entries before the `usage-closed` entry; the amendment the rest; the ledger total all. Checked once: the test fails when amendments ignore `amendment_interval` |
+| 4 | Stalled stage A partition: lines close at the bound + 45 s; later records become amendments (R3-6) | Met | `should close the usage lines at the bound + 45 s …`. The close timer is armed again at the hard bound when the margin passes (a fix: before I4 a stalled minute closed only on another input). Checked once: the test fails without the re-arm |
+| 5 | An amendment of a line older than `amendment_hot_window` reads the line back | Met (see design issue (I4) 2) | `should read a line closed more than amendment_hot_window …`: the append declares the read of the line row; E and X come from it |
+| 6 | P3-S35: the feed carries the original and two amendments with reason and emission time; the settlement double (CT-L7 fixture) shows each posting time | Met | `P3-S35 …`; the ledger double records `reason`, `triggerRef` and the posting time of each movement line |
+| 7 | X2-S13: usage line posted ≤ 300 s after the minute's end at steady load (design 258 s) | Written, not run (manual proof owed) | `rating-owner/test/integration/usage-timeliness.test.ts`, `RATE_MEASURE=1 npm run test:rate:integration` on the dev cell. Rating on the real C01 runtime and CockroachDB; the account owner and settlement are stand-ins on a `MemoryBus` |
+
+What I4 added: the closing entry fixes the original (`original` on the line); a part applied after it marks the
+line late. Late records of a line give at most one `late_traffic` amendment in `amendment_interval` (60 s), as an
+`amendment` entry with the new ELA, `C − E` restating the total, the next sequence, the record identities and the
+original's `weightsVersion`; sequence `k + 1` only after `k` is posted, one sequence of a line key in a batch. A
+late part for a closed minute with no saved line makes a late original. Closed, fully posted lines leave memory
+after `amendment_hot_window` (1 h); an older line is read back from its `rating_usage_line` row. A late part that
+would lower a line raises `LATE_TRAFFIC_DOWNWARD` and emits nothing. The `LATE_TRAFFIC_NOT_IN_I1` alert is gone.
+The settlement double maps `late_traffic` amendments to M6 (`split(newTotal) − split(priorTotal)`), takes
+reservation batches (M4 by the Webster split of RFC-004 §B3.2, per-line exclusion, the movement limit) and runs
+`runC06ReservationSuite` (closes the `contracts/suites/ISSUES.md` row of review 71 TR-14).
+
+## Design issues (I4)
+
+1. **A late amendment of a line closed at 0 (P3-S32 second row).** The scenario and RFC-003 §5.7 say "an amendment
+   of 1 with the reason late traffic". Rating records it so in its `amendment` entry (seq 0, reason `late_traffic`).
+   But the ledger has no posting of the line key, and C06 refuses a zero original ("amounts are non-zero") and an
+   amendment whose predecessor is not posted (`out_of_sequence`). So on the charge-line feed the line is its late
+   original: seq 0, reason `original`, `reasonDetails.trigger = late_traffic` with the record identities, and the
+   first record identity in `triggerRef` (C06 m5), posted as M5. This answers design issue (I3) 4 as proposed there.
+   Proposed: RFC-003 §5.6/§5.7 erratum that a line closed at 0 is not emitted and its first non-zero total is its
+   late original; P3-S32 row 2 then reads "a charge of 1 for late traffic".
+2. **Read-back source.** RFC-003 §5.11 says an old line "reads its last entry from `rating_log`". Rating reads the
+   `rating_usage_line` row of the line, which the same transaction as the line's last entry writes (a declared
+   read, C01 R47-11). It holds the same ELA and emitted total, without a scan of the account's log. Proposed:
+   RFC-003 §5.11 names the line row as the index of the last entry.
+3. **`triggerRef` of a late original from late traffic.** C06 §5 lists "the correction, attribution, reversal or
+   superseded record" as triggers, not late records. Rating puts the first late record identity there. Proposed:
+   C06 m5 adds late records.
+4. **Downward late parts.** In I4 every part is non-negative, so late traffic only raises a line (P3-S33). A
+   negated part (supersession, I16) on a closed line would lower it with no cause; rating alerts and emits nothing
+   until I16 gives `superseding_record` with its cause.
+5. **Which minute is closed for the account.** Rating takes the last minute that a `usage-closed` entry closed. A
+   part for a minute after it, with no line yet, opens a line that the next closure emits as an ordinary original.
+6. **Eviction is lazy.** A cold line leaves memory at the next input of its account, not at the hour's end. Memory
+   of an idle account stays until its next input.
+7. **Spikes.** SP1 (ELA size, `amendment_hot_window`) is a dependency of I4 and SP3 (closure marker lag,
+   `usage_close_margin`) an exit item. Both need the dev cell and are not done; I4 uses the RFC estimates (1 h, 15 s).
+
 ## Remaining work
 
-- I2, I4 … I20 (plan §6). Rating still raises `LATE_TRAFFIC_NOT_IN_I1` for a part of a closed line; I4 replaces it with amendments.
-- Rate integration tests on the dev cell: none yet (the plan puts the first ones with I2 and I4).
+- I2, I5 … I20 (plan §6).
+- SP1 and SP3 on the dev cell; then run the X2-S13 measurement of I4 (exit criterion 7).

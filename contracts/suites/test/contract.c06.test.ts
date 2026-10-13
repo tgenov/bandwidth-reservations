@@ -1,7 +1,7 @@
 /**
  * C06 settlement and ledger. The real provider runs runC06ReservationSuite (MONEY-I2) and runC06ProviderSuite
  * (MONEY-I3) in slices/account/money/test/contract.c06.test.ts. The settlement double of the rate slice runs
- * runC06ProviderSuite in slices/rate/rating-owner/test/contract.c06.test.ts. No C06 provider part is pending.
+ * both suites in slices/rate/rating-owner/test/contract.c06.test.ts (S-RATE-I4). No C06 provider part is pending.
  */
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
