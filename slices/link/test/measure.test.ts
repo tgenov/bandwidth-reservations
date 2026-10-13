@@ -2,7 +2,8 @@
  * Exit criterion 7 of S-LINK I1 (the link part of X2-S05): the apply cost of one `hold` does not depend on
  * the window length. p99 ≤ 40 µs (est.; SP1 sets the figure) for windows of 1 min, 1 day, 12 months and
  * open-ended, with 530,000 keys in each tree. The figure is the apply in `LinkState.decide`, on one core.
- * Set LINK_MEASURE_STRICT=0 to report the numbers without the bound (for a slow CI machine).
+ * It runs only with LINK_MEASURE=1 (`npm run measure`), because a wall-clock bound fails on a loaded machine.
+ * Set LINK_MEASURE_STRICT=0 to report the numbers without the bound.
  */
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
@@ -15,7 +16,10 @@ const KEYS = 530_000;
 const SAMPLES = 4_000;
 const BOUND_US = 40;
 
-test('measurement: hold apply p99 is independent of the window length at 530,000 keys', () => {
+const enabled = process.env['LINK_MEASURE'] === '1';
+
+test('measurement: hold apply p99 is independent of the window length at 530,000 keys',
+  { skip: enabled ? false : 'set LINK_MEASURE=1 (npm run measure)' }, () => {
   const st = new LinkState();
   st.init({ link: 'hot', capacityMbps: 1_000_000_000, policy: { version: '1', releaseGraceMs: 60_000, requestRecordTtlMs: 86_400_000, rateMinMbps: 1 } });
   const r = rng(42);

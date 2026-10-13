@@ -1,6 +1,6 @@
 /**
  * Integration tests on the dev cell (`npm run dev:up`). They skip with a message when CockroachDB is not
- * reachable at DATABASE_URL. Cover CP-1, CP-2 (Committed, ConditionFailed, Retry, StaleEpoch, Ambiguous,
+ * reachable at DATABASE_URL, and fail instead with REQUIRE_DEV_CELL=1. Cover CP-1, CP-2 (Committed, ConditionFailed, Retry, StaleEpoch, Ambiguous,
  * Overloaded), CP-3, CP-4, "decide re-runs on restart" and "a stale epoch never commits"; plus direct publish
  * to Kafka when KAFKA_BROKERS (default localhost:9092) answers.
  */
@@ -19,6 +19,7 @@ import { AmbiguousCommitError, retryableError } from '../../src/errors.ts';
 import type { Publisher } from '../../src/publisher.ts';
 import type { BatchTxn, OwnerStore } from '../../src/store/types.ts';
 import { migrateKinds } from '@share/owner-migrate';
+import { devCellSkip } from '../../testing/dev-cell.ts';
 
 const URL = process.env['DATABASE_URL'] ?? 'postgresql://root@localhost:26257/defaultdb?sslmode=disable';
 const BROKERS = (process.env['KAFKA_BROKERS'] ?? 'localhost:9092').split(',');
@@ -39,9 +40,9 @@ function tcpReachable(hostPort: string): Promise<boolean> {
 }
 
 const dbError = await dbReachable();
-const SKIP = dbError ? `dev cell not reachable at ${URL} (run \`npm run dev:up\`): ${dbError}` : false;
-if (SKIP) console.log(`# SKIP integration: ${SKIP}`);
+const SKIP = devCellSkip(dbError === undefined ? undefined : `CockroachDB at ${URL}: ${dbError}`);
 const kafkaUp = !SKIP && await tcpReachable(BROKERS[0] ?? 'localhost:9092');
+const KAFKA_SKIP = SKIP || devCellSkip(kafkaUp ? undefined : `Kafka at ${BROKERS[0]}`);
 
 const KIND = `itest_${randomBytes(3).toString('hex')}`;
 const DECL: OwnerDeclaration = {
@@ -307,7 +308,7 @@ test('CP-1: two processes contend for a slot across a pause; one committed write
   await a.close(); await b.close();
 });
 
-test('direct publish to Kafka after Committed (idempotent producer, acks=all)', { ...T, skip: SKIP || (!kafkaUp && `Kafka not reachable at ${BROKERS[0]}`) }, async () => {
+test('direct publish to Kafka after Committed (idempotent producer, acks=all)', { ...T, skip: KAFKA_SKIP }, async () => {
   const publisher = new KafkaPublisher({ brokers: BROKERS, clientId: `${KIND}-holder` });
   const { rt, close } = await boot([0, 1, 2, 3], publisher);
   const kafka = new Kafka({ clientId: 'itest-consumer', brokers: BROKERS, logLevel: logLevel.NOTHING });

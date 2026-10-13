@@ -39,14 +39,20 @@
     "typecheck": "npm run -s typecheck:platform && npm run -s typecheck:link && npm run -s typecheck:sec && npm run -s typecheck:account && npm run -s typecheck:rate",
     "test:unit": "npm run -s test:platform && npm run -s test:link && npm run -s test:sec && npm run -s test:account && npm run -s test:rate",
     "check": "npm run -s check:boundaries && npm run -s typecheck && npm run -s test:unit",
-    "test:integration": "npm run -s test:platform:integration && npm run -s test:link:integration"
+    "test:integration": "npm run -s test:platform:integration && npm run -s test:link:integration",
+    "ci": "bash tools/ci.sh",
+    "prepare": "git rev-parse --is-inside-work-tree >/dev/null 2>&1 && git config core.hooksPath .githooks || true",
+    "measure": "LINK_MEASURE=1 SEC_MEASURE=1 npm run -s test:link && LINK_MEASURE=1 SEC_MEASURE=1 npm run -s test:sec"
   },
   "dependencies": {
     "pg": "^8.13.1"
   },
   "devDependencies": {
-    "@types/node": "^22.10.0",
+    "@types/node": "^24.19.2",
     "@types/pg": "^8.11.10",
     "typescript": "~5.9.3"
+  },
+  "engines": {
+    "node": ">=24"
   }
 }

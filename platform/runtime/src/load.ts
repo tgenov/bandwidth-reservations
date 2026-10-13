@@ -1,4 +1,4 @@
-import { monitorEventLoopDelay, type IntervalHistogram } from 'node:perf_hooks';
+import { monitorEventLoopDelay, type ELDHistogram } from 'node:perf_hooks';
 import { PARAMS } from './params.ts';
 
 /** Event-loop shedding (RFC-006 §4.7 rule 1): Overloaded only from admission control or shedding (R47-12). */
@@ -8,7 +8,7 @@ export interface LoadMonitor {
 }
 
 export class EventLoopMonitor implements LoadMonitor {
-  private readonly h: IntervalHistogram;
+  private readonly h: ELDHistogram;
   private readonly timer: NodeJS.Timeout;
   private shed = false;
 

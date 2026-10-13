@@ -2,7 +2,8 @@
  * I1b integration tests on the dev cell (CockroachDB + Kafka): changefeed relay and closure emitter (CP-8,
  * with changefeed re-creation), consumer runtime with gap fill and a stop/restart (CP-9 without moves,
  * X2-S02), the marker chain across a takeover (CP-7a), read leases and status readers (CP-7), and the
- * grants conformance job (CP-11). They skip when the dev cell is not reachable.
+ * grants conformance job (CP-11). They skip when the dev cell is not reachable, and fail instead with
+ * REQUIRE_DEV_CELL=1.
  */
 import { after, afterEach, test } from 'node:test';
 import assert from 'node:assert/strict';
@@ -18,6 +19,7 @@ import {
 import type { OutboxMessage } from '../../src/index.ts';
 import type { Publisher } from '../../src/publisher.ts';
 import { checkGrants, migrateKinds } from '@share/owner-migrate';
+import { devCellSkip } from '../../testing/dev-cell.ts';
 
 const URL = process.env['DATABASE_URL'] ?? 'postgresql://root@localhost:26257/defaultdb?sslmode=disable';
 const BROKERS = (process.env['KAFKA_BROKERS'] ?? 'localhost:9092').split(',');
@@ -35,8 +37,7 @@ function tcp(hostPort: string): Promise<boolean> {
 }
 const dbUp = await tcp(new globalThis.URL(URL.replace(/^postgresql:/, 'http:')).host || 'localhost:26257');
 const kafkaUp = await tcp(BROKERS[0] ?? 'localhost:9092');
-const SKIP = !dbUp || !kafkaUp ? 'dev cell not reachable (run `npm run dev:up`)' : false;
-if (SKIP) console.log(`# SKIP feeds integration: ${SKIP}`);
+const SKIP = devCellSkip(!dbUp ? `CockroachDB at ${URL}` : !kafkaUp ? `Kafka at ${BROKERS[0]}` : undefined);
 
 const R = randomBytes(3).toString('hex');
 const LINK = `ilink_${R}`;

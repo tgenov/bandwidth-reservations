@@ -1,0 +1,31 @@
+#!/usr/bin/env bash
+# Before a commit: the slice boundary check, then the type check and unit tests of each workspace with
+# staged changes. A change in platform/, contracts/ or the root package files checks every workspace.
+# Skip once with `git commit --no-verify`.
+set -euo pipefail
+cd "$(git rev-parse --show-toplevel)"
+fail() { printf '\npre-commit: FAILED: %s\nFix it, or run `npm run check` to see all.\n' "$1" >&2; exit 1; }
+
+ALL=(platform link sec account rate)
+staged=$(git diff --cached --name-only --diff-filter=ACMRD)
+[ -z "$staged" ] && exit 0
+
+targets=()
+add() { [[ " ${targets[*]-} " == *" $1 "* ]] || targets+=("$1"); }
+while IFS= read -r path; do
+  case "$path" in
+    platform/*|contracts/*|package.json|package-lock.json|tsconfig*.json) targets=("${ALL[@]}"); break ;;
+    slices/*) s=${path#slices/}; s=${s%%/*}
+              if [ "$(npm pkg get "scripts.typecheck:$s")" != "{}" ]; then add "$s"; else targets=("${ALL[@]}"); break; fi ;;
+  esac
+done <<< "$staged"
+
+echo "pre-commit: check:boundaries"
+npm run -s check:boundaries || fail "check:boundaries"
+for w in "${targets[@]-}"; do
+  [ -n "$w" ] || continue
+  echo "pre-commit: typecheck:$w + test:$w"
+  npm run -s "typecheck:$w" || fail "typecheck:$w"
+  out=$(npm run -s "test:$w" 2>&1) || { printf '%s\n' "$out" | tail -40; fail "test:$w"; }
+done
+echo "pre-commit: ok (${targets[*]:-no workspace changed})"

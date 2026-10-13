@@ -1,6 +1,7 @@
 /**
  * S-LINK I1 on the real C01 runtime and the dev cell (exit criterion 8: criteria 1, 3, 5 and 6 again).
- * The tests skip with a message when CockroachDB is not reachable at DATABASE_URL (`npm run dev:up`).
+ * The tests skip with a message when CockroachDB is not reachable at DATABASE_URL (`npm run dev:up`), and
+ * fail instead with REQUIRE_DEV_CELL=1.
  */
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
@@ -8,6 +9,7 @@ import { randomBytes } from 'node:crypto';
 import pg from 'pg';
 import { CockroachOwnerRuntime, ManualLoad, MemoryPublisher, PgStore, slotOfPartition, utf8 } from '@share/owner-runtime';
 import { migrateKinds } from '@share/owner-migrate';
+import { devCellSkip } from '@share/owner-runtime/testing';
 import { declaration, LinkOwner, runtimeLogReader, type DecidedRecord } from '../../src/index.ts';
 import { propertyRun } from '../property.ts';
 import { AccountStub, M, resultOf } from '../support.ts';
@@ -20,8 +22,7 @@ async function dbReachable(): Promise<string | undefined> {
 }
 
 const dbError = await dbReachable();
-const SKIP = dbError ? `dev cell not reachable at ${URL} (run \`npm run dev:up\`): ${dbError}` : false;
-if (SKIP) console.log(`# SKIP integration: ${SKIP}`);
+const SKIP = devCellSkip(dbError === undefined ? undefined : `CockroachDB at ${URL}: ${dbError}`);
 
 const FAST = { sessionTtlMs: 1_500, sessionRenewMs: 200, renewRetryMs: 100, holderViewMs: 1_400, maxLoopDelayMs: 100 };
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
