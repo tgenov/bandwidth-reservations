@@ -276,9 +276,30 @@ test('should push with advances false while an Ambiguous batch of the slot is no
   assert.equal(recorded[0]?.advances, false, 'b1 is committed below x1 but not pushed yet');
   releaseRes();
   await until(() => recorded.length === 2, 5_000, 'the resolution pushes b1');
+  // Review 72 N-1: the resolution ends the gate; the next push of the slot advances again (RFC-006 §4.4).
+  assert.equal((await holder.append({ partition: x, entries: [entry('x2')] })).r, 'Committed');
+  assert.equal(recorded.length, 3);
+  assert.equal(recorded[2]?.advances, true, 'no Ambiguous batch of the slot is unresolved and no other batch is in flight');
   kill();
   await until(() => standby.heldSlots().length === 4);
-  assert.deepEqual([mem.m.get(hex(x)), mem.m.get(hex(b))], [['x1'], ['b1']], 'b1 is not lost behind x1');
+  assert.deepEqual([mem.m.get(hex(x)), mem.m.get(hex(b))], [['x1', 'x2'], ['b1']], 'b1 is not lost behind x1');
+});
+
+test('should take no free slot that nobody has held when the standby starts before its holder (RFC-006 §4.7 rule 1)', T, async () => {
+  const store = new MemoryStore({ wallMs: steppedClock().now });
+  store.seedSlots(DECL.kind, 4);                     // fresh slots: free, epoch 0
+  const lists = countCalls(store, 'listSlots');
+  const frees = countCalls(store, 'acquireFree');
+  const standby = new CockroachOwnerRuntime({ declaration: DECL, store, slots: [0, 1, 2, 3], load: new ManualLoad(),
+    standby: { apply: () => {}, pollMs: 20 }, testing: { sessionTimings: FAST, postAcquisitionWaitMs: 10 } });
+  closers.add(() => standby.stop());
+  await standby.start(hooks());
+  const at = lists.count();
+  // Ends early when the standby takes a slot (then it lists no more): the assertions below fail at once.
+  await until(() => lists.count() >= at + 3 || standby.heldSlots().length > 0, 5_000, 'three acquisition ticks of the standby');
+  assert.deepEqual(standby.heldSlots(), []);
+  assert.equal(frees.count(), 0, 'the standby tries no free acquisition of a never-held slot');
+  for (let s = 0; s < 4; s++) assert.deepEqual([store.slotRow(DECL.kind, s)?.sessionId, store.slotRow(DECL.kind, s)?.epoch], [null, 0n]);
 });
 
 test('should let the hot standby take the slots that its holder handed off at offset level A, with no catch-up row', T, async () => {

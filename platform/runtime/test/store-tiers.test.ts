@@ -9,7 +9,7 @@ import type pg from 'pg';
 import { PARAMS, PgStore, TierTimeout } from '../src/index.ts';
 
 type Answer = { rows: Array<Record<string, unknown>>; rowCount: number };
-type Behaviour = 'silent' | 'refused' | ((sql: string) => Promise<Answer>);
+type Behaviour = 'silent' | 'refused' | ((sql: string, params?: unknown[]) => Promise<Answer>);
 
 interface TierDouble {
   pool: pg.Pool;
@@ -22,10 +22,10 @@ interface TierDouble {
 function tier(b: Behaviour): TierDouble {
   const d: TierDouble = { pool: undefined as never, connects: 0, sql: [], releases: [] };
   const client = {
-    query(sql: string): Promise<Answer> {
+    query(sql: string, params?: unknown[]): Promise<Answer> {
       d.sql.push(sql);
       if (b === 'silent' || b === 'refused') return new Promise<Answer>(() => { /* a cut gateway never answers */ });
-      return b(sql);
+      return b(sql, params);
     },
     release(e?: Error): void { d.releases.push(e); },
   };
@@ -265,4 +265,44 @@ test('should roll back the group re-home and return undefined when the second me
   const { s, log } = scripted(memberRows(1));
   assert.equal(await s.rehomeGroup(MEMBERS.map((m) => ({ ...m, epoch: 4n })), 'old', 'sess-new'), undefined);
   assert.deepEqual(verbs(log), ['BEGIN', 'UPDATE owner_slot', 'UPDATE owner_slot', 'ROLLBACK']);
+});
+
+/** One tier whose client answers each statement from `answer` and logs it with its parameters. */
+function scriptedWithParams(answer: (sql: string) => Answer) {
+  const log: Array<{ sql: string; params: unknown[] }> = [];
+  const t = tier((sql, params = []) => { log.push({ sql, params }); return Promise.resolve(answer(sql)); });
+  return { s: store(t), log };
+}
+
+/** The WHERE clause of a statement, with its white space made single. */
+const whereOf = (sql: string): string => sql.replace(/\s+/g, ' ').split(' WHERE ')[1]?.trim() ?? '';
+
+const HELD = MEMBERS.map((m, i) => ({ ...m, epoch: BigInt(4 + i) }));
+
+test('should free every member of a group in one transaction, each UPDATE guarded by the session and the epoch of the member (review 72 N-3)', async () => {
+  const { s, log } = scriptedWithParams(() => ({ rows: [], rowCount: 1 }));
+  await s.releaseGroup(HELD, 'sess-1');
+  assert.deepEqual(verbs(log.map((l) => l.sql)), ['BEGIN', 'UPDATE owner_slot', 'UPDATE owner_slot', 'COMMIT']);
+  const updates = log.filter((l) => l.sql.includes('UPDATE owner_slot'));
+  for (const u of updates) assert.equal(whereOf(u.sql), 'kind = $1 AND slot = $2 AND session_id = $3 AND epoch = $4');
+  assert.deepEqual(updates.map((u) => u.params), [['attr_b', 2, 'sess-1', '4'], ['rating', 2, 'sess-1', '5']]);
+});
+
+test('should revoke the session in the same transaction as the members when the group release does not keep the session', async () => {
+  const { s, log } = scriptedWithParams(() => ({ rows: [], rowCount: 1 }));
+  await s.releaseGroup(HELD, 'sess-1', false);
+  assert.deepEqual(verbs(log.map((l) => l.sql)), ['BEGIN', 'UPDATE owner_slot', 'UPDATE owner_slot', 'UPDATE owner_session', 'COMMIT']);
+  assert.equal(whereOf(log[3]?.sql ?? ''), 'session_id = $1');
+  assert.deepEqual(log[3]?.params, ['sess-1']);
+});
+
+test('should roll back and free no member when the second member UPDATE of a group release fails', async () => {
+  let n = 0;
+  const fail = Object.assign(new Error('restart transaction'), { code: '40001' });
+  const { s, log } = scriptedWithParams((sql) => {
+    if (sql.includes('UPDATE owner_slot') && ++n === 2) throw fail;
+    return { rows: [], rowCount: 1 };
+  });
+  await assert.rejects(s.releaseGroup(HELD, 'sess-1'), (e) => e === fail);
+  assert.deepEqual(verbs(log.map((l) => l.sql)), ['BEGIN', 'UPDATE owner_slot', 'UPDATE owner_slot', 'ROLLBACK']);
 });

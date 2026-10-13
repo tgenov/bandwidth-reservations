@@ -40,9 +40,14 @@ function laneStore(secondLane?: NonNullable<TimingRow['secondLane']>[string]) {
   return { store, clock };
 }
 
-async function boot(store: MemoryStore, slots = [0, 1, 2, 3]) {
+/**
+ * `commitBackstopMs`: a short backstop makes a test whose assertion fails while a batch is in flight end in about that
+ * time, not at the 15 s default (the runtime stops only when each lane is idle).
+ */
+async function boot(store: MemoryStore, slots = [0, 1, 2, 3], o: { commitBackstopMs?: number } = {}) {
   store.seedSlots(DECL.kind, 4);
-  const rt = new CockroachOwnerRuntime({ declaration: DECL, store, slots, load: new ManualLoad(), testing: { sessionTimings: FAST } });
+  const rt = new CockroachOwnerRuntime({ declaration: DECL, store, slots, load: new ManualLoad(),
+    testing: { sessionTimings: FAST, ...(o.commitBackstopMs !== undefined ? { commitBackstopMs: o.commitBackstopMs } : {}) } });
   closers.add(() => rt.stop());
   await rt.start(hooks());
   return rt;
@@ -133,7 +138,7 @@ test('should keep a partition in the first lane\'s batch out of the second lane,
 test('should never start an exclusive or firstStatement call on the second lane when the account lane is on', T, async () => {
   const { store } = laneStore({ account: true });
   const gate = gateFirstCommit(store);
-  const rt = await boot(store);
+  const rt = await boot(store, [0, 1, 2, 3], { commitBackstopMs: 1_000 });
   const [a, x, y] = partitionsOfSlot(1, 3) as [Uint8Array, Uint8Array, Uint8Array];
   const pa = rt.append({ partition: a, entries: [entry('a')] });
   const px = rt.append({ partition: x, entries: [entry('x')] }, { exclusive: true });
@@ -148,7 +153,7 @@ test('should never start an exclusive or firstStatement call on the second lane 
 test('should keep queue order of one partition when an ordinary call of it waits and a later call of it is marked lane second', T, async () => {
   const { store } = laneStore({ deadline: true });
   const gate = gateFirstCommit(store);
-  const rt = await boot(store);
+  const rt = await boot(store, [0, 1, 2, 3], { commitBackstopMs: 1_000 });
   const [a, p] = partitionsOfSlot(2, 2) as [Uint8Array, Uint8Array];
   const pa = rt.append({ partition: a, entries: [entry('a')] });
   const p1 = rt.append({ partition: p, entries: [entry('p1')] });

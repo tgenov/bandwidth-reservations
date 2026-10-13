@@ -94,6 +94,18 @@ Code defects found and fixed:
 | TR-22 | Minor | Fixed | `fault-proxy.test.ts` (loopback echo server); `FaultProxy.droppedBytes` counts the bytes of a cut link |
 | TR-23 | Minor | Fixed | Exact values: the checkpoint reference, `tailRows` 1, the slot-group epoch (1 + rounds) |
 
+## Review 72 (fix verification of S-PLAT-I2)
+
+Review 72 (`docs/reviews/72-fix-verification-platform-S-PLAT-I2.md`) verified the Review 68 fixes and found 3 new gaps
+in the fix code. Each is closed with tests only (no change in `src/`). Each mutant was made by hand and killed.
+
+| ID | Severity | State | Tests, change | Mutant killed |
+|---|---|---|---|---|
+| N-1 | Major | Fixed (test only) | `standby.test.ts`: `should push with advances false while an Ambiguous batch of the slot is not resolved` now appends one more batch after the resolution and asserts `advances` true | `runtime.ts` drop `lane.unresolved -= 1` |
+| N-2 | Major | Fixed (test only) | `standby.test.ts`: `should take no free slot that nobody has held when the standby starts before its holder (RFC-006 §4.7 rule 1)`: 3 acquisition ticks, no slot held, no `acquireFree` call, each row still free at epoch 0 | `runtime.ts` `if (this.standbyTail && r.epoch === 0n) continue` → `if (false) continue` |
+| N-3 | Major | Fixed (test only) | `store-tiers.test.ts` (scripted client, now with parameters): `PgStore.releaseGroup` frees each member in one transaction with the WHERE `kind = $1 AND slot = $2 AND session_id = $3 AND epoch = $4` and the member's parameters; revokes the session in the same transaction when `keepSession` is false; rolls back when the second member UPDATE fails | `pg.ts` `releaseGroup` WHERE without `session_id = $3`; without `epoch = $4`; without both |
+| M2, M10 | — | Fail fast | `second-lane.test.ts`: the two tests use `commitBackstopMs: 1_000`, so a failed assertion ends in about 1.3 s, not at the 15 s commit backstop when the runtime stops | M2, M10 fail in about 1.25 s |
+
 ## Design issues found (for C01 v1.1 errata and RFC-006)
 
 1. **Byte-identical copies of derived events** (C01 §3.5 D3 vs RFC-006 §3.5). A self-outboxed kind has no outbox row, so
