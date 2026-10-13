@@ -3,8 +3,10 @@
  * the subset that rating's I1 output reaches (usage originals, mapping row M5, usage batches). Tests come
  * from C06 "Conformance tests", provider side RFC-004 (CT-L1, CT-L4, CT-L5, CT-L6).
  *
- * There is no real ledger yet (S-MONEY MONEY-I2). The suite runs against the settlement double of the rate
- * slice, and the real provider has a registered PENDING entry.
+ * `runC06ProviderSuite` (usage batches) runs against the settlement double of the rate slice; the real
+ * provider of usage batches comes in S-MONEY MONEY-I3 and has a registered PENDING entry.
+ * `runC06ReservationSuite` (reservation batches: CT-L1 reservation rows, CT-L3, CT-L4 (1), CT-L5, CT-L6) runs
+ * against the real ledger and settlement of MONEY-I2.
  *
  * The types are copied from C06 "Schema" (the subset that the tests use).
  */
@@ -251,5 +253,155 @@ export function runC06ProviderSuite(name: string, make: SubjectFactory<C06Subjec
     if (skip.result === 'refused_batch') assert.deepEqual(skip.lines.map((l) => l.problem), ['out_of_sequence']);
     const next = await s.post(postReq('m-a3', [postLine(s, { ...ref, seq: 1 }, 'M6', 20n, 100n, 120n)]), 'b1');
     assert.equal(next.result, 'committed', 'the right amendment still posts: the refusals posted nothing');
+  });
+}
+
+// ---------- reservation batches (MONEY-I2) ----------
+
+/**
+ * The split weights that a subject of the reservation suite loads into its catalogue: the route of the P4 rule
+ * "Each charge is split exactly" (weights 3000/3333/2167/1500). The suite computes the M4 entries from them.
+ */
+export const C06_SUITE_WEIGHTS = {
+  entityType: 'split_weights' as const, route: 'route-r', weightsVersion: 'w-r', effectiveFrom: '2026-01-01T00:00:00Z', announcedAt: '0.0000000000',
+  legs: [{ link: 'L1', supplier: 'sup-a', weight: 3000 }, { link: 'L2', supplier: 'sup-b', weight: 3333 }, { link: 'L3', supplier: 'sup-c', weight: 2167 }],
+  commissionWeight: 1500,
+};
+
+/** A subject of the reservation suite: settlement and the ledger with C06_SUITE_WEIGHTS in their catalogue. */
+export type C06ReservationSubject = Omit<C06Subject, 'route' | 'weightsVersion' | 'supplier'>;
+
+type ReservationRef = Extract<C06SourceRef, { kind: 'reservation' }>;
+
+function resRef(reservation: string, minute = MINUTE): ReservationRef {
+  return { kind: 'reservation', reservation, minute, seq: 0 };
+}
+
+function resLine(account: string, reservation: string, amount: string, minute = MINUTE): C06ChargeLine {
+  return {
+    sourceRef: resRef(reservation, minute), lineKind: 'reservation', account, route: C06_SUITE_WEIGHTS.route,
+    weightsVersion: C06_SUITE_WEIGHTS.weightsVersion, minute, payer: 'account', amount, newTotal: amount, priorTotal: '0',
+    reason: 'original', priceCatalogue: { resolvedTs: '0.0000000000' },
+  };
+}
+
+let resBatchNo = 0;
+function resBatch(account: string, lines: C06ChargeLine[], minute = MINUTE): C06ChargeLineBatch {
+  resBatchNo += 1;
+  return {
+    type: 'ChargeLineBatch', schemaVersion: 1,
+    eventId: { partition: 'rating-2', stream: 'charges', streamSeq: String(resBatchNo), generation: 0, epoch: 1 },
+    batch: { id: `rating-2:0:${resBatchNo}:0`, kind: 'reservation', account, minute, gated: false, lineCount: lines.length },
+    lines, emittedAt: `${resBatchNo}.0000000000`,
+  };
+}
+
+/**
+ * RFC-004 §B2 M4 entries of one line for C06_SUITE_WEIGHTS: `B −a`, the suppliers, then the commission. The
+ * shares come from the one-unit-at-a-time Webster rule (RFC-004 §B3.2), not from a provider's code.
+ */
+export function suiteM4Entries(account: string, a: bigint): Array<{ ledgerAccount: string; amount: string }> {
+  const parties = [...C06_SUITE_WEIGHTS.legs.map((l) => ({ name: `S:${l.supplier}:earn`, w: BigInt(l.weight) })),
+    { name: 'SH:commission', w: BigInt(C06_SUITE_WEIGHTS.commissionWeight) }];
+  const s = parties.map(() => 0n);
+  for (let u = 0n; u < a; u++) {
+    let best = 0;
+    for (let i = 1; i < parties.length; i++) if (parties[i]!.w * (2n * s[best]! + 1n) > parties[best]!.w * (2n * s[i]! + 1n)) best = i;
+    s[best] = s[best]! + 1n;
+  }
+  return [{ ledgerAccount: `B:${account}`, amount: (-a).toString() },
+    ...parties.flatMap((p, i) => (s[i] === 0n ? [] : [{ ledgerAccount: p.name, amount: s[i]!.toString() }]))];
+}
+
+function m4Req(id: string, account: string, lines: Array<[string, bigint]>): C06PostMovementRequest {
+  return {
+    movementRef: id, cause: `charge-line batch ${id}`, currency: 'USD', batch: { id, kind: 'reservation', lineCount: lines.length },
+    lines: lines.map(([reservation, a]) => ({
+      kind: 'M4', lineRef: resRef(reservation), lineKind: 'reservation', payer: 'account', reason: 'original', amendmentSeq: 0,
+      priorTotal: '0', newTotal: a.toString(),
+      split: { route: C06_SUITE_WEIGHTS.route, weightsVersion: C06_SUITE_WEIGHTS.weightsVersion, mode: 'normal' },
+      entries: suiteM4Entries(account, a),
+    })),
+  };
+}
+
+/** Register the C06 reservation-batch suite (CT-L1 reservation rows, CT-L3, CT-L4 (1), CT-L5, CT-L6) against the subjects of `make`. */
+export function runC06ReservationSuite(name: string, make: SubjectFactory<C06ReservationSubject>): void {
+  const t = (id: string, behaviour: string, body: (s: C06ReservationSubject) => Promise<void>): void =>
+    subjectTest('C06', id, name, behaviour, make, body);
+
+  t('CT-L1', 'mapping M4: each reservation original of a batch is posted once in one movement, with its amount and total', async (s) => {
+    const b = resBatch('b1', [resLine('b1', 'r-1', '1500'), resLine('b1', 'r-2', '7')]);
+    const acks = byLine(b, await s.settle(b));
+    const p1 = posted(acks.get(key(resRef('r-1'))));
+    const p2 = posted(acks.get(key(resRef('r-2'))));
+    assert.deepEqual([p1.duplicate, p1.postedAmount, p1.postedTotal], [false, '1500', '1500']);
+    assert.deepEqual([p2.duplicate, p2.postedAmount, p2.postedTotal], [false, '7', '7']);
+    assert.equal(p1.movementId, p2.movementId, 'one batch is one movement');
+    assert.deepEqual(p1.position, p2.position);
+  });
+
+  t('CT-L1', 'in a reservation batch only the invalid line is excluded invalid; the other lines post', async (s) => {
+    const bad = { ...resLine('b1', 'r-2', '30'), reason: 'late_traffic' as const };
+    const b = resBatch('b1', [resLine('b1', 'r-1', '15'), bad]);
+    const acks = byLine(b, await s.settle(b));
+    assert.equal(excluded(acks.get(key(bad.sourceRef))).reason, 'invalid');
+    posted(acks.get(key(resRef('r-1'))));
+  });
+
+  t('CT-L3', 'a reservation batch of 5,001 lines posts nothing: each line is acknowledged batch_over_limit', async (s) => {
+    const b = resBatch('b1', Array.from({ length: 5_001 }, (_, i) => resLine('b1', `r-${i}`, '10')));
+    const acks = byLine(b, await s.settle(b));
+    assert.ok([...acks.values()].every((a) => a.outcome === 'excluded' && a.reason === 'batch_over_limit'));
+    const again = resBatch('b1', [resLine('b1', 'r-0', '10')]);
+    assert.equal(posted(byLine(again, await s.settle(again)).get(key(resRef('r-0')))).duplicate, false, 'nothing was posted before');
+  });
+
+  t('CT-L4', '(1) in a reservation batch, a line posted before with the same content is posted, duplicate, at the first position', async (s) => {
+    const b1 = resBatch('b1', [resLine('b1', 'r-1', '100')]);
+    const first = posted(byLine(b1, await s.settle(b1)).get(key(resRef('r-1'))));
+    const b2 = resBatch('b1', [resLine('b1', 'r-1', '100'), resLine('b1', 'r-2', '50')]);
+    const acks = byLine(b2, await s.settle(b2));
+    const dup = posted(acks.get(key(resRef('r-1'))));
+    assert.deepEqual([dup.duplicate, dup.movementId, dup.position, dup.postedTotal], [true, first.movementId, first.position, '100']);
+    assert.equal(posted(acks.get(key(resRef('r-2')))).duplicate, false);
+  });
+
+  t('CT-L5', 'a changed line in a reservation batch is excluded content_conflict with the ledger total, last seq and position; the other lines post', async (s) => {
+    const b1 = resBatch('b1', [resLine('b1', 'r-1', '100')]);
+    const first = posted(byLine(b1, await s.settle(b1)).get(key(resRef('r-1'))));
+    const alerts = s.integrityAlerts();
+    const b2 = resBatch('b1', [resLine('b1', 'r-1', '120'), resLine('b1', 'r-2', '50')]);
+    const acks = byLine(b2, await s.settle(b2));
+    const c = excluded(acks.get(key(resRef('r-1'))));
+    assert.deepEqual([c.reason, c.conflictOf, c.ledgerPostedTotal, c.ledgerLastSeq, c.ledgerPosition],
+      ['content_conflict', first.movementId, '100', 0, first.position]);
+    posted(acks.get(key(resRef('r-2'))));
+    assert.ok(s.integrityAlerts() > alerts, 'a content conflict sends an integrity alert');
+  });
+
+  t('CT-L5', 'an M4 sent again gets the recorded answer; the same movementRef with another digest after a commit gets the committed answer with integrityAlert', async (s) => {
+    const req = m4Req('m-res-dedup', 'b1', [['r-1', 1500n]]);
+    const a1 = await s.post(req, 'b1');
+    assert.equal(a1.result, 'committed');
+    assert.deepEqual(await s.post(structuredClone(req), 'b1'), a1);
+    const alerts = s.integrityAlerts();
+    assert.deepEqual(await s.post(m4Req('m-res-dedup', 'b1', [['r-1', 1600n]]), 'b1'), { ...a1, integrityAlert: true });
+    assert.ok(s.integrityAlerts() > alerts);
+  });
+
+  t('CT-L5', 'before a commit, the same movementRef with another digest gets the recorded over_limit answer with integrityAlert', async (s) => {
+    const big = m4Req('m-res-big', 'b1', Array.from({ length: 5_001 }, (_, i): [string, bigint] => [`r-${i}`, 10n]));
+    const a1 = await s.post(big, 'b1');
+    assert.equal(a1.result === 'refused' ? a1.reason : a1.result, 'over_limit');
+    assert.deepEqual(await s.post(m4Req('m-res-big', 'b1', [['r-1', 10n]]), 'b1'), { ...a1, integrityAlert: true });
+  });
+
+  t('CT-L6', 'an M4 line whose entries are not the template of its weights is excluded invalid; the other lines post', async (s) => {
+    const req = m4Req('m-res-tpl', 'b1', [['r-1', 1500n], ['r-2', 300n]]);
+    req.lines[0]!.entries = [{ ledgerAccount: 'B:b1', amount: '-1500' }, { ledgerAccount: 'S:sup-a:earn', amount: '1500' }];
+    const a = await s.post(req, 'b1');
+    assert.equal(a.result, 'committed');
+    if (a.result === 'committed') assert.deepEqual(a.lines.map((l) => [l.outcome, l.problem]), [['excluded', 'invalid'], ['posted', undefined]]);
   });
 }

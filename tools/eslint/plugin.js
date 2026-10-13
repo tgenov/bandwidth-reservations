@@ -83,8 +83,9 @@ const testAsserts = {
   },
 };
 
-// A scenario ID (P1-S05, X1-S02), a contract test ID (`C01 …`, or CP-, CC-, CT-, DT-, T-), `should …`, or `measurement:`.
-const TITLE = /^(?:[PX]\d-S\d+|C\d\d |(?:CP|CC|CT|DT|T)-|should |measurement:)/;
+// A scenario ID (P1-S05, X1-S02), a contract test ID (`C01 …`, or CP-, CC-, CT-, DT-, T-), an RFC-004 design test
+// (`B13: <name>`, plan S-ACCT-S-MONEY §1 rule 7), `should …`, or `measurement:`.
+const TITLE = /^(?:[PX]\d-S\d+|C\d\d |(?:CP|CC|CT|DT|T)-|B13: |should |measurement:)/;
 
 /** The static start of a title: a string literal, or a template literal's first part. */
 function titleStart(arg) {
@@ -99,7 +100,7 @@ const testName = {
     type: 'suggestion',
     docs: { description: 'A top-level test title starts with a scenario ID, a contract test ID, `should` or `measurement:` (engineering.md §7).' },
     schema: [],
-    messages: { bad: 'Test title must start with a scenario ID (P1-S05), a contract test ID (C01 …, CP-, CC-, CT-, DT-, T-), "should" or "measurement:".' },
+    messages: { bad: 'Test title must start with a scenario ID (P1-S05), a contract test ID (C01 …, CP-, CC-, CT-, DT-, T-), "B13: ", "should" or "measurement:".' },
   },
   create(context) {
     let depth = 0;

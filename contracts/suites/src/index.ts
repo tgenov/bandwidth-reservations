@@ -14,6 +14,6 @@ export {
   type C08StatusEvent, type C08Subject,
 } from './c08.ts';
 export {
-  runC06ProviderSuite, type C06ChargeLine, type C06ChargeLineBatch, type C06LedgerPosition, type C06LineAck,
+  C06_SUITE_WEIGHTS, runC06ProviderSuite, runC06ReservationSuite, suiteM4Entries, type C06ReservationSubject, type C06ChargeLine, type C06ChargeLineBatch, type C06LedgerPosition, type C06LineAck,
   type C06PostMovementRequest, type C06PostMovementResponse, type C06SourceRef, type C06Subject,
 } from './c06.ts';

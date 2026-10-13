@@ -1,0 +1,21 @@
+{
+  "name": "@share/money",
+  "version": "0.1.0-money.2",
+  "description": "S-MONEY (RFC-004 Part B), MONEY-I2: the ledger owner kind, the settlement of reservation batches and the Webster split",
+  "private": true,
+  "type": "module",
+  "exports": {
+    ".": "./src/index.ts",
+    "./testing": "./testing/index.ts"
+  },
+  "scripts": {
+    "test": "node --test --test-concurrency=1 'test/*.test.ts'",
+    "test:integration": "node --test --test-concurrency=1 --test-timeout=120000 --test-force-exit 'test/integration/*.test.ts'"
+  },
+  "dependencies": {
+    "@share/owner-runtime": "1.0.0-alpha.1"
+  },
+  "devDependencies": {
+    "@share/owner-migrate": "1.0.0-alpha.1"
+  }
+}

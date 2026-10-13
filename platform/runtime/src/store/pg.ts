@@ -40,6 +40,10 @@ export interface PgStoreOptions {
 
 type Row = Record<string, unknown>;
 
+/** Rows in one batched read or one multi-row UPSERT (bounds the statement size). */
+const READ_CHUNK = 500;
+const WRITE_CHUNK = 200;
+
 export function toPg(v: unknown): unknown {
   if (v instanceof Uint8Array) return Buffer.from(v.buffer, v.byteOffset, v.byteLength);
   if (typeof v === 'bigint') return v.toString();
@@ -182,12 +186,40 @@ class PgBatchTxn implements BatchTxn {
 
   async readRows(refs: RowRef[]): Promise<Map<string, unknown>> {
     const m = new Map<string, unknown>();
+    // One SELECT for each table and key-column set when every key value is BYTES or STRING (the values compare
+    // exactly after the round trip); one SELECT for each row otherwise.
+    const groups = new Map<string, { table: string; cols: string[]; refs: Array<{ id: string; key: Record<string, unknown> }> }>();
+    const seen = new Set<string>();
     for (const ref of refs) {
       const id = rowId(ref);
-      if (m.has(id)) continue;
-      const wk = whereKey(keyObject(ref));
+      if (seen.has(id)) continue;
+      seen.add(id);
+      const key = keyObject(ref);
+      const cols = Object.keys(key).map(assertIdentifier);
+      if (cols.length > 0 && cols.every((c) => key[c] instanceof Uint8Array || typeof key[c] === 'string')) {
+        const g = `${assertIdentifier(ref.table)}|${cols.join(',')}`;
+        let group = groups.get(g);
+        if (!group) { group = { table: assertIdentifier(ref.table), cols, refs: [] }; groups.set(g, group); }
+        group.refs.push({ id, key });
+        continue;
+      }
+      const wk = whereKey(key);
       const rows = await this.q(`SELECT * FROM ${assertIdentifier(ref.table)} WHERE ${wk.sql}`, wk.params);
       if (rows[0]) m.set(id, rows[0]);
+    }
+    const norm = (v: unknown): string => (v instanceof Uint8Array ? `b:${hex(v)}` : `s:${String(v)}`);
+    for (const g of groups.values()) {
+      for (let i = 0; i < g.refs.length; i += READ_CHUNK) {
+        const chunk = g.refs.slice(i, i + READ_CHUNK);
+        const params: unknown[] = [];
+        const tuples = chunk.map((r) => `(${g.cols.map((c) => { params.push(toPg(r.key[c])); return `$${params.length}`; }).join(', ')})`);
+        const rows = await this.q(`SELECT * FROM ${g.table} WHERE (${g.cols.join(', ')}) IN (${tuples.join(', ')})`, params);
+        const byKey = new Map(chunk.map((r) => [g.cols.map((c) => norm(r.key[c])).join('|'), r.id]));
+        for (const row of rows) {
+          const id = byKey.get(g.cols.map((c) => norm(row[c])).join('|'));
+          if (id !== undefined) m.set(id, row);
+        }
+      }
     }
     return m;
   }
@@ -240,9 +272,35 @@ class PgBatchTxn implements BatchTxn {
         [h.homeKey, toPg(h.partition), h.slot, h.generation, h.adopted, h.seq.toString(), h.ts, h.epoch.toString(),
           toPg(encodeStreams(h.streams)), toPg(h.chain), toPg(h.batchId)]);
     }
+    // The last write of each row wins, as in order. Upserts of one table with one column set go in multi-row
+    // statements; deletes go one by one. Rows are distinct, so the order between them does not change the result.
+    const last = new Map<string, ProjectionWrite>();
     for (const p of w.projections) {
-      const s = projectionSql(p, 0);
-      await this.q(s.sql, s.params);
+      const id = rowId({ table: p.table, key: p.key });
+      last.delete(id);
+      last.set(id, p);
+    }
+    const upserts = new Map<string, { table: string; cols: string[]; rows: Array<Record<string, unknown>> }>();
+    for (const p of last.values()) {
+      if (p.op === 'delete') {
+        const s = projectionSql(p, 0);
+        await this.q(s.sql, s.params);
+        continue;
+      }
+      const row = { ...keyObject(p), ...(p.row as Record<string, unknown>) };
+      const cols = Object.keys(row).map(assertIdentifier).sort();
+      const g = `${assertIdentifier(p.table)}|${cols.join(',')}`;
+      let group = upserts.get(g);
+      if (!group) { group = { table: assertIdentifier(p.table), cols, rows: [] }; upserts.set(g, group); }
+      group.rows.push(row);
+    }
+    for (const g of upserts.values()) {
+      for (let i = 0; i < g.rows.length; i += WRITE_CHUNK) {
+        const params: unknown[] = [];
+        const values = g.rows.slice(i, i + WRITE_CHUNK)
+          .map((r) => `(${g.cols.map((c) => { params.push(toPg(r[c])); return `$${params.length}`; }).join(', ')})`);
+        await this.q(`UPSERT INTO ${g.table} (${g.cols.join(', ')}) VALUES ${values.join(', ')}`, params);
+      }
     }
     for (const x of w.streamIndex ?? []) {
       await this.q(`INSERT INTO ${assertIdentifier(t.streamIndex)} (partition, stream, stream_seq, seq) VALUES ($1, $2, $3, $4)`,

@@ -12,7 +12,9 @@ a double can differ on the point, and both pass.
 | CS-3 | C02 "Link hold port", `convert` | `convert` for a request whose hold was refused, or was released, can answer `NO_HOLD` or `TOMBSTONED`. The contract lists both as violations, but does not say which one applies to which state | `TOMBSTONED` | `NO_HOLD` |
 | CS-4 | C02 "Idempotency", `release` | "The latest `D` sets the end of the tombstone." It is not clear if "latest" means the largest `D` or the `D` of the most recent `release` | The largest `D` | The `D` of the most recent `release` |
 | CS-5 | C02 "Conventions", `LinkStamp` | `linkSeq` is the link's log position. The contract does not say which position a reply to a duplicate carries: the position of the entry that recorded the state, or the present position | The recorded entry's position | A new, higher value |
-| CS-6 | C06 §7, §8 | `ledgerLastSeq` on `prior_total_mismatch` when the ledger has posted nothing for the line key. The rating rule "next amendment sequence = `ledgerLastSeq` + 1" suggests −1, but the contract does not state it | No real ledger (MONEY-I2) | −1 |
+| CS-6 | C06 §7, §8 | `ledgerLastSeq` on `prior_total_mismatch` when the ledger has posted nothing for the line key. The rating rule "next amendment sequence = `ledgerLastSeq` + 1" suggests −1, but the contract does not state it | Real ledger (MONEY-I2): the fields are absent when the ledger has no posting of the line key | −1 |
+| CS-7 | C06 §8, §9; RFC-004 §B1.2 | "The ledger refuses it, records the refusal": the contract does not say if a recorded movement-level refusal takes a sequence of the partition log. `LedgerPosition.sequence` is "the partition log sequence". `runC06ProviderSuite` expects contiguous movement sequences after a refused usage batch | Real ledger (MONEY-I2): a refusal is a log entry (audit), so movement sequences can have gaps; it is not the recorded answer of the `movementRef` (V63-2 records only `refused_batch` and `over_limit`) | Contiguous |
+| CS-8 | C06 §9 | Each view copy has "the same `EventId`" as the full feed. On the C01 runtime each stream has its own `stream_seq`, and a stream is keyed by a declared event field. The contract names no key field for the supplier and external views | Real ledger (MONEY-I2): the body `eventId` is the full feed's; Kafka headers carry the view's own stream sequence; each copy has the added field `view_key` | No double |
 
 ## Known provider gaps (not contract issues)
 
@@ -24,4 +26,4 @@ does not have yet. The suites do not test them until the increment that provides
 | C02 `hold` check (5) | `REFUSED(NO_FIT)` carries a `counterOffer` | Real link owner | S-LINK I2 |
 | C02 `hold` check (8) | `WAITING(1, aheadDeadline)` for `wait = true` | Real link owner (answers `UNAVAILABLE`); the account link double throws | S-LINK I3 |
 | C08 §B | `catch_up` with and without `since` | Real identity owner | S-SEC-I2 (registered PENDING entry) |
-| C06 §7, §8 | Posting port and posting acknowledgement | Real ledger | MONEY-I2 (registered PENDING entry) |
+| C06 §7, §8 | Posting port and posting acknowledgement for usage batches (`runC06ProviderSuite`). Reservation batches run `runC06ReservationSuite` against the real ledger (MONEY-I2); the rate slice's settlement double does not run it yet | Real ledger | MONEY-I3 (registered PENDING entry) |

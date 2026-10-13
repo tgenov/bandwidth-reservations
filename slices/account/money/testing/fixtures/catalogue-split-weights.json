@@ -1,0 +1,32 @@
+{
+  "_doc": "C06 §2 catalogue fixture: split_weights entities as the catalogue feed carries them (body of CatalogueEvent). R1 is the route of P4 Rule 'Each charge is split exactly' (3000/3333/2167/1500). R2 has two suppliers and equal weights. R3 is the route of P4-S102 (supplier s on legs 1 and 3).",
+  "events": [
+    {
+      "type": "CatalogueEvent", "schemaVersion": 1,
+      "eventId": { "partition": "split_weights:R1", "stream": "catalogue", "streamSeq": "1", "generation": 0, "epoch": 1 },
+      "entityVersion": "1", "committedAt": "1760000000000000000.0000000000", "principal": "commercial-1", "approver": "commercial-2",
+      "body": { "entityType": "split_weights", "route": "R1", "weightsVersion": "w1", "effectiveFrom": "2026-10-01T00:00:00Z",
+                "announcedAt": "1760000000000000000.0000000000",
+                "legs": [ { "link": "L1", "supplier": "A", "weight": 3000 }, { "link": "L2", "supplier": "B", "weight": 3333 }, { "link": "L3", "supplier": "C", "weight": 2167 } ],
+                "commissionWeight": 1500 }
+    },
+    {
+      "type": "CatalogueEvent", "schemaVersion": 1,
+      "eventId": { "partition": "split_weights:R2", "stream": "catalogue", "streamSeq": "1", "generation": 0, "epoch": 1 },
+      "entityVersion": "1", "committedAt": "1760000000000000000.0000000001", "principal": "commercial-1", "approver": "commercial-2",
+      "body": { "entityType": "split_weights", "route": "R2", "weightsVersion": "w2", "effectiveFrom": "2026-10-01T00:00:00Z",
+                "announcedAt": "1760000000000000000.0000000001",
+                "legs": [ { "link": "L3", "supplier": "A", "weight": 1 }, { "link": "L4", "supplier": "D", "weight": 1 } ],
+                "commissionWeight": 1 }
+    },
+    {
+      "type": "CatalogueEvent", "schemaVersion": 1,
+      "eventId": { "partition": "split_weights:R3", "stream": "catalogue", "streamSeq": "1", "generation": 0, "epoch": 1 },
+      "entityVersion": "1", "committedAt": "1760000000000000000.0000000002", "principal": "commercial-1", "approver": "commercial-2",
+      "body": { "entityType": "split_weights", "route": "R3", "weightsVersion": "w3", "effectiveFrom": "2026-10-01T00:00:00Z",
+                "announcedAt": "1760000000000000000.0000000002",
+                "legs": [ { "link": "L5", "supplier": "s", "weight": 1 }, { "link": "L6", "supplier": "t", "weight": 2 }, { "link": "L7", "supplier": "s", "weight": 1 } ],
+                "commissionWeight": 1 }
+    }
+  ]
+}

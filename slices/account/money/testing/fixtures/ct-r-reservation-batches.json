@@ -1,0 +1,265 @@
+{
+ "_doc": "C06 CT-R fixture: reservation batches as rating emits them on rating.charge-lines.v1 (C06 §5; CT-R1 schema). Batches 3 and 4 are two reservation batches of b2 for one minute (a split above the movement limit, C06 'Charge-line batches'). 'golden' is the ledger after the four batches are posted (CT-C1), from the Webster split of RFC-004 §B3.2 by hand: R1 1,500 = 450/500/325/225; 300 = 90/100/65/45; 100,000,000 = 30,000,000/33,330,000/21,670,000/15,000,000; R2 7 = A 3, D 2, commission 2; R3 4 = s 2, t 1, commission 1.",
+ "batches": [
+  {
+   "type": "ChargeLineBatch",
+   "schemaVersion": 1,
+   "eventId": {
+    "partition": "rating-7",
+    "stream": "charges",
+    "streamSeq": "1",
+    "generation": 0,
+    "epoch": 3
+   },
+   "batch": {
+    "id": "rating-7:0:41:0",
+    "kind": "reservation",
+    "account": "b1",
+    "minute": "2026-10-12T09:00:00Z",
+    "gated": false,
+    "lineCount": 3
+   },
+   "lines": [
+    {
+     "sourceRef": {
+      "kind": "reservation",
+      "reservation": "r-1",
+      "minute": "2026-10-12T09:00:00Z",
+      "seq": 0
+     },
+     "lineKind": "reservation",
+     "account": "b1",
+     "reservation": "r-1",
+     "product": "guaranteed",
+     "route": "R1",
+     "weightsVersion": "w1",
+     "minute": "2026-10-12T09:00:00Z",
+     "payer": "account",
+     "amount": "1500",
+     "newTotal": "1500",
+     "priorTotal": "0",
+     "reason": "original",
+     "priceCatalogue": {
+      "resolvedTs": "1760000000000000000.0000000002"
+     }
+    },
+    {
+     "sourceRef": {
+      "kind": "reservation",
+      "reservation": "r-2",
+      "minute": "2026-10-12T09:00:00Z",
+      "seq": 0
+     },
+     "lineKind": "reservation",
+     "account": "b1",
+     "reservation": "r-2",
+     "product": "guaranteed",
+     "route": "R1",
+     "weightsVersion": "w1",
+     "minute": "2026-10-12T09:00:00Z",
+     "payer": "account",
+     "amount": "300",
+     "newTotal": "300",
+     "priorTotal": "0",
+     "reason": "original",
+     "priceCatalogue": {
+      "resolvedTs": "1760000000000000000.0000000002"
+     }
+    },
+    {
+     "sourceRef": {
+      "kind": "reservation",
+      "reservation": "r-3",
+      "minute": "2026-10-12T09:00:00Z",
+      "seq": 0
+     },
+     "lineKind": "reservation",
+     "account": "b1",
+     "reservation": "r-3",
+     "product": "guaranteed",
+     "route": "R2",
+     "weightsVersion": "w2",
+     "minute": "2026-10-12T09:00:00Z",
+     "payer": "account",
+     "amount": "7",
+     "newTotal": "7",
+     "priorTotal": "0",
+     "reason": "original",
+     "priceCatalogue": {
+      "resolvedTs": "1760000000000000000.0000000002"
+     }
+    }
+   ],
+   "emittedAt": "1760259603000000000.0000000000"
+  },
+  {
+   "type": "ChargeLineBatch",
+   "schemaVersion": 1,
+   "eventId": {
+    "partition": "rating-7",
+    "stream": "charges",
+    "streamSeq": "2",
+    "generation": 0,
+    "epoch": 3
+   },
+   "batch": {
+    "id": "rating-7:0:42:0",
+    "kind": "reservation",
+    "account": "b1",
+    "minute": "2026-10-12T09:01:00Z",
+    "gated": false,
+    "lineCount": 2
+   },
+   "lines": [
+    {
+     "sourceRef": {
+      "kind": "reservation",
+      "reservation": "r-1",
+      "minute": "2026-10-12T09:01:00Z",
+      "seq": 0
+     },
+     "lineKind": "reservation",
+     "account": "b1",
+     "reservation": "r-1",
+     "product": "guaranteed",
+     "route": "R1",
+     "weightsVersion": "w1",
+     "minute": "2026-10-12T09:01:00Z",
+     "payer": "account",
+     "amount": "1500",
+     "newTotal": "1500",
+     "priorTotal": "0",
+     "reason": "original",
+     "priceCatalogue": {
+      "resolvedTs": "1760000000000000000.0000000002"
+     }
+    },
+    {
+     "sourceRef": {
+      "kind": "reservation",
+      "reservation": "r-2",
+      "minute": "2026-10-12T09:01:00Z",
+      "seq": 0
+     },
+     "lineKind": "reservation",
+     "account": "b1",
+     "reservation": "r-2",
+     "product": "guaranteed",
+     "route": "R1",
+     "weightsVersion": "w1",
+     "minute": "2026-10-12T09:01:00Z",
+     "payer": "account",
+     "amount": "300",
+     "newTotal": "300",
+     "priorTotal": "0",
+     "reason": "original",
+     "priceCatalogue": {
+      "resolvedTs": "1760000000000000000.0000000002"
+     }
+    }
+   ],
+   "emittedAt": "1760259663000000000.0000000000"
+  },
+  {
+   "type": "ChargeLineBatch",
+   "schemaVersion": 1,
+   "eventId": {
+    "partition": "rating-7",
+    "stream": "charges",
+    "streamSeq": "3",
+    "generation": 0,
+    "epoch": 3
+   },
+   "batch": {
+    "id": "rating-7:0:43:0",
+    "kind": "reservation",
+    "account": "b2",
+    "minute": "2026-10-12T09:00:00Z",
+    "gated": false,
+    "lineCount": 1
+   },
+   "lines": [
+    {
+     "sourceRef": {
+      "kind": "reservation",
+      "reservation": "r-9",
+      "minute": "2026-10-12T09:00:00Z",
+      "seq": 0
+     },
+     "lineKind": "reservation",
+     "account": "b2",
+     "reservation": "r-9",
+     "product": "guaranteed",
+     "route": "R1",
+     "weightsVersion": "w1",
+     "minute": "2026-10-12T09:00:00Z",
+     "payer": "account",
+     "amount": "100000000",
+     "newTotal": "100000000",
+     "priorTotal": "0",
+     "reason": "original",
+     "priceCatalogue": {
+      "resolvedTs": "1760000000000000000.0000000002"
+     }
+    }
+   ],
+   "emittedAt": "1760259603000000000.0000000001"
+  },
+  {
+   "type": "ChargeLineBatch",
+   "schemaVersion": 1,
+   "eventId": {
+    "partition": "rating-7",
+    "stream": "charges",
+    "streamSeq": "4",
+    "generation": 0,
+    "epoch": 3
+   },
+   "batch": {
+    "id": "rating-7:0:43:1",
+    "kind": "reservation",
+    "account": "b2",
+    "minute": "2026-10-12T09:00:00Z",
+    "gated": false,
+    "lineCount": 1
+   },
+   "lines": [
+    {
+     "sourceRef": {
+      "kind": "reservation",
+      "reservation": "r-10",
+      "minute": "2026-10-12T09:00:00Z",
+      "seq": 0
+     },
+     "lineKind": "reservation",
+     "account": "b2",
+     "reservation": "r-10",
+     "product": "guaranteed",
+     "route": "R3",
+     "weightsVersion": "w3",
+     "minute": "2026-10-12T09:00:00Z",
+     "payer": "account",
+     "amount": "4",
+     "newTotal": "4",
+     "priorTotal": "0",
+     "reason": "original",
+     "priceCatalogue": {
+      "resolvedTs": "1760000000000000000.0000000002"
+     }
+    }
+   ],
+   "emittedAt": "1760259603000000000.0000000002"
+  }
+ ],
+ "golden": {
+  "B:b1": "-3607",
+  "B:b2": "-100000004",
+  "S:A:earn": "30001083",
+  "S:B:earn": "33331200",
+  "S:C:earn": "21670780",
+  "S:D:earn": "2",
+  "S:s:earn": "2",
+  "S:t:earn": "1",
+  "SH:commission": "15000543"
+ }
+}

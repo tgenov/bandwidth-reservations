@@ -192,6 +192,28 @@ test('CP-2 ConditionFailed commits the rest of the batch', { ...T, skip: SKIP },
   await close();
 });
 
+test('should read many declared rows and write many projection rows of a call in batched statements, with the result of one at a time and the last write of a row winning', { ...T, skip: SKIP }, async () => {
+  const { rt, close } = await boot();
+  const P = fresh();
+  const ids = Array.from({ length: 700 }, (_, i) => `m${i}`);
+  const ref = (id: string): RowRef => ({ table: `${KIND}_mark`, key: { partition: P, id } });
+  const up = (id: string): ProjectionWrite => ({ table: `${KIND}_mark`, op: 'upsert', key: ref(id).key, row: {} });
+  const del = (id: string): ProjectionWrite => ({ table: `${KIND}_mark`, op: 'delete', key: ref(id).key });
+  const w = await rt.append({ partition: P, entries: [entry('w')], projections: [...ids.map(up), del('m5'), del('m6'), up('m6'), up('m7'), del('m7')] });
+  assert.equal(w.r, 'Committed');
+  const rows = await q(`SELECT id FROM ${KIND}_mark WHERE partition = $1`, [Buffer.from(P)]);
+  assert.equal(rows.length, 698);
+  assert.ok(!rows.some((r) => r['id'] === 'm5' || r['id'] === 'm7') && rows.some((r) => r['id'] === 'm6'));
+  let seen: boolean[] = [];
+  const r = await rt.append({ partition: P, reads: [...ids.map(ref), ref('absent'), ref('m0')], decide: (ctx) => {
+    seen = [...ids, 'absent'].map((id) => ctx.read(ref(id)) !== undefined);
+    return { entries: [entry('r')] };
+  } });
+  assert.equal(r.r, 'Committed');
+  assert.deepEqual(seen, [...ids.map((id) => id !== 'm5' && id !== 'm7'), false]);
+  await close();
+});
+
 test('CP-2 Retry after 5 restarts + 1 fresh attempt; CP-3 decide re-runs with a new ts each time', { ...T, skip: SKIP }, async () => {
   const { rt, faults, close } = await boot();
   const P = fresh();

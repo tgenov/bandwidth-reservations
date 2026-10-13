@@ -1,5 +1,5 @@
 {
   "extends": "../../platform/tsconfig.json",
-  "include": ["owner/**/*.ts", "booking-api/**/*.ts"],
+  "include": ["owner/**/*.ts", "booking-api/**/*.ts", "money/**/*.ts"],
   "exclude": ["**/node_modules"]
 }
