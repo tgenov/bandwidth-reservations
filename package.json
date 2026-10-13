@@ -5,13 +5,17 @@
   "workspaces": [
     "platform/runtime",
     "platform/migrate",
-    "platform/examples/canary"
+    "platform/examples/canary",
+    "slices/link"
   ],
   "scripts": {
     "test": "node --test --test-concurrency=1 test/*.test.ts",
     "typecheck:platform": "tsc --noEmit -p platform",
     "test:platform": "node --test --test-concurrency=1 'platform/*/test/*.test.ts' 'platform/examples/*/test/*.test.ts'",
     "test:platform:integration": "node --test --test-concurrency=1 'platform/*/test/integration/*.test.ts' 'platform/examples/*/test/integration/*.test.ts'",
+    "typecheck:link": "tsc --noEmit -p slices/link",
+    "test:link": "node --test --test-concurrency=1 'slices/link/test/*.test.ts'",
+    "test:link:integration": "node --test --test-concurrency=1 'slices/link/test/integration/*.test.ts'",
     "dev:up": "docker compose -f platform/dev/docker-compose.yml up -d --wait",
     "dev:down": "docker compose -f platform/dev/docker-compose.yml down -v"
   },

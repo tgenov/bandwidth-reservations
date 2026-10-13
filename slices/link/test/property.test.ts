@@ -1,0 +1,63 @@
+/**
+ * Exit criterion 1 of S-LINK I1 (T-01 part, T-02, T-03, P1-N1): 8 seeds × 2,000 commands from 50 concurrent
+ * stub clients through the runtime double. A second run uses the real C01 runtime core
+ * (CockroachOwnerRuntime) on its in-memory store. The dev-cell run is in test/integration.
+ */
+import { test } from 'node:test';
+import assert from 'node:assert/strict';
+import { CockroachOwnerRuntime, ManualLoad, MemoryPublisher, hex, utf8 } from '@share/owner-runtime';
+import { MemoryStore } from '@share/owner-runtime/testing';
+import { declaration, LinkOwner, openLogRow, type DecidedRecord, type LogReader } from '../src/index.ts';
+import { propertyRun } from './property.ts';
+import { AccountStub, harness, M } from './support.ts';
+
+const SEEDS = [1, 2, 3, 4, 5, 6, 7, 8];
+
+test('P1-N1 property: 8 seeds × 2,000 hold/convert/release commands from 50 clients on the runtime double', async () => {
+  const total: Record<string, number> = {};
+  for (const seed of SEEDS) {
+    const h = await harness({ link: `prop-${seed}`, capacity: 10 });
+    const res = await propertyRun({
+      stub: h.stub, decided: h.decided, capacity: 10, base: M(0),
+      readLog: async () => h.rt.log(utf8(h.link)).map((e) => ({ seq: e.seq, ts: e.ts, epoch: e.epoch, kind: e.entry.kind, payload: e.entry.payload })),
+      advance: (ms) => h.rt.advance(ms),
+    }, seed, 2_000, 50);
+    for (const [k, v] of Object.entries(res.counts)) total[k] = (total[k] ?? 0) + v;
+    assert.ok(h.rt.appends.length < 2_000, `seed ${seed}: commands share batches (${h.rt.appends.length} appends)`);
+  }
+  // The run covers every I1 outcome.
+  for (const k of ['HELD', 'CONVERTED', 'RELEASED', 'REFUSED:"NO_FIT"', 'REFUSED:"IN_FLIGHT"', 'REFUSED:"DEADLINE_PASSED"',
+    'REFUSED:"TOMBSTONED"', 'MISMATCH', 'NO_HOLD', 'TOMBSTONED']) {
+    assert.ok((total[k] ?? 0) > 0, `outcome ${k} occurs (${JSON.stringify(total)})`);
+  }
+});
+
+/** A log reader for the in-memory store of the real runtime core: it opens the sealed rows. */
+function memoryStoreReader(store: MemoryStore): LogReader {
+  return async (partition, after) => store.log
+    .filter((l) => hex(l.partition) === hex(partition) && l.seq > after)
+    .sort((a, b) => (a.seq < b.seq ? -1 : 1))
+    .map((l) => openLogRow({ slot: l.slot, partition: l.partition, seq: l.seq, epoch: l.epoch, kind: l.kind, ts: l.ts, payload: l.payload }));
+}
+
+test('P1-N1 property on the real C01 runtime core (in-memory store): 2 seeds × 1,000 commands from 50 clients', async () => {
+  const store = new MemoryStore();
+  store.seedSlots('link', declaration.slotCount);
+  const rt = new CockroachOwnerRuntime({ declaration, store, publisher: new MemoryPublisher(), load: new ManualLoad(),
+    slots: Array.from({ length: declaration.slotCount }, (_, i) => i) });
+  const decided: DecidedRecord[] = [];
+  const readLog = memoryStoreReader(store);
+  const owner = new LinkOwner(rt, { readLog, onDecided: (d) => decided.push(d) });
+  await rt.start(owner);
+  try {
+    for (const seed of [11, 12]) {
+      const link = `core-${seed}`;
+      decided.length = 0;
+      await owner.register(link, 10);
+      const stub = new AccountStub(rt, owner, link);
+      await propertyRun({ stub, decided, capacity: 10, base: M(0), readLog: () => readLog(utf8(link), 0n) }, seed, 1_000, 50);
+    }
+  } finally {
+    await rt.stop();
+  }
+});

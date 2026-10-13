@@ -1,0 +1,21 @@
+{
+  "name": "@share/link-owner",
+  "version": "0.1.0-i1",
+  "description": "S-LINK link schedule owner (RFC-001): I1 walking skeleton — hold, convert and release on one link through C02",
+  "private": true,
+  "type": "module",
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "scripts": {
+    "typecheck": "tsc --noEmit -p .",
+    "test": "node --test --test-concurrency=1 'test/*.test.ts'",
+    "test:integration": "node --test --test-concurrency=1 'test/integration/*.test.ts'"
+  },
+  "dependencies": {
+    "@share/owner-runtime": "1.0.0-alpha.1"
+  },
+  "devDependencies": {
+    "@share/owner-migrate": "1.0.0-alpha.1"
+  }
+}
