@@ -171,11 +171,12 @@ test('settlement double (C06 §8 provider, CT-L4, CT-L5, CT-L6 subset): duplicat
 });
 
 test('C01 CC-8: the five declarations match RFC-003 (entry kinds, retention, keys led by partition, streams, closure, consumers)', () => {
-  const known = (kind: string, topic: string) => `stream ${kind}: topic ${topic} is not <kind>.<feed>.v<n>`;
-  assert.deepEqual(validateDeclaration(catalogueDeclaration), [known('catalogue', 'catalogue.v1')]);
-  assert.deepEqual(validateDeclaration(attrADeclaration), [known('parts', 'attribution.parts.v1')]);
+  // S-PLAT I1b: contract topic names (catalogue.v1, attribution.parts.v1) and selfOutboxed are supported.
+  assert.deepEqual(validateDeclaration(catalogueDeclaration), []);
+  assert.deepEqual(validateDeclaration(attrADeclaration), []);
   assert.deepEqual(validateDeclaration(attrBDeclaration), []);
   assert.deepEqual(validateDeclaration(ratingDeclaration), []);
+  assert.deepEqual(validateDeclaration(ingestDeclaration), []);
   assert.equal(ingestDeclaration.selfOutboxed, true);
   for (const d of [catalogueDeclaration, attrADeclaration, attrBDeclaration, ratingDeclaration, ingestDeclaration]) {
     assert.ok(d.projections.every((p) => /PRIMARY KEY \(partition/.test(p.ddl)), `${d.kind}: keys led by partition`);

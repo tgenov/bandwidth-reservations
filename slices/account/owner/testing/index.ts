@@ -1,10 +1,9 @@
 /**
  * @share/account-owner/testing: doubles and fixtures for the account owner (AM-I1).
  *
- * - `AccountTestRuntime`: the S-PLAT runtime double with three additions that AM-I1 needs and the
- *   double does not have: (1) the report position follows each commit (the status readers are I1b);
- *   (2) a C02 displacement marker of any attempt fails the `displacementRead` condition;
- *   (3) a trace of committed entries for P2-S92.
+ * - `AccountTestRuntime`: the S-PLAT runtime double plus a trace of committed entries for P2-S92 and a
+ *   never-back `reportUpTo`. The double itself (S-PLAT I1b) moves the report position with each commit
+ *   (`autoReport`) and fails `displacementRead` on a C02 displacement marker of any attempt.
  * - `LinkDouble`: the C02 provider behaviour of a link schedule owner for AM-I1: `hold` gives HELD(1)
  *   or REFUSED(NO_FIT) with a tombstone; `convert` gives CONVERTED; `release` gives RELEASED.
  * - `IdentityDouble`: the C08 §B catch-up, snapshot answers only.
@@ -13,7 +12,7 @@
 import type {
   AppendCall, AppendOptions, AppendResult, CommandEnvelope, HlcTs, PartitionKey, RoutingRefusal, SlotNo,
 } from '@share/owner-runtime';
-import { compareHlc, hex, slotOfPartition, utf8 } from '@share/owner-runtime';
+import { compareHlc, hex, utf8 } from '@share/owner-runtime';
 import { RuntimeDouble, feedEvent, type RuntimeDoubleOptions } from '@share/owner-runtime/testing';
 import type {
   ConvertCmd, ConvertReply, HoldCmd, HoldReply, LinkHoldPort, ReleaseCmd, ReleaseReply,
@@ -31,40 +30,24 @@ import type { FundsWithKeyStatus } from '../src/booking/owner.ts';
 
 // ---------------- Runtime ----------------
 
-export interface AccountTestRuntimeOptions extends RuntimeDoubleOptions {
-  /** Advance the report position to each commit at once (default true). */
-  autoReport?: boolean;
-}
+/** `autoReport` (default true) is the double's own: the report position follows each commit. */
+export type AccountTestRuntimeOptions = RuntimeDoubleOptions;
 
 export class AccountTestRuntime extends RuntimeDouble {
   /** Committed entries and link commands in order: "commit:<kind>:<request>" and "<command>:<request>". */
   readonly events: string[] = [];
-  /** C02 link_displacement rows: key (link, request bytes) → attempt. */
-  readonly markers = new Map<string, number>();
-  autoReport: boolean;
 
   constructor(opts: AccountTestRuntimeOptions = {}) {
     super({ declaration: accountDeclaration(), ...opts });
-    this.autoReport = opts.autoReport ?? true;
   }
 
   override async append(call: AppendCall, opts?: AppendOptions): Promise<AppendResult> {
-    for (const c of call.conditions ?? []) {
-      // C02 "Link displacement read": a row present with ANY attempt means no E5.
-      if (c.kind === 'displacementRead' && this.markers.has(markerKey(c.link, c.request))) {
-        const result: AppendResult = { r: 'ConditionFailed', which: c.label };
-        this.appends.push({ call, opts, result });
-        this.trace.push({ t: 'append', partition: hex(call.partition), result: result.r });
-        return result;
-      }
-    }
     const r = await super.append(call, opts);
     if (r.r === 'Committed') {
       for (const e of this.log(call.partition).filter((x) => x.seq >= r.seqFrom && x.seq <= r.seqTo)) {
         const booking = (e.entry.payload as { booking?: { request?: string } } | undefined)?.booking;
         this.events.push(`commit:${e.entry.kind}:${booking?.request ?? ''}`);
       }
-      if (this.autoReport) this.reportUpTo(slotOfPartition(call.partition, this.slotCount), r.ts);
     }
     return r;
   }
@@ -74,10 +57,6 @@ export class AccountTestRuntime extends RuntimeDouble {
     const cur = this.reportPosition(slot);
     if (cur === undefined || compareHlc(cur, ts) < 0) this.setReportPosition(slot, ts);
   }
-}
-
-export function markerKey(link: Uint8Array, request: Uint8Array): string {
-  return `${hex(link)}|${hex(request)}`;
 }
 
 // ---------------- Link double (C02 provider behaviour) ----------------
@@ -116,10 +95,7 @@ export class LinkDouble implements LinkHoldPort {
 
   /** A capacity-lowering transaction displaced the hold of `request` at `attempt` (writes the marker row). */
   displace(link: string, request: { partition: PartitionKey; seq: bigint }, attempt: number): void {
-    const rb = new Uint8Array(request.partition.byteLength + 8);
-    rb.set(request.partition, 0);
-    new DataView(rb.buffer).setBigUint64(request.partition.byteLength, request.seq);
-    this.rt.markers.set(markerKey(utf8(link), rb), attempt);
+    this.rt.putDisplacementMarker(utf8(link), requestBytes(request), attempt);
   }
 
   holdsOf(link: string): HoldRec[] {
@@ -164,7 +140,7 @@ export class LinkDouble implements LinkHoldPort {
     if (!rec || rec.state === 'released' || rec.state === 'refused') return { code: 'NO_HOLD' };
     if (rec.attempt !== cmd.attempt) return { code: 'MISMATCH' };
     rec.state = 'converted';
-    this.rt.markers.delete(markerKeyOf(cmd.link, cmd.request));   // the entry that ends the attempt deletes the marker
+    this.rt.removeDisplacementMarker(utf8(cmd.link), requestBytes(cmd.request));   // the entry that ends the attempt deletes the marker
     return { ...this.stamp(), result: 'CONVERTED', part: cmd.part };
   }
 
@@ -177,7 +153,7 @@ export class LinkDouble implements LinkHoldPort {
     if (rec && rec.state === 'held') rec.state = 'released';
     const until = cmd.deadline + 60_000;
     this.tombstones.set(k, until);
-    this.rt.markers.delete(markerKeyOf(cmd.link, cmd.request));
+    this.rt.removeDisplacementMarker(utf8(cmd.link), requestBytes(cmd.request));
     return { ...this.stamp(), result: 'RELEASED', tombstoneUntil: until };
   }
 
@@ -212,11 +188,12 @@ function reqKey(link: string, r: { partition: PartitionKey; seq: bigint }): stri
   return `${link}|${hex(r.partition)}|${r.seq}`;
 }
 
-function markerKeyOf(link: string, r: { partition: PartitionKey; seq: bigint }): string {
+/** C01 displacementRead `request` bytes: request_part ‖ U64BE(request_seq). */
+function requestBytes(r: { partition: PartitionKey; seq: bigint }): Uint8Array {
   const rb = new Uint8Array(r.partition.byteLength + 8);
   rb.set(r.partition, 0);
   new DataView(rb.buffer).setBigUint64(r.partition.byteLength, r.seq);
-  return markerKey(utf8(link), rb);
+  return rb;
 }
 
 // ---------------- Identity double (C08 §B) ----------------

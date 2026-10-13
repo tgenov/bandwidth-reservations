@@ -5,9 +5,9 @@
  */
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { CockroachOwnerRuntime, ManualLoad, MemoryPublisher, hex, utf8 } from '@share/owner-runtime';
+import { CockroachOwnerRuntime, ManualLoad, MemoryPublisher, utf8 } from '@share/owner-runtime';
 import { MemoryStore } from '@share/owner-runtime/testing';
-import { declaration, LinkOwner, openLogRow, type DecidedRecord, type LogReader } from '../src/index.ts';
+import { declaration, LinkOwner, runtimeLogReader, type DecidedRecord } from '../src/index.ts';
 import { propertyRun } from './property.ts';
 import { AccountStub, harness, M } from './support.ts';
 
@@ -32,21 +32,14 @@ test('P1-N1 property: 8 seeds × 2,000 hold/convert/release commands from 50 cli
   }
 });
 
-/** A log reader for the in-memory store of the real runtime core: it opens the sealed rows. */
-function memoryStoreReader(store: MemoryStore): LogReader {
-  return async (partition, after) => store.log
-    .filter((l) => hex(l.partition) === hex(partition) && l.seq > after)
-    .sort((a, b) => (a.seq < b.seq ? -1 : 1))
-    .map((l) => openLogRow({ slot: l.slot, partition: l.partition, seq: l.seq, epoch: l.epoch, kind: l.kind, ts: l.ts, payload: l.payload }));
-}
-
 test('P1-N1 property on the real C01 runtime core (in-memory store): 2 seeds × 1,000 commands from 50 clients', async () => {
   const store = new MemoryStore();
   store.seedSlots('link', declaration.slotCount);
   const rt = new CockroachOwnerRuntime({ declaration, store, publisher: new MemoryPublisher(), load: new ManualLoad(),
     slots: Array.from({ length: declaration.slotCount }, (_, i) => i) });
   const decided: DecidedRecord[] = [];
-  const readLog = memoryStoreReader(store);
+  // The runtime's own readLog: opened payloads, sender-fence envelope unwrapped (S-PLAT I1b).
+  const readLog = runtimeLogReader(rt);
   const owner = new LinkOwner(rt, { readLog, onDecided: (d) => decided.push(d) });
   await rt.start(owner);
   try {

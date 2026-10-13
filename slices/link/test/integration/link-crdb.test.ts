@@ -8,7 +8,7 @@ import { randomBytes } from 'node:crypto';
 import pg from 'pg';
 import { CockroachOwnerRuntime, ManualLoad, MemoryPublisher, PgStore, slotOfPartition, utf8 } from '@share/owner-runtime';
 import { migrateKinds } from '@share/owner-migrate';
-import { declaration, LinkOwner, sqlLogReader, type DecidedRecord } from '../../src/index.ts';
+import { declaration, LinkOwner, runtimeLogReader, type DecidedRecord } from '../../src/index.ts';
 import { propertyRun } from '../property.ts';
 import { AccountStub, M, resultOf } from '../support.ts';
 
@@ -31,7 +31,7 @@ async function start(link: string, decided: DecidedRecord[]) {
   const slot = slotOfPartition(utf8(link), declaration.slotCount);
   const rt = new CockroachOwnerRuntime({ declaration, store, slots: [slot], publisher: new MemoryPublisher(), load: new ManualLoad(),
     testing: { sessionTimings: FAST } });
-  const owner = new LinkOwner(rt, { readLog: sqlLogReader(rt), links: [link], onDecided: (d) => decided.push(d) });
+  const owner = new LinkOwner(rt, { readLog: runtimeLogReader(rt), links: [link], onDecided: (d) => decided.push(d) });
   await rt.start(owner);
   for (let i = 0; i < 80 && !rt.heldSlots().includes(slot); i++) await sleep(100);
   assert.ok(rt.heldSlots().includes(slot), `slot ${slot} acquired`);
@@ -51,7 +51,7 @@ test('dev cell: hold, convert, release, T-09 cases, the property run and a rebui
     const W = { start: M(10), end: M(11) };
 
     // Exit criterion 1 again: one seed, 400 commands from 20 clients (real clock, so no clock moves).
-    const res = await propertyRun({ stub, decided, capacity: 10, base: M(0), readLog: () => sqlLogReader(a.rt)(utf8(link), 0n) }, 21, 400, 20);
+    const res = await propertyRun({ stub, decided, capacity: 10, base: M(0), readLog: () => runtimeLogReader(a.rt)(utf8(link), 0n) }, 21, 400, 20);
     assert.ok((res.counts['HELD'] ?? 0) > 0);
 
     // Exit criterion 3 again (T-09).

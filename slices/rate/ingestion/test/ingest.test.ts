@@ -147,12 +147,9 @@ test('outside the I1 subset: a batch with a non-conforming payload is not commit
   assert.equal(frames.some((f) => 'ack' in f), false);
 });
 
-test('C01 CC-8 (ingest): the declaration matches RFC-003 §3.4; the runtime validator gaps are the known ones', () => {
-  const errors = validateDeclaration(ingestDeclaration);
-  assert.deepEqual(errors.sort(), [
-    'selfOutboxed kinds are I2 (C01 §2.3 stream index); not supported in I1a',
-    'stream handoff: topic ingestion.handoff.v1 is not <kind>.<feed>.v<n>',
-  ].sort());
+test('C01 CC-8 (ingest): the declaration matches RFC-003 §3.4 and the runtime validator accepts it', () => {
+  // S-PLAT I1b: selfOutboxed kinds and contract topic names are supported; no validation errors remain.
+  assert.deepEqual(validateDeclaration(ingestDeclaration), []);
   assert.deepEqual(ingestDeclaration.entryKinds.map((e) => e.name), ['batch', 'drop-alert', 'withdrawn', 'drop-count',
     'epoch-opened', 'wrap-opened', 'correction', 'supersession', 'identity-conflict', 'checkpoint']);
   assert.ok(ingestDeclaration.entryKinds.filter((e) => e.name !== 'checkpoint').every((e) => e.retention === '7y'));
