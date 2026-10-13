@@ -3,14 +3,18 @@
  * in the batch (DT-10 at the unit level), placement's timing loop raises alarms and writes versions, and
  * `putCheckpoint` / `getCheckpoint` go to the region's checkpoint store.
  */
-import { test } from 'node:test';
+import { afterEach, test } from 'node:test';
 import assert from 'node:assert/strict';
-import type { OperationalAlert, OwnerDeclaration, OwnerHooks, TimingVersion } from '../src/index.ts';
+import type { HlcTs, OperationalAlert, OwnerDeclaration, OwnerHooks, TimingVersion } from '../src/index.ts';
 import {
   CheckpointError, CheckpointStore, CockroachOwnerRuntime, DevSealer, ManualLoad, MemoryObjectStore, TimingAlarms, TimingController,
-  busAlertSink, decodeJson, hlcAddMs, hlcFromWallMs, utf8,
+  busAlertSink, decodeJson, hex, hlc, hlcAddMs, hlcFromWallMs, utf8,
 } from '../src/index.ts';
 import { MemoryBus, MemoryStore } from '../testing/index.ts';
+import { Closers } from './support.ts';
+
+const closers = new Closers();
+afterEach(() => closers.closeAll());
 
 const DECL: OwnerDeclaration = { kind: 'acct', slotCount: 4, entryKinds: [{ kind: 1, name: 'confirm', schemaVersions: [1], retention: '7y' }], projections: [], streams: [] };
 const AUDIT = { schema: 'audit.v1', principal: { principal_id: 'svc', kind: 'service', tenant: 'share' }, decided_at: 'commit', policy_version: 1 } as const;
@@ -22,6 +26,7 @@ test('DT-10 raising δ_x_cfg writes a new platform_timing version; a confirm who
   const store = new MemoryStore({ wallMs: () => W });            // every batch ts is at W (logical ticks only)
   store.seedSlots(DECL.kind, 4);
   const rt = new CockroachOwnerRuntime({ declaration: DECL, store, slots: [0, 1, 2, 3], load: new ManualLoad(), testing: { sessionTimings: FAST } });
+  closers.add(() => rt.stop());
   await rt.start(hooks());
   const D = hlcFromWallMs(W + 430);                               // the request's deadline
   const confirm = (id: string) => rt.append({
@@ -36,6 +41,32 @@ test('DT-10 raising δ_x_cfg writes a new platform_timing version; a confirm who
   assert.deepEqual(await confirm('c2'), { r: 'ConditionFailed', which: 'ts < D − τ' });
   assert.equal(store.log.length, 1, 'the refused confirm wrote nothing');
   assert.equal(rt.timing().version, 2n, 'the runtime saw the version read in the batch');
+  await rt.stop();
+});
+
+test('DT-10 should refuse a confirm whose ts equals D − τ, and commit one whose ts is 1 ns before D − τ', async () => {
+  let wall = 1_800_000_000_000;
+  const store = new MemoryStore({ wallMs: () => wall });
+  store.seedSlots(DECL.kind, 4);
+  const rt = new CockroachOwnerRuntime({ declaration: DECL, store, slots: [0, 1, 2, 3], load: new ManualLoad(), testing: { sessionTimings: FAST } });
+  closers.add(() => rt.stop());
+  await rt.start(hooks());
+  const tau = store.timing.tauMs;
+  const confirm = (id: string, D: HlcTs) => rt.append({
+    partition: utf8('acct-1'),
+    conditions: [{ kind: 'tsBefore', bound: (t) => hlcAddMs(D, -t.tauMs), label: 'ts < D − τ' }],
+    entries: [{ kind: 1, schemaV: 1, identity: utf8(id), audit: AUDIT, payload: { id } }],
+  });
+  // A new wall ms: the batch's ts is the first timestamp of that ms, `${wall·10⁶}.0000000000`.
+  wall += 1_000;
+  const atFence = hlcFromWallMs(wall);
+  assert.deepEqual(await confirm('c-at', hlcAddMs(atFence, tau)), { r: 'ConditionFailed', which: 'ts < D − τ' });
+  assert.equal(store.log.length, 0, 'the refused confirm wrote nothing');
+  wall += 1_000;
+  const D = hlc(BigInt(wall) * 1_000_000n + BigInt(tau) * 1_000_000n + 1n);   // D − τ = ts + 1 ns
+  const r = await confirm('c-before', D);
+  assert.equal(r.r === 'Committed' && r.seqFrom, 1n);
+  assert.equal(store.log[0]?.ts, hlcFromWallMs(wall), 'the batch ts is 1 ns before D − τ');
   await rt.stop();
 });
 
@@ -77,14 +108,16 @@ test('should seal and write a checkpoint to the region\'s store and read it back
   const objects = new MemoryObjectStore();
   const checkpoints = new CheckpointStore({ region: 'r1', objects, sealer: new DevSealer() });
   const rt = new CockroachOwnerRuntime({ declaration: DECL, store, slots: [0], load: new ManualLoad(), checkpoints, testing: { sessionTimings: FAST } });
+  closers.add(() => rt.stop());
   await rt.start(hooks());
   const state = utf8('hot link state at seq 40');
   const { reference, digest } = await rt.putCheckpoint('acct', utf8('L1'), 40n, state);
-  assert.match(reference, /^ckpt:r1:acct:/);
+  assert.equal(reference, `ckpt:r1:acct:${hex(utf8('L1'))}:40`);
   assert.equal(digest.byteLength, 32);
   assert.deepEqual(await rt.getCheckpoint(reference), state);
   await assert.rejects(rt.putCheckpoint('acct', utf8('L1'), 40n, utf8('other bytes')), (e: unknown) => e instanceof CheckpointError && e.code === 'DIGEST_MISMATCH');
   const none = new CockroachOwnerRuntime({ declaration: DECL, store, slots: [], load: new ManualLoad() });
-  await assert.rejects(none.getCheckpoint(reference), /needs OwnerRuntimeOptions.checkpoints/);
+  await assert.rejects(none.getCheckpoint(reference), (e: unknown) => e instanceof CheckpointError && e.code === 'NO_CHECKPOINT_STORE');
+  await assert.rejects(none.putCheckpoint('acct', utf8('L1'), 41n, state), (e: unknown) => e instanceof CheckpointError && e.code === 'NO_CHECKPOINT_STORE');
   await rt.stop();
 });

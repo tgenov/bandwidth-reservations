@@ -3,11 +3,13 @@
  * a second-lane batch never carries a partition of the first lane's batch; per-partition seq stays contiguous
  * (CP-1 re-run with the second lane on).
  */
-import { test } from 'node:test';
+import { afterEach, test } from 'node:test';
 import assert from 'node:assert/strict';
-import type { AppendResult, OwnerDeclaration, OwnerHooks } from '../src/index.ts';
+import type { AppendResult, HlcTs, OwnerDeclaration, OwnerHooks } from '../src/index.ts';
 import { CockroachOwnerRuntime, ManualLoad, compareHlc, hex, slotOfPartition, utf8 } from '../src/index.ts';
 import { MemoryStore } from '../testing/index.ts';
+import type { TimingRow } from '../src/store/types.ts';
+import { Closers, rng, steppedClock, until, yieldTurns } from './support.ts';
 
 const DECL: OwnerDeclaration = {
   kind: 'account', slotCount: 4,
@@ -18,17 +20,10 @@ const AUDIT = { schema: 'audit.v1', principal: { principal_id: 'svc', kind: 'ser
 const entry = (id: string) => ({ kind: 1, schemaV: 1, identity: utf8(id), audit: AUDIT, payload: { id } });
 const FAST = { sessionTtlMs: 300, sessionRenewMs: 40, renewRetryMs: 20, holderViewMs: 280, maxLoopDelayMs: 20 };
 const hooks = (): OwnerHooks => ({ async onAcquire() {}, onRelease() {}, onReportable() {}, onMovedOut() {}, async onAdopt() {}, async onNotification() {} });
-const sleep = (ms: number): Promise<void> => new Promise((r) => setTimeout(r, ms));
-async function until(f: () => boolean, ms = 3_000): Promise<void> {
-  const end = Date.now() + ms;
-  while (!f()) { if (Date.now() > end) throw new Error('timed out'); await sleep(5); }
-}
 
-/** Seeded generator (engineering standard §5): the seed is in every failure message. */
-function rng(seed: number): () => number {
-  let x = seed >>> 0;
-  return () => { x = (Math.imul(x, 1664525) + 1013904223) >>> 0; return x / 2 ** 32; };
-}
+const closers = new Closers();
+afterEach(() => closers.closeAll());
+const T = { timeout: 30_000 };
 
 /** Partitions that all live in one slot, so both lanes of that slot are used. */
 function partitionsOfSlot(slot: number, n: number): Uint8Array[] {
@@ -37,105 +32,168 @@ function partitionsOfSlot(slot: number, n: number): Uint8Array[] {
   return out;
 }
 
+/** A store on a stepped clock (sessions expire only when the test steps it), with `secondLane` in platform_timing. */
+function laneStore(secondLane?: NonNullable<TimingRow['secondLane']>[string]) {
+  const clock = steppedClock();
+  const store = new MemoryStore({ wallMs: clock.now });
+  if (secondLane) store.timing = { ...store.timing, version: 2n, secondLane: { account: secondLane } };
+  return { store, clock };
+}
+
 async function boot(store: MemoryStore, slots = [0, 1, 2, 3]) {
   store.seedSlots(DECL.kind, 4);
   const rt = new CockroachOwnerRuntime({ declaration: DECL, store, slots, load: new ManualLoad(), testing: { sessionTimings: FAST } });
+  closers.add(() => rt.stop());
   await rt.start(hooks());
   return rt;
 }
 
-function checkLog(store: MemoryStore, seed: number): void {
+/** The first COMMIT waits until `release` (the first lane's batch stays in flight). */
+function gateFirstCommit(store: MemoryStore): { release: () => void } {
+  let release: () => void = () => {};
+  const gate = new Promise<void>((r) => { release = r; });
+  let first = true;
+  store.faults.beforeCommit = async () => { if (first) { first = false; await gate; } };
+  closers.add(async () => release());              // runs before the runtime stops, also when the test fails
+  return { release: () => release() };
+}
+
+const lanes = (rt: CockroachOwnerRuntime): string[] => rt.batchesStarted.map((b) => b.lane);
+const seqFrom = (r: AppendResult | undefined): bigint | undefined => (r?.r === 'Committed' ? r.seqFrom : undefined);
+
+/** Records each committed batch's ts and partitions, in commit order. */
+function commitsOf(store: MemoryStore): Array<{ ts: HlcTs; partitions: string[] }> {
+  const out: Array<{ ts: HlcTs; partitions: string[] }> = [];
+  store.commitListeners.push((_kind, w) => { if (w.log.length > 0) out.push({ ts: w.ts, partitions: [...new Set(w.log.map((l) => hex(l.partition)))] }); });
+  return out;
+}
+
+/** C01 CP-1: per partition, seq contiguous from 1 in commit order, and ts strictly increasing from batch to batch. */
+function checkLog(store: MemoryStore, commits: Array<{ ts: HlcTs; partitions: string[] }>, seed: number): void {
   const by = new Map<string, typeof store.log>();
   for (const l of store.log) by.set(hex(l.partition), [...(by.get(hex(l.partition)) ?? []), l]);
   for (const [p, rows] of by) {
-    const sorted = [...rows].sort((a, b) => (a.seq < b.seq ? -1 : 1));
-    sorted.forEach((r, i) => assert.equal(r.seq, BigInt(i + 1), `seed ${seed}: ${p} seq contiguous`));
-    for (let i = 1; i < sorted.length; i++) {
-      // ts is shared by every entry of one batch and increases from batch to batch (C01 §3.2).
-      assert.ok(compareHlc(sorted[i - 1]?.ts as never, sorted[i]?.ts as never) <= 0, `seed ${seed}: ${p} ts never goes back at seq ${sorted[i]?.seq}`);
-      assert.ok((sorted[i - 1]?.epoch ?? 0n) <= (sorted[i]?.epoch ?? 0n), `seed ${seed}: ${p} epochs never go back`);
+    rows.forEach((r, i) => assert.equal(r.seq, BigInt(i + 1), `seed ${seed}: ${p} seq contiguous in commit order`));
+    for (let i = 1; i < rows.length; i++) {
+      assert.ok((rows[i - 1]?.epoch ?? 0n) <= (rows[i]?.epoch ?? 0n), `seed ${seed}: ${p} epochs never go back`);
+    }
+  }
+  const last = new Map<string, HlcTs>();
+  for (const c of commits) {
+    for (const p of c.partitions) {
+      const prev = last.get(p);
+      assert.ok(prev === undefined || compareHlc(prev, c.ts) < 0, `seed ${seed}: ${p} batch at ts ${c.ts} is not after the batch before it at ${prev}`);
+      last.set(p, c.ts);
     }
   }
 }
 
-test('should run calls marked lane second on the first lane, one batch at a time, when platform_timing does not enable a second lane', async () => {
-  const store = new MemoryStore();
-  store.faults.beforeCommit = () => sleep(5);
+test('should run calls marked lane second on the first lane, one batch at a time, when platform_timing does not enable a second lane', T, async () => {
+  const { store } = laneStore();
+  store.faults.beforeCommit = () => yieldTurns(3);
   const rt = await boot(store);
   const ps = partitionsOfSlot(1, 4);
   const rs = await Promise.all(ps.map((p, i) => rt.append({ partition: p, entries: [entry(`d${i}`)] }, { lane: 'second' })));
-  assert.ok(rs.every((r) => r.r === 'Committed'));
-  assert.ok(rt.batchesStarted.every((b) => b.lane === 'primary'));
-  await rt.stop();
+  assert.deepEqual(rs.map((r) => r.r), ['Committed', 'Committed', 'Committed', 'Committed']);
+  assert.ok(rt.batchesStarted.length >= 2, 'the calls did not all fit one batch');
+  assert.ok(lanes(rt).every((l) => l === 'primary'));
 });
 
-test('should carry only calls marked lane second on the second lane when the deadline lane is on', async () => {
-  const store = new MemoryStore();
-  store.timing = { ...store.timing, version: 2n, secondLane: { account: { deadline: true } } };
-  let release: () => void = () => {};
-  const gate = new Promise<void>((r) => { release = r; });
-  let first = true;
-  store.faults.beforeCommit = async () => { if (first) { first = false; await gate; } };
+test('should carry only calls marked lane second on the second lane when the deadline lane is on', T, async () => {
+  const { store } = laneStore({ deadline: true });
+  const gate = gateFirstCommit(store);
   const rt = await boot(store);
-  await sleep(60);                                   // one renewal tick reads the new platform_timing version
+  assert.equal(rt.timing().version, 2n);
   const [a, b, c] = partitionsOfSlot(2, 3) as [Uint8Array, Uint8Array, Uint8Array];
   const pa = rt.append({ partition: a, entries: [entry('a')] });
-  await until(() => rt.batchesStarted.length === 1);
   const pb = rt.append({ partition: b, entries: [entry('b')] });                       // ordinary: waits for the first lane
   const pc = rt.append({ partition: c, entries: [entry('c')] }, { lane: 'second' });   // a deadline entry: second lane
-  await until(() => rt.batchesStarted.length === 2);
-  const second = rt.batchesStarted[1];
-  assert.equal(second?.lane, 'second');
-  assert.deepEqual(second?.partitions, [hex(c)]);
-  release();
+  assert.deepEqual(rt.batchesStarted.map((x) => [x.lane, x.partitions]), [['primary', [hex(a)]], ['second', [hex(c)]]]);
+  gate.release();
   assert.deepEqual((await Promise.all([pa, pb, pc])).map((r) => r.r), ['Committed', 'Committed', 'Committed']);
-  assert.ok(rt.batchesStarted.filter((x) => x.lane === 'second').every((x) => x.partitions.includes(hex(c))), 'b never rode the deadline lane');
-  await rt.stop();
+  assert.ok(rt.batchesStarted.filter((x) => x.lane === 'second').every((x) => !x.partitions.includes(hex(b))), 'b never rode the deadline lane');
 });
 
-test('should keep a partition in the first lane\'s batch out of the second lane, and every later call of it too, so its order holds', async () => {
-  const store = new MemoryStore();
-  store.timing = { ...store.timing, version: 2n, secondLane: { account: { account: true } } };
-  let release: () => void = () => {};
-  const gate = new Promise<void>((r) => { release = r; });
-  let first = true;
-  store.faults.beforeCommit = async () => { if (first) { first = false; await gate; } };
+test('should keep a partition in the first lane\'s batch out of the second lane, and every later call of it too, so its order holds', T, async () => {
+  const { store } = laneStore({ account: true });
+  const gate = gateFirstCommit(store);
   const rt = await boot(store);
-  await sleep(60);
   const [x, y] = partitionsOfSlot(3, 2) as [Uint8Array, Uint8Array];
   const p1 = rt.append({ partition: x, entries: [entry('x1')] });
-  await until(() => rt.batchesStarted.length === 1);
   const p2 = rt.append({ partition: x, entries: [entry('x2')] });
   const p3 = rt.append({ partition: y, entries: [entry('y1')] });
-  await until(() => rt.batchesStarted.length === 2);
+  assert.equal(rt.batchesStarted.length, 2);
   assert.deepEqual(rt.batchesStarted[1], { slot: 3, lane: 'second', partitions: [hex(y)], otherInFlight: [hex(x)] });
-  release();
+  gate.release();
   const [r1, r2] = await Promise.all([p1, p2, p3]);
-  assert.equal(r1?.r === 'Committed' && r1.seqFrom, 1n);
-  assert.equal(r2?.r === 'Committed' && r2.seqFrom, 2n, 'x2 after x1');
-  await rt.stop();
+  assert.equal(seqFrom(r1), 1n);
+  assert.equal(seqFrom(r2), 2n, 'x2 after x1');
 });
 
-test('C01 CP-1 with the second lane on: across seeded load, a pause and a takeover, no batch carries a partition of the other lane\'s batch; seq contiguous and ts never back per partition', async () => {
+test('should never start an exclusive or firstStatement call on the second lane when the account lane is on', T, async () => {
+  const { store } = laneStore({ account: true });
+  const gate = gateFirstCommit(store);
+  const rt = await boot(store);
+  const [a, x, y] = partitionsOfSlot(1, 3) as [Uint8Array, Uint8Array, Uint8Array];
+  const pa = rt.append({ partition: a, entries: [entry('a')] });
+  const px = rt.append({ partition: x, entries: [entry('x')] }, { exclusive: true });
+  const py = rt.append({ partition: y, entries: [entry('y')] }, { firstStatement: [] });
+  assert.deepEqual(lanes(rt), ['primary'], 'neither call started on the second lane while the first lane is in flight');
+  gate.release();
+  assert.deepEqual((await Promise.all([pa, px, py])).map((r) => r.r), ['Committed', 'Committed', 'Committed']);
+  assert.deepEqual(lanes(rt), ['primary', 'primary', 'primary'], 'each special call alone, on the first lane');
+  assert.deepEqual(rt.batchesStarted.slice(1).map((b) => b.partitions), [[hex(x)], [hex(y)]]);
+});
+
+test('should keep queue order of one partition when an ordinary call of it waits and a later call of it is marked lane second', T, async () => {
+  const { store } = laneStore({ deadline: true });
+  const gate = gateFirstCommit(store);
+  const rt = await boot(store);
+  const [a, p] = partitionsOfSlot(2, 2) as [Uint8Array, Uint8Array];
+  const pa = rt.append({ partition: a, entries: [entry('a')] });
+  const p1 = rt.append({ partition: p, entries: [entry('p1')] });
+  const p2 = rt.append({ partition: p, entries: [entry('p2')] }, { lane: 'second' });
+  assert.deepEqual(lanes(rt), ['primary'], 'p2 waits behind p1, which may not ride the deadline lane');
+  gate.release();
+  const [, r1, r2] = await Promise.all([pa, p1, p2]);
+  assert.equal(seqFrom(r1), 1n);
+  assert.equal(seqFrom(r2), 2n);
+});
+
+test('C01 CP-1 with the second lane on: across seeded load, lost COMMIT answers, a revocation, a pause and a takeover, no batch carries a partition of the other lane\'s batch; seq contiguous and ts strictly increasing per partition', T, async () => {
   for (const seed of [11, 2026, 90210]) {
     const rnd = rng(seed);
-    const store = new MemoryStore();
-    store.timing = { ...store.timing, version: 2n, secondLane: { account: { account: true } } };
-    store.faults.beforeCommit = () => sleep(Math.floor(rnd() * 6));
+    const { store, clock } = laneStore({ account: true });
+    const commits = commitsOf(store);
+    store.faults.beforeCommit = () => yieldTurns(Math.floor(rnd() * 6));
     const a = await boot(store);
-    await sleep(60);
     const ps = partitionsOfSlot(0, 6);
     const results: Array<Promise<AppendResult>> = [];
+    const revokeAt = 40 + Math.floor(rnd() * 60);
     for (let i = 0; i < 120; i++) {
       const p = ps[Math.floor(rnd() * ps.length)] as Uint8Array;
+      const fault = rnd();
+      if (fault < 0.04) store.faults.commits.push('ambiguousCommitted');
+      else if (fault < 0.08) store.faults.commits.push('ambiguousNotCommitted');
+      if (i === revokeAt) {
+        const s = store.sessions.get(a.sessionId());
+        assert.ok(s, `seed ${seed}`);
+        s.revoked = true;
+      }
       results.push(a.append({ partition: p, entries: [entry(`a-${i}`)] }));
-      if (rnd() < 0.3) await sleep(1);
+      await yieldTurns(Math.floor(rnd() * 3));
     }
-    await Promise.all(results);
+    const answers = await Promise.all(results);
+    assert.ok(answers.every((r) => ['Committed', 'Ambiguous', 'Retry', 'StaleEpoch'].includes(r.r)), `seed ${seed}: ${answers.map((r) => r.r).join(',')}`);
+    assert.ok(answers.some((r) => r.r === 'Ambiguous'), `seed ${seed}: a lost COMMIT answer was injected`);
+    await until(() => a.heldSlots().length === 4 && store.slotRow(DECL.kind, 0)?.sessionId === a.sessionId(), 5_000, `seed ${seed}: re-homed after the revocation`);
+    assert.ok([0, 1, 2, 3].every((s) => (store.slotRow(DECL.kind, s)?.epoch ?? 0n) === 2n), `seed ${seed}: each slot re-homed once`);
+    store.faults.commits.splice(0);
     // A pause past session_ttl: B takes the slot; A's late calls never commit.
     a.pauseRenewalsForTest();
+    clock.step(FAST.sessionTtlMs + 1);
     const b = await boot(store, [0]);
-    await until(() => b.heldSlots().includes(0));
+    assert.deepEqual(b.heldSlots(), [0], `seed ${seed}`);
     const late = a.append({ partition: ps[0] as Uint8Array, entries: [entry('a-late')] });
     a.resumeRenewalsForTest();
     assert.equal((await late).r, 'StaleEpoch', `seed ${seed}`);
@@ -149,7 +207,7 @@ test('C01 CP-1 with the second lane on: across seeded load, a pause and a takeov
     }
     assert.ok([...a.batchesStarted, ...b.batchesStarted].filter((s) => s.lane === 'second').length > 0, `seed ${seed}: the second lane ran`);
     assert.ok(!store.log.some((l) => Buffer.from(l.identity).toString() === 'a-late'), `seed ${seed}`);
-    checkLog(store, seed);
+    checkLog(store, commits, seed);
     await a.stop(); await b.stop();
   }
 });

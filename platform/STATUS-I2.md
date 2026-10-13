@@ -3,8 +3,8 @@
 Increment: S-PLAT-I2 "Runtime completion for owner kinds" (`docs/04-delivery/plan/S-PLAT.md` §5). Package version stays
 `1.0.0-alpha.1` (I3 releases `1.0.0`). Every addition is optional, so C01 v1 consumers do not change.
 
-Checks (this run, 2026-10-13): `npm run -s typecheck` passes (all workspaces); `npm run -s test:platform` 269 pass,
-0 fail (two runs); `npm run -s test:contracts` 75 pass, 0 fail, 3 todo (`PENDING real provider` entries of other
+Checks (this run, 2026-10-13, after the fixes of review 68): `npm run -s typecheck` passes (all workspaces);
+`npm run -s test:platform` 296 pass, 0 fail (two runs); `npm run -s test:contracts` 75 pass, 0 fail, 3 todo (`PENDING real provider` entries of other
 slices, not of this increment); `npx eslint platform contracts` is clean. `npm run check` and `npm run ci` were not run
 (engineering.md §2: an agent runs only the slice's tests and `test:contracts`).
 
@@ -45,6 +45,55 @@ open a tier's breaker. Test: `should count one timeout, not two, when one epoch 
 
 The plan also names RK13 (`δ_x` tail): A-T2 and A-T3 automation is done (`TimingController`); SP4 measures p99.9.
 
+## Review 68 (test review of S-PLAT-I2)
+
+Review: `docs/reviews/68-test-review-platform-S-PLAT-I2.md` (INADEQUATE: 3 Blocker, 14 Major, 6 Minor). Each test was
+written first. The 10 surviving mutants of the review (M1 … M10) and the other "no test fails" changes of TR-7, TR-8,
+TR-9, TR-11, TR-12, TR-14, TR-16, TR-19, TR-20 and TR-22 were made again by hand: each one now makes
+`npm run -s test:platform` fail (24 mutants, 24 killed). No mutant is left in the tree.
+
+Code defects found and fixed:
+
+1. **TR-1.** A push to the hot standby had `advances = true` in two cases where a committed batch with a lower `ts` was
+   not pushed yet: an Ambiguous batch resolved as committed while the other lane had a batch in flight, and any batch
+   that committed while an Ambiguous batch of the slot was not resolved. The standby then moved `complete` past the
+   other batch and dropped its push; the takeover catch-up did not read it again. Now a push advances only when no
+   batch of the slot is in flight on the other lane and no Ambiguous batch of the slot is unresolved (`Lane.unresolved`).
+2. **TR-7.** At offset level A, the slots of a slot group were released one member kind at a time, in separate
+   transactions. Now `OwnerStore.releaseGroup` frees every member in one transaction (`MemoryStore`, `PgStore`). A
+   hand-off that fails is tried again on the next renewal tick while the level stays A.
+3. **TR-7.** A hot standby never took a free slot, so it did not take the slots that its holder handed off at level A.
+   Now a standby takes a free slot that somebody held before (epoch above 0); it never takes a slot nobody has held.
+4. **TR-14.** When the relay could not derive the events of a log row, the error stopped the bus delivery with no
+   record of it. Now the relay halts (`OutboxRelay.halted`): it publishes nothing of the row, writes no progress and
+   commits no offset after it, so no closure passes the row.
+
+| ID | Severity | State | Tests, change |
+|---|---|---|---|
+| TR-1 | Blocker | Fixed (code defect 1) | `standby.test.ts`: `should keep every committed row in the standby memory and send advances false …`, `should push an Ambiguous batch resolved as committed with advances false …`, `should push with advances false while an Ambiguous batch of the slot is not resolved` |
+| TR-2 | Blocker | Fixed (test only) | `timing-runtime.test.ts`: `DT-10 should refuse a confirm whose ts equals D − τ, and commit one whose ts is 1 ns before D − τ` (stepped clock) |
+| TR-3 | Blocker | Fixed in the 12 I2 test files | Stepped clocks (`steppedClock` in `test/support.ts`) for the store and the runtime; session expiry by a clock step; waits for events with a timeout (`until`, counts of renewals, standby polls, offset samples, emitter passes, committed offsets); mock timers in `store-tiers.test.ts`; DT-09 counts samples (level D on the third sample, 2 × `OFFSET.intervalMs`); the slot-group loop is a seeded list of rounds. Not in scope: the I1 files `feeds`, `report`, `runtime-core`, `additions` still sleep |
+| TR-4 | Major | Fixed (test only) | `second-lane.test.ts`: `should never start an exclusive or firstStatement call on the second lane …` |
+| TR-5 | Major | Fixed (test only) | `second-lane.test.ts`: `should keep queue order of one partition when an ordinary call of it waits …` |
+| TR-6 | Major | Fixed (test only) | CP-1 loop: lost COMMIT answers (both outcomes), one revocation and re-home, a pause and a takeover; `checkLog` asserts strictly increasing `ts` per partition from batch to batch (commit order) |
+| TR-7 | Major | Fixed (code defects 2, 3) | `slot-group.test.ts`: `should hand off slot i of every member in one transaction or not at all …`; `standby.test.ts`: `should let the hot standby take the slots that its holder handed off …` |
+| TR-8 | Major | Fixed (test only) | `store-tiers.test.ts`: 4 tests of `PgStore.acquireGroup` and `rehomeGroup` with a scripted client (`BEGIN`, `UPDATE`, `ROLLBACK`/`COMMIT`) |
+| TR-9 | Major | Fixed (test only) | `batch-tiers.test.ts`: one timeout ⇒ a fresh attempt commits, the first transaction discarded with no ROLLBACK; two ⇒ `retry` |
+| TR-10 | Major | Fixed (test only) | `offset-tiers.test.ts`: bounds of exactly 40 ms and 50 ms |
+| TR-11 | Major | Fixed (test only) | `offset-tiers.test.ts`: `should take no slot for 10 min after the bound returns within 40 ms …` (+599,999 ms, +600,000 ms) |
+| TR-12 | Major | Fixed (test only) | `offset-tiers.test.ts`: `should serve a slot whose acquisition committed but whose answer was lost …` |
+| TR-13 | Major | Fixed (test only) | `timing.test.ts`: τ = 200 accepted |
+| TR-14 | Major | Fixed (code defect 4) | `self-outboxed.test.ts`: `EMIT_MISMATCH` for fewer and more events; the relay halts with no record and no progress; `INDEX_MISMATCH`; an unknown producer fills nothing |
+| TR-15 | Major | Fixed (test only) | `self-outboxed.test.ts`: `should refuse to construct a self-outboxed runtime when a stream is report-gated` |
+| TR-16 | Major | Fixed (test only) | `store-tiers.test.ts`: `should wait for a slow renewal past 400 ms when the store has one tier` |
+| TR-17 | Major | Fixed (test only) | `standby-property.test.ts`: 400 seeds × 300 steps against an oracle (two lanes, Ambiguous batches, push loss and reorder, tail reads). It fails at once when the model's holder always sends `advances = true` (shown once) |
+| TR-18 | Minor | Fixed | Refusal codes: `SelfOutboxedError` (`EMIT_MISMATCH`, `NO_OUTBOX`, `INDEX_MISMATCH`, `INVALID_DECLARATION` with `details`), `SlotGroupError` (`GROUP_PARTNER`, `GROUP_SLOT_COUNT`, `GROUP_MEMBER_FLAG`, `GROUP_START_ORDER`), `CheckpointError` `NO_CHECKPOINT_STORE`; tests assert `code` |
+| TR-19 | Minor | Fixed (test only) | `timing.test.ts`: `deltaXMs` 300.5, `tauMs` NaN, `deltaXMs` −1 refused; ε = 0 accepted |
+| TR-20 | Minor | Fixed (test only) | `standby.test.ts`: 10,000 pushes buffered, the 10,001st drops 1 |
+| TR-21 | Minor | Fixed in the I2 test files | `Closers` in `afterEach` (`test/support.ts`): runtimes, relays, consumers, emitters, servers; gates are opened before the runtimes stop; runtime tests have a timeout |
+| TR-22 | Minor | Fixed | `fault-proxy.test.ts` (loopback echo server); `FaultProxy.droppedBytes` counts the bytes of a cut link |
+| TR-23 | Minor | Fixed | Exact values: the checkpoint reference, `tailRows` 1, the slot-group epoch (1 + rounds) |
+
 ## Design issues found (for C01 v1.1 errata and RFC-006)
 
 1. **Byte-identical copies of derived events** (C01 §3.5 D3 vs RFC-006 §3.5). A self-outboxed kind has no outbox row, so
@@ -64,8 +113,9 @@ The plan also names RK13 (`δ_x` tail): A-T2 and A-T3 automation is done (`Timin
    `prevTs` and `advances` (false while the other lane has a batch in flight) so the standby knows which rows are
    complete. Proposal: C01 v1.1 adds the hook and the push fields.
 5. **Handoff needs a named successor** (RFC-006 §4.2, §6.2 level A). Nothing tells an owner host its successor. Here level
-   A frees the slots at their own epoch (no revocation) and other processes take them as free slots; the process takes
-   slots again after 10 min within bound (RFC-006 §6.3 states that rule only for database nodes).
+   A frees the slots at their own epoch (no revocation; a slot group in one transaction) and other processes take them
+   as free slots; a hot standby takes a free slot that was held before (epoch above 0). The process takes slots again
+   after 10 min within bound (RFC-006 §6.3 states that rule only for database nodes).
 6. **DT-09's 3 s and §6.2's three samples a second.** The third sample above 50 ms comes up to 3 s after the clock
    changes, so the give-up write lands just after 3 s in the worst case. Proposal: DT-09 counts from the first sample
    above 50 ms, or §6.2 samples every 900 ms.

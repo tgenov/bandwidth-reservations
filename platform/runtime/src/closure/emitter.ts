@@ -53,6 +53,8 @@ export class ClosureEmitter {
   private stopped = false;
   private lastR: HlcTs | undefined;
   private lastFull = 0;
+  /** Counters for tests and metrics: relay progress records read, and passes that computed R_min. */
+  readonly stats = { progressRecords: 0, passes: 0 };
   /** Every marker written, for tests. */
   readonly emitted: Array<{ topic: string; partition: number; resolved: HlcTs; dataHighWater: bigint; link?: string; feedSeq?: bigint }> = [];
 
@@ -83,6 +85,7 @@ export class ClosureEmitter {
       groupId: `closure-emitter-${this.kind}-${this.session.sessionId}`, topics: [relayProgressTopic(this.kind)], fromBeginning: true,
       onRecord: async (r) => {
         if (!r.value) return;
+        this.stats.progressRecords += 1;
         const p = decodeRelayProgress(r.value);
         const cur = this.progress.get(p.cdcPartition);
         if (cur === undefined || compareHlc(p.resolved, cur) > 0) this.progress.set(p.cdcPartition, hlc(p.resolved));
@@ -140,6 +143,7 @@ export class ClosureEmitter {
     } catch (e) {
       this.o.log?.('closure emitter pass failed', { error: String(e) });
     } finally {
+      this.stats.passes += 1;
       this.busy = false;
     }
   }

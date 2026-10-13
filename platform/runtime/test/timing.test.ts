@@ -507,3 +507,17 @@ test('should discard the client when the rollback fails', async () => {
   await assert.rejects(writeTimingVersion(s.pool, V1), (e: unknown) => e instanceof TimingVersionRefused && e.code === 'SHARDS_MISSING');
   assert.deepEqual(s.released, [true]);
 });
+
+test('should accept a timing version when tau equals the ack budget', async () => {
+  const s = scriptedPool({ shards: 64, maxVersion: '1', updated: 64 });
+  assert.equal(await writeTimingVersion(s.pool, { epsilonMs: 50, deltaXMs: 150, tauMs: 200, secondLane: {} }), 2n);
+  assert.deepEqual(verbs(s.log), ['BEGIN', 'SELECT', 'UPDATE', 'COMMIT']);
+});
+
+test('should refuse a timing version when delta x or tau is not a whole number of ms, and accept an epsilon of 0', async () => {
+  assert.equal(await refused({ epsilonMs: 100, deltaXMs: 300.5, tauMs: 420, secondLane: {} }), 'NOT_WHOLE_MS');
+  assert.equal(await refused({ epsilonMs: 100, deltaXMs: 300, tauMs: Number.NaN, secondLane: {} }), 'NOT_WHOLE_MS');
+  assert.equal(await refused({ epsilonMs: 100, deltaXMs: -1, tauMs: 420, secondLane: {} }), 'NOT_WHOLE_MS');
+  const s = scriptedPool({ shards: 64, maxVersion: '1', updated: 64 });
+  assert.equal(await writeTimingVersion(s.pool, { epsilonMs: 0, deltaXMs: 200, tauMs: 200, secondLane: {} }), 2n);
+});

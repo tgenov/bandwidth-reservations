@@ -4,7 +4,7 @@ import type {
   OwnerDeclaration, ProjectionWrite, RowRef, SlotNo,
 } from '../api.ts';
 import { bytesEqual, decodeJson, encodeJson, hex } from '../bytes.ts';
-import { checkDeclaredEvents, eventRecord, type EmitFunctions } from '../selfout/derive.ts';
+import { SelfOutboxedError, checkDeclaredEvents, eventRecord, type EmitFunctions } from '../selfout/derive.ts';
 import { chainGenesis, chainNext } from '../chain.ts';
 import { retentionCode, tableNames } from '../declaration.ts';
 import { StaleEpochSignal } from '../errors.ts';
@@ -253,7 +253,7 @@ export async function runAttempt(tx: BatchTxn, env: AttemptEnv, calls: PendingCa
       }
       if (decl.selfOutboxed) {
         // RFC-006 §3.5: the relay derives the events from the row; they must be what the emit functions give.
-        if ((decided.notifications ?? []).length > 0) throw new Error(`${kind} is self-outboxed: it has no outbox for notifications`);
+        if ((decided.notifications ?? []).length > 0) throw new SelfOutboxedError('NO_OUTBOX', `${kind} is self-outboxed: it has no outbox for notifications`);
         if (!env.emitFns) throw new Error(`${kind} is self-outboxed: the runtime needs its emit functions`);
         let seq = (working.get(key) ?? dbHead)?.seq ?? 0n;
         for (const e of decided.entries) {

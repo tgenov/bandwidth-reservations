@@ -13,6 +13,8 @@ export class FaultProxy {
   readonly target: { host: string; port: number };
   /** Connections accepted, for tests. */
   accepted = 0;
+  /** Bytes dropped while cut (both directions), for tests. */
+  droppedBytes = 0;
 
   private constructor(target: { host: string; port: number }) {
     this.target = target;
@@ -59,13 +61,13 @@ export class FaultProxy {
     this.sockets.add(client);
     client.on('close', () => this.sockets.delete(client));
     client.on('error', () => client.destroy());
-    if (this.cutNow) return;                   // accepted, never answered
+    if (this.cutNow) { client.on('data', (b) => { this.droppedBytes += b.byteLength; }); return; }   // accepted, never answered
     const up = connect(this.target);
     this.sockets.add(up);
     up.on('close', () => { this.sockets.delete(up); client.destroy(); });
     up.on('error', () => up.destroy());
     client.on('close', () => up.destroy());
-    client.on('data', (b) => { if (!this.cutNow) up.write(b); });
-    up.on('data', (b) => { if (!this.cutNow) client.write(b); });
+    client.on('data', (b) => { if (this.cutNow) this.droppedBytes += b.byteLength; else up.write(b); });
+    up.on('data', (b) => { if (this.cutNow) this.droppedBytes += b.byteLength; else client.write(b); });
   }
 }

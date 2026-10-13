@@ -9,7 +9,7 @@ export { validateDeclaration, validTopic, assertDeclaration, assertIdentifier, p
 export { rowId } from './rowref.ts';
 export { PARAMS } from './params.ts';
 export { hex, fromHex, utf8, bytesEqual, encodeJson, decodeJson } from './bytes.ts';
-export { CockroachOwnerRuntime, NotInThisIncrement, type OwnerRuntimeOptions } from './runtime.ts';
+export { CockroachOwnerRuntime, NotInThisIncrement, SlotGroupError, type SlotGroupErrorCode, type OwnerRuntimeOptions } from './runtime.ts';
 export { PgStore, C02_DISPLACEMENT, pgFeedSeqReader, type PgStoreOptions, type DisplacementBinding } from './store/pg.ts';
 export type { OwnerStore, StoredHead, BatchWrites } from './store/types.ts';
 export { KafkaPublisher, MemoryPublisher, type Publisher, type KafkaPublisherOptions } from './publisher.ts';
@@ -42,8 +42,8 @@ export { producerAcls, aclCommands, kafkajsAcls, checkAcls, holderPrincipal, rel
 
 // ---------- I2: self-outboxed kinds, checkpoints ----------
 export {
-  deriveEvents, eventRecord, openLogRow, emitFunction, emitFunctionErrors, checkDeclaredEvents,
-  type EmitFunctions, type EmitFunction, type EmitInput, type EventRecord, type EventPlace,
+  deriveEvents, eventRecord, openLogRow, emitFunction, emitFunctionErrors, checkDeclaredEvents, SelfOutboxedError,
+  type SelfOutboxedErrorCode, type EmitFunctions, type EmitFunction, type EmitInput, type EventRecord, type EventPlace,
 } from './selfout/derive.ts';
 export {
   CheckpointStore, CheckpointError, MemoryObjectStore, FileObjectStore, CHECKPOINT,

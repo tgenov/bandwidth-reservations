@@ -12,6 +12,7 @@ import {
 } from '../src/index.ts';
 import type { LogRowWrite } from '../src/store/types.ts';
 import { MemoryStore } from '../testing/index.ts';
+import { steppedClock, until } from './support.ts';
 
 const TIMEOUT = { timeout: 15_000 };
 const closers: Array<() => Promise<void>> = [];
@@ -19,11 +20,6 @@ afterEach(async () => {
   for (const c of closers.splice(0).reverse()) await c();
 });
 
-const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
-async function until(f: () => boolean, ms = 5_000, what = f.toString()): Promise<void> {
-  const end = Date.now() + ms;
-  while (!f()) { if (Date.now() > end) throw new Error(`timed out: ${what}`); await sleep(5); }
-}
 
 const ts = (n: number): HlcTs => hlc(`${n}.0000000003`);
 function row(p: string, seq: bigint, over: Partial<LogRowWrite> = {}): LogRowWrite {
@@ -129,8 +125,11 @@ test('should return at once and drop the pushes above the queue limit when the s
   assert.equal(ch.stats.dropped, 12);
   await until(() => rec.got.length === 8);
   assert.deepEqual(rec.got, sent.slice(0, 8), 'the first 8 arrive, in order; the follower-read tail covers the rest');
-  await sleep(50);
-  assert.equal(rec.got.length, 8, 'no dropped push arrives later');
+  // One more push after the queue drained: the stream keeps order, so a dropped push would arrive before it.
+  const last = push(21);
+  ch.push(last);
+  await until(() => rec.got.length === 9);
+  assert.deepEqual(rec.got, [...sent.slice(0, 8), last], 'no dropped push arrives later');
 });
 
 test('should not throw when the standby is down, and should push again on a new stream when the standby comes back', TIMEOUT, async () => {
@@ -161,7 +160,7 @@ test('should drop every push after the channel is closed and give no push to the
   await ch.close();
   ch.push(push(2));
   assert.equal(ch.stats.dropped, 1);
-  await sleep(50);
+  assert.equal(ch.stats.sent, 1, 'nothing more was written to the stream, so nothing more can arrive');
   assert.equal(rec.got.length, 1);
 });
 
@@ -198,7 +197,8 @@ function hooks(): OwnerHooks {
 }
 
 test('should keep the hot standby current from gRPC pushes alone and let it take over with no catch-up row when the holder dies', TIMEOUT, async () => {
-  const store = new MemoryStore();
+  const clock = steppedClock();
+  const store = new MemoryStore({ wallMs: clock.now });
   store.followerLagRows = 1_000_000;
   store.seedSlots(DECL.kind, 4);
   const holder = new CockroachOwnerRuntime({ declaration: DECL, store, slots: [0, 1, 2, 3], load: new ManualLoad(), testing: { sessionTimings: FAST } });
@@ -219,7 +219,8 @@ test('should keep the hot standby current from gRPC pushes alone and let it take
   assert.equal(standby.standbyStats()?.tailRows, 0);
   assert.deepEqual(standby.heldSlots(), []);
   holder.pauseRenewalsForTest();
-  await until(() => standby.heldSlots().length === 4, 3_000);
+  clock.step(FAST.sessionTtlMs + 1);              // the holder's session expires
+  await until(() => standby.heldSlots().length === 4, 5_000);
   assert.equal(standby.standbyStats()?.catchUpRows, 0, 'no reload from the log beyond the last pushed batch');
   const acquired: SlotNo[] = standby.heldSlots();
   assert.deepEqual([...acquired].sort(), [0, 1, 2, 3]);

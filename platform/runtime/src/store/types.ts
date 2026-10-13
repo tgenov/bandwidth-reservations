@@ -116,6 +116,11 @@ export interface OwnerStore {
    */
   acquireGroup?(members: GroupMember[], sessionId: string, group: string, old: { shard: number; sessionId: string } | null):
     Promise<Array<GroupMember & { epoch: bigint }> | undefined>;
+  /**
+   * Hand-off of a group's slots in one transaction (RFC-006 §6.2 level A, §7.1): frees every member row still at its
+   * epoch under this session, or changes no row. The session is kept unless `keepSession` is false.
+   */
+  releaseGroup?(held: Array<GroupMember & { epoch: bigint }>, sessionId: string, keepSession?: boolean): Promise<void>;
   /** Re-home of one group in one transaction: every member still at its own epoch, or none (C01 §3.1). */
   rehomeGroup?(held: Array<GroupMember & { epoch: bigint }>, oldSession: string, newSession: string):
     Promise<Array<GroupMember & { epoch: bigint }> | undefined>;

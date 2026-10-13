@@ -118,7 +118,7 @@ export class FileObjectStore implements ObjectStore {
 }
 
 /** The refusal codes of the checkpoint store. */
-export type CheckpointErrorCode = 'DIGEST_MISMATCH' | 'NOT_FOUND' | 'OTHER_REGION' | 'BAD_REFERENCE';
+export type CheckpointErrorCode = 'DIGEST_MISMATCH' | 'NOT_FOUND' | 'OTHER_REGION' | 'BAD_REFERENCE' | 'NO_CHECKPOINT_STORE';
 
 /** An error of the checkpoint store. `code` is the refusal (C01 §5 row putCheckpoint; RFC-006 §12.11). */
 export class CheckpointError extends Error {

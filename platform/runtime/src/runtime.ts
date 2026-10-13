@@ -18,7 +18,7 @@ import { DEFAULT_SESSION_TIMINGS, PARAMS, type SessionTimings } from './params.t
 import { MemoryPublisher, type Publisher } from './publisher.ts';
 import { DevSealer, type Sealer } from './sealer.ts';
 import { Session, sessionShard } from './session.ts';
-import type { OwnerStore, TimingRow } from './store/types.ts';
+import type { OwnerStore, ResolutionRead, TimingRow } from './store/types.ts';
 import type { FeedBus } from './feed/bus.ts';
 import { encodeMarker, markerSealContext } from './feed/wire.ts';
 import { FeedConsumerRuntime, type ConsumerAlert } from './consumer/consumer.ts';
@@ -26,8 +26,8 @@ import type { GapFillSource } from './consumer/gapfill.ts';
 import { REPORT, SlotReport, markerChunks, outcomeStream, reportsMarkers, type LeaseAnswer, type ReaderChannel } from './report/report.ts';
 import type { SlotMapCache } from './placement/slot-map.ts';
 import { isRetryable } from './errors.ts';
-import { emitFunctionErrors, openLogRow, type EmitFunctions } from './selfout/derive.ts';
-import type { CheckpointStore } from './checkpoint/store.ts';
+import { SelfOutboxedError, emitFunctionErrors, openLogRow, type EmitFunctions } from './selfout/derive.ts';
+import { CheckpointError, type CheckpointStore } from './checkpoint/store.ts';
 import { OffsetMonitor, type OffsetLevel, type OffsetSample } from './offset.ts';
 import { StandbyTail, type StandbyChannel, type StandbyPush, type StandbyStats } from './standby/tail.ts';
 
@@ -35,6 +35,19 @@ export class NotInThisIncrement extends Error {
   constructor(what: string) {
     super(`${what} is not in this @share/owner-runtime increment (S-PLAT I1)`);
     this.name = 'NotInThisIncrement';
+  }
+}
+
+/** The refusal codes of a slot group's configuration (RFC-006 §7.1; C01 §2.2 `slotGroupWith`). */
+export type SlotGroupErrorCode = 'GROUP_MEMBER_FLAG' | 'GROUP_SLOT_COUNT' | 'GROUP_PARTNER' | 'GROUP_START_ORDER';
+
+/** A slot group that cannot be built or started. `code` is the refusal. */
+export class SlotGroupError extends Error {
+  readonly code: SlotGroupErrorCode;
+  constructor(code: SlotGroupErrorCode, message: string) {
+    super(`${code}: ${message}`);
+    this.name = 'SlotGroupError';
+    this.code = code;
   }
 }
 
@@ -78,7 +91,8 @@ export interface OwnerRuntimeOptions {
   /** This runtime is a member of a slot group; the group's leader holds its slots (see `slotGroup`). */
   slotGroupMember?: boolean;
   /**
-   * A hot standby (RFC-006 §4.4): it holds no slot until its holder's session expires or is revoked. It applies
+   * A hot standby (RFC-006 §4.4): it holds no slot until its holder's session expires or is revoked, or its holder
+   * frees the slot (a hand-off at offset level A, a stop). It applies
    * the holder's pushed batches and its own follower-read tail (every `pollMs`, default 250) to the owner's
    * memory through `apply`, polls the holder's session at the present time every `pollMs`, and on expiry takes
    * the slots, reads only the rows above its tail at the present time, then calls `onAcquire`.
@@ -128,6 +142,8 @@ interface Lane {
   reportableTimer: NodeJS.Timeout | undefined;
   /** ts of the last batch pushed to the standbys, or the acquisition's catch-up read (RFC-006 §4.4). */
   pushedThrough: HlcTs;
+  /** Ambiguous batches of the slot not yet resolved: one may be committed below a later ts and not pushed yet. */
+  unresolved: number;
 }
 
 function slotKeyBytes(slot: SlotNo): Uint8Array {
@@ -187,7 +203,7 @@ export class CockroachOwnerRuntime implements OwnerRuntime {
   constructor(o: OwnerRuntimeOptions) {
     assertDeclaration(o.declaration);
     const emitErrors = emitFunctionErrors(o.declaration, o.emitFns);
-    if (emitErrors.length > 0) throw new Error(`invalid self-outboxed kind ${o.declaration.kind}:\n  ${emitErrors.join('\n  ')}`);
+    if (emitErrors.length > 0) throw new SelfOutboxedError('INVALID_DECLARATION', `invalid self-outboxed kind ${o.declaration.kind}:\n  ${emitErrors.join('\n  ')}`, emitErrors);
     this.o = o;
     this.wallMs = o.wallMs ?? systemClock;
     this.decl = o.declaration;
@@ -211,10 +227,10 @@ export class CockroachOwnerRuntime implements OwnerRuntime {
     if (o.slotGroup) {
       for (const m of o.slotGroup.members) {
         const md = m.decl;
-        if (!m.o.slotGroupMember) throw new Error(`slot group member ${md.kind} needs slotGroupMember: true`);
-        if (md.slotCount !== this.decl.slotCount) throw new Error(`slot group ${this.decl.kind}+${md.kind}: slot counts differ`);
+        if (!m.o.slotGroupMember) throw new SlotGroupError('GROUP_MEMBER_FLAG', `slot group member ${md.kind} needs slotGroupMember: true`);
+        if (md.slotCount !== this.decl.slotCount) throw new SlotGroupError('GROUP_SLOT_COUNT', `slot group ${this.decl.kind}+${md.kind}: slot counts differ`);
         if (md.slotGroupWith !== this.decl.kind && this.decl.slotGroupWith !== md.kind) {
-          throw new Error(`slot group ${this.decl.kind}+${md.kind}: neither declaration names the other in slotGroupWith`);
+          throw new SlotGroupError('GROUP_PARTNER', `slot group ${this.decl.kind}+${md.kind}: neither declaration names the other in slotGroupWith`);
         }
         m.session = this.session;
         m.groupLeader = this;
@@ -244,7 +260,7 @@ export class CockroachOwnerRuntime implements OwnerRuntime {
       this.startHeartbeat();
       return;
     }
-    for (const m of this.groupMembers) if (!m.started) throw new Error(`start slot group member ${m.decl.kind} before its leader ${this.decl.kind}`);
+    for (const m of this.groupMembers) if (!m.started) throw new SlotGroupError('GROUP_START_ORDER', `start slot group member ${m.decl.kind} before its leader ${this.decl.kind}`);
     await this.store.warm?.();
     await this.session.open();
     this.started = true;
@@ -545,6 +561,7 @@ export class CockroachOwnerRuntime implements OwnerRuntime {
         for (const q of calls) q.resolve({ r: 'Ambiguous' });
         // C01 §3.2 (M1): no batch of the slot starts until resolution steps 1–3 complete.
         const plan = outcome.plan;
+        lane.unresolved += 1;
         // Not awaited here: a re-home inside the resolution waits for this batch to finish.
         lane.gate = this.serialised(() => this.resolveAmbiguous(lane, plan)).finally(() => {
           lane.gate = null;
@@ -562,7 +579,9 @@ export class CockroachOwnerRuntime implements OwnerRuntime {
     }
     for (const f of plan.senderFences) this.recordFence(f, f);
     this.directPublish(plan.publish);
-    this.pushToStandbys(lane, plan, !otherLaneBusy);
+    // RFC-006 §4.4: a push advances the standby's complete position only when no other batch of the slot can be
+    // committed below its ts and not pushed yet: none in flight on the other lane, none Ambiguous and unresolved.
+    this.pushToStandbys(lane, plan, !otherLaneBusy && lane.unresolved === 0);
     const r = lane.report;
     if (compareHlc(plan.ts, r.committedThrough) > 0) r.committedThrough = plan.ts;
     for (const d of plan.reportDue) r.due.push({ ts: plan.ts, ...(d.pending ? { pending: d.pending } : {}) });
@@ -596,11 +615,17 @@ export class CockroachOwnerRuntime implements OwnerRuntime {
 
   /** Resolution steps 1–3 for an Ambiguous batch (C01 §3.1, §3.2; R47-14). */
   private async resolveAmbiguous(lane: Lane, plan: AttemptPlan): Promise<void> {
-    const read = await this.retryUntilAnswered(() => this.store.resolutionRead(
-      this.decl.kind, this.session.shard, this.session.sessionId, [lane.holding.slot], plan.partitions));
+    let read: ResolutionRead;
+    try {
+      read = await this.retryUntilAnswered(() => this.store.resolutionRead(
+        this.decl.kind, this.session.shard, this.session.sessionId, [lane.holding.slot], plan.partitions));
+    } finally {
+      lane.unresolved -= 1;
+    }
     const committed = [...read.heads.values()].some((h) => bytesEqual(h.batchId, plan.batchId));
     this.log('Ambiguous resolved', { slot: lane.holding.slot, committed, tRes: read.tRes });
-    if (committed) this.applyCommitted(lane, plan);
+    // The gate stops new batches, but a batch of the other lane can still be in flight (C01 §3.2).
+    if (committed) this.applyCommitted(lane, plan, lane.running || lane.secondRunning);
     else for (const p of plan.partitions) lane.holding.chains.delete(hex(p));
     const row = read.slots.get(lane.holding.slot);
     if (!row || row.epoch !== lane.holding.epoch || row.sessionId !== this.session.sessionId) {
@@ -637,7 +662,7 @@ export class CockroachOwnerRuntime implements OwnerRuntime {
     const lane: Lane = {
       holding: { slot, epoch, sessionId: this.session.sessionId, stopsVersion: null, stops: new Map(), chains: new Map(), integrityHolds: new Set() },
       queue: [], running: false, secondRunning: false, inFlight: [new Set(), new Set()], gate: null, released: false,
-      report: new SlotReport(initial), markerWanted: false, reportableTimer: undefined, pushedThrough: initial,
+      report: new SlotReport(initial), markerWanted: false, reportableTimer: undefined, pushedThrough: initial, unresolved: 0,
     };
     this.lanes.set(slot, lane);
     return lane;
@@ -798,6 +823,8 @@ export class CockroachOwnerRuntime implements OwnerRuntime {
   /** Free-slot acquisition and acquisition by expiry (RFC-006 §4.2), then catch-up and onAcquire. */
   private async acquireWanted(): Promise<void> {
     if (!this.takingSlots && this.resumeTakingAt !== undefined && this.wallMs() >= this.resumeTakingAt) this.takingSlots = true;
+    // Level A: a hand-off that failed is tried again on each tick while the bound stays above 40 ms (RFC-006 §6.2).
+    if (this.started && !this.gaveUp && this.offset?.currentLevel() === 'A' && this.group().some((r) => r.lanes.size > 0)) { await this.handOffAll(); return; }
     if (!this.started || !this.takingSlots || this.gaveUp) return;
     if (this.groupMembers.length > 0) { await this.acquireWantedGroup(); return; }
     const wanted = this.o.slots.filter((s) => !this.lanes.has(s));
@@ -807,8 +834,9 @@ export class CockroachOwnerRuntime implements OwnerRuntime {
     const byOld = new Map<string, SlotNo[]>();
     for (const r of rows) {
       if (r.sessionId === null) {
-        // A standby takes only the slots of its holder's expired session (RFC-006 §4.7 rule 1).
-        if (this.standbyTail) continue;
+        // A standby takes the slots of its holder's expired session (RFC-006 §4.7 rule 1) and the slots its holder
+        // handed off or released (epoch above 0, RFC-006 §6.2 level A). It never takes a slot nobody has held yet.
+        if (this.standbyTail && r.epoch === 0n) continue;
         const a = await this.store.acquireFree(this.decl.kind, r.slot, this.session.sessionId);
         if (a) acquired.push(a);
       } else if (r.sessionId === this.session.sessionId) {
@@ -909,20 +937,31 @@ export class CockroachOwnerRuntime implements OwnerRuntime {
 
   /**
    * Level A: hand every slot off (RFC-006 §6.2). No successor is named here: the slots are freed at their own
-   * epoch, so a standby or another process takes them by free-slot acquisition (see STATUS-I2.md).
+   * epoch, so a standby or another process takes them by free-slot acquisition (see STATUS-I2.md). The slots of a
+   * group are freed in one transaction (RFC-006 §7.1). When the hand-off fails, the slots stay held and the next
+   * renewal tick tries again.
    */
   private async handOffAll(): Promise<void> {
-    for (const r of this.group()) {
-      const lanes = [...r.lanes.values()];
-      let release: () => void = noop;
-      const gate = new Promise<void>((res) => { release = res; });
-      for (const l of lanes) l.gate ??= gate;     // stop proposing; wait for the batches in flight
-      try {
-        await r.waitIdle(lanes);
-        const held = lanes.map((l) => ({ slot: l.holding.slot, epoch: l.holding.epoch }));
-        await this.store.release(r.decl.kind, held, this.session.sessionId, true);
-        for (const h of held) r.loseSlot(h.slot, 'handedOff');
-      } finally { release(); }
+    const group = this.group();
+    const all = group.flatMap((r) => [...r.lanes.values()].map((l) => ({ r, l })));
+    if (all.length === 0) return;
+    let release: () => void = noop;
+    const gate = new Promise<void>((res) => { release = res; });
+    for (const { l } of all) l.gate ??= gate;     // stop proposing; wait for the batches in flight
+    try {
+      for (const r of group) await r.waitIdle([...r.lanes.values()]);
+      const held = all.map(({ r, l }) => ({ r, kind: r.decl.kind, slot: l.holding.slot, epoch: l.holding.epoch }));
+      if (group.length > 1) {
+        if (!this.store.releaseGroup) throw new Error('slot groups need a store with releaseGroup');
+        await this.store.releaseGroup(held.map(({ kind, slot, epoch }) => ({ kind, slot, epoch })), this.session.sessionId, true);
+      } else {
+        await this.store.release(this.decl.kind, held.map(({ slot, epoch }) => ({ slot, epoch })), this.session.sessionId, true);
+      }
+      for (const h of held) h.r.loseSlot(h.slot, 'handedOff');
+    } finally {
+      for (const { l } of all) if (l.gate === gate) l.gate = null;
+      release();
+      for (const { r, l } of all) if (!l.released) r.pump(l);
     }
   }
 
@@ -1261,13 +1300,13 @@ export class CockroachOwnerRuntime implements OwnerRuntime {
 
   /** Seals and writes a state checkpoint to the process's own region (C01 §2.4; idempotent by (kind, partition, seq), §5). */
   putCheckpoint(kind: OwnerKind, partition: PartitionKey, seq: Seq, bytes: Uint8Array): Promise<{ reference: string; digest: Uint8Array }> {
-    if (!this.o.checkpoints) return Promise.reject(new Error('putCheckpoint needs OwnerRuntimeOptions.checkpoints (the region\'s checkpoint store)'));
+    if (!this.o.checkpoints) return Promise.reject(new CheckpointError('NO_CHECKPOINT_STORE', 'putCheckpoint needs OwnerRuntimeOptions.checkpoints (the region\'s checkpoint store)'));
     return this.o.checkpoints.put(kind, partition, seq, bytes);
   }
 
   /** Reads a checkpoint of the process's own region and verifies its digest (CheckpointError DIGEST_MISMATCH, OTHER_REGION, NOT_FOUND). */
   getCheckpoint(reference: string): Promise<Uint8Array> {
-    if (!this.o.checkpoints) return Promise.reject(new Error('getCheckpoint needs OwnerRuntimeOptions.checkpoints (the region\'s checkpoint store)'));
+    if (!this.o.checkpoints) return Promise.reject(new CheckpointError('NO_CHECKPOINT_STORE', 'getCheckpoint needs OwnerRuntimeOptions.checkpoints (the region\'s checkpoint store)'));
     return this.o.checkpoints.get(reference);
   }
 }

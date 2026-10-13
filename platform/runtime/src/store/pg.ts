@@ -639,6 +639,17 @@ export class PgStore implements OwnerStore {
     });
   }
 
+  async releaseGroup(held: Array<GroupMember & { epoch: bigint }>, sessionId: string, keepSession = true): Promise<void> {
+    // RFC-006 §6.2, §7.1: every member of the group in one transaction, so a failure frees no member.
+    await this.tx(async (q) => {
+      for (const h of held) {
+        await q(`UPDATE owner_slot SET session_id = NULL WHERE kind = $1 AND slot = $2 AND session_id = $3 AND epoch = $4`,
+          [h.kind, h.slot, sessionId, h.epoch.toString()]);
+      }
+      if (!keepSession) await q(`UPDATE owner_session SET revoked = true WHERE session_id = $1`, [sessionId]);
+    });
+  }
+
   async rehomeGroup(held: Array<GroupMember & { epoch: bigint }>, oldSession: string, newSession: string):
     Promise<Array<GroupMember & { epoch: bigint }> | undefined> {
     return this.tx(async (q) => {

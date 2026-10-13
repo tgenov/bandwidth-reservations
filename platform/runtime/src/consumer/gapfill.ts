@@ -11,7 +11,7 @@ import type { MemoryStore } from '../store/memory.ts';
 import { encodeJson, hex } from '../bytes.ts';
 import type { LogRowWrite } from '../store/types.ts';
 import type { RelayDerivation } from '../relay/relay.ts';
-import { deriveEvents } from '../selfout/derive.ts';
+import { SelfOutboxedError, deriveEvents } from '../selfout/derive.ts';
 
 export interface GapFillRow {
   slot: SlotNo;
@@ -107,7 +107,7 @@ export class LogDerivedGapFill implements GapFillSource {
     for (const { streamSeq, row } of await this.reader.rows(producerKind, partition, stream, from, to)) {
       const rec = deriveEvents(d.declaration, d.sealer, d.emitFns, row)
         .find((e) => e.headers['stream'] === stream && e.headers['stream_seq'] === streamSeq.toString());
-      if (!rec) throw new Error(`${producerKind}: the stream index names seq ${row.seq} for ${stream}/${streamSeq}, but the row derives no such event`);
+      if (!rec) throw new SelfOutboxedError('INDEX_MISMATCH', `${producerKind}: the stream index names seq ${row.seq} for ${stream}/${streamSeq}, but the row derives no such event`);
       out.push({ slot: row.slot, streamSeq, ts: row.ts, headers: encodeJson(rec.headers), payload: rec.payload });
     }
     return out;

@@ -25,6 +25,29 @@ export type EmitFunction = (entry: EmitInput) => unknown[];
 /** stream name → emit function version → function. The declaration names the version in use (C01 §2.2 `emitFn`). */
 export type EmitFunctions = Record<string, Record<number, EmitFunction>>;
 
+/** The refusal codes of a self-outboxed kind (C01 §2.2, §2.3, §3.5; RFC-006 §3.5). */
+export type SelfOutboxedErrorCode =
+  /** The emit function gives other events than the entry declares, or another number of events than the row records. */
+  | 'EMIT_MISMATCH'
+  /** A notification on a self-outboxed kind: it has no outbox. */
+  | 'NO_OUTBOX'
+  /** The stream index names a log row that derives no event of that (stream, stream_seq). */
+  | 'INDEX_MISMATCH'
+  /** The declaration and the emit functions do not match (`details` lists each problem). */
+  | 'INVALID_DECLARATION';
+
+/** An error of a self-outboxed kind. `code` is the refusal; `details` lists the problems of a declaration. */
+export class SelfOutboxedError extends Error {
+  readonly code: SelfOutboxedErrorCode;
+  readonly details: string[];
+  constructor(code: SelfOutboxedErrorCode, message: string, details: string[] = []) {
+    super(`${code}: ${message}`);
+    this.name = 'SelfOutboxedError';
+    this.code = code;
+    this.details = details;
+  }
+}
+
 /** Errors when a self-outboxed declaration and its emit functions do not match. Empty when they match. */
 export function emitFunctionErrors(decl: OwnerDeclaration, fns: EmitFunctions | undefined): string[] {
   if (!decl.selfOutboxed) return [];
@@ -138,14 +161,14 @@ export function deriveEvents(decl: OwnerDeclaration, sealer: Sealer, fns: EmitFu
     if (!events) { events = emitFunction(decl, fns, stream)(input); byStream.set(stream, events); }
     const i = used.get(stream) ?? 0;
     used.set(stream, i + 1);
-    if (i >= events.length) throw new Error(`${decl.kind} seq ${row.seq}: emit function of ${stream} gave ${events.length} events; the row records more`);
+    if (i >= events.length) throw new SelfOutboxedError('EMIT_MISMATCH', `${decl.kind} seq ${row.seq}: emit function of ${stream} gave ${events.length} events; the row records more`);
     out.push(eventRecord(decl, sealer, {
       slot: row.slot, partition: row.partition, stream, streamSeq, generation: row.generation, epoch: row.epoch, ts: row.ts,
       entryKind: row.kind, schemaV: row.schemaV,
     }, events[i], true));
   }
   for (const [stream, events] of byStream) {
-    if ((used.get(stream) ?? 0) !== events.length) throw new Error(`${decl.kind} seq ${row.seq}: emit function of ${stream} gave ${events.length} events; the row records ${used.get(stream) ?? 0}`);
+    if ((used.get(stream) ?? 0) !== events.length) throw new SelfOutboxedError('EMIT_MISMATCH', `${decl.kind} seq ${row.seq}: emit function of ${stream} gave ${events.length} events; the row records ${used.get(stream) ?? 0}`);
   }
   return out;
 }
@@ -160,11 +183,11 @@ export function checkDeclaredEvents(decl: OwnerDeclaration, fns: EmitFunctions, 
     const want = emitFunction(decl, fns, s)(input).map(encodeJson);
     const got = emits.filter((e) => e.stream === s).map((e) => encodeJson(e.event));
     if (want.length !== got.length || want.some((w, i) => !bytesEqual(w, got[i] as Uint8Array))) {
-      throw new Error(`${decl.kind}: the events of stream ${s} are not what emit function version ${decl.streams.find((x) => x.name === s)?.emitFn.version} derives from the entry`);
+      throw new SelfOutboxedError('EMIT_MISMATCH', `${decl.kind}: the events of stream ${s} are not what emit function version ${decl.streams.find((x) => x.name === s)?.emitFn.version} derives from the entry`);
     }
   }
   for (const s of decl.streams) {
     if (streams.includes(s.name)) continue;
-    if (emitFunction(decl, fns, s.name)(input).length > 0) throw new Error(`${decl.kind}: the entry declares no event of stream ${s.name}, but its emit function derives one`);
+    if (emitFunction(decl, fns, s.name)(input).length > 0) throw new SelfOutboxedError('EMIT_MISMATCH', `${decl.kind}: the entry declares no event of stream ${s.name}, but its emit function derives one`);
   }
 }

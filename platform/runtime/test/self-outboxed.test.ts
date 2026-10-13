@@ -4,14 +4,18 @@
  * changefeed and derives events by the emit functions; gap fill reads the log through the stream index.
  * Exit criterion (4): CP-8 and CP-9 (the clauses of I1) on this kind.
  */
-import { test } from 'node:test';
+import { afterEach, test } from 'node:test';
 import assert from 'node:assert/strict';
 import type { EmitFunctions, EntryInput, FeedEvent, HlcTs, OwnerDeclaration, OwnerHooks } from '../src/index.ts';
 import {
   ClosureEmitter, CockroachOwnerRuntime, DevSealer, FeedConsumerRuntime, LogDerivedGapFill, ManualLoad, MemoryPublisher, OutboxRelay,
-  compareHlc, decodeClosure, feedEventDigest, hex, hlc, parseCdcLogMessage, utf8,
+  SelfOutboxedError, compareHlc, decodeClosure, deriveEvents, feedEventDigest, hex, hlc, parseCdcLogMessage, utf8,
 } from '../src/index.ts';
 import { MemoryBus, MemoryChangefeed, MemoryStore, memoryFeedSeqReader, memoryStreamIndex } from '../testing/index.ts';
+import { Closers, until } from './support.ts';
+
+const closers = new Closers();
+afterEach(() => closers.closeAll());
 
 const DECL: OwnerDeclaration = {
   kind: 'ingx', slotCount: 4, selfOutboxed: true,
@@ -40,11 +44,6 @@ function entry(type: Row['type'], id: string, seq: number): EntryInput {
 }
 const FAST = { sessionTimings: { sessionTtlMs: 300, sessionRenewMs: 40, renewRetryMs: 20, holderViewMs: 280, maxLoopDelayMs: 20 } };
 const hooks = (): OwnerHooks => ({ async onAcquire() {}, onRelease() {}, onReportable() {}, onMovedOut() {}, async onAdopt() {}, async onNotification() {} });
-const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
-async function until(f: () => boolean | Promise<boolean>, ms = 3_000, what = f.toString()): Promise<void> {
-  const end = Date.now() + ms;
-  while (!(await f())) { if (Date.now() > end) throw new Error(`timed out: ${what}`); await sleep(10); }
-}
 
 async function producer(bus: MemoryBus, cdcPartitions = 2) {
   const store = new MemoryStore();
@@ -56,12 +55,23 @@ async function producer(bus: MemoryBus, cdcPartitions = 2) {
   const publisher = new MemoryPublisher();
   const sealer = new DevSealer();
   const rt = new CockroachOwnerRuntime({ declaration: DECL, store, slots: [0, 1, 2, 3], publisher, sealer, load: new ManualLoad(), emitFns: EMIT, testing: FAST });
+  closers.add(() => rt.stop());
   await rt.start(hooks());
   const derive = { declaration: DECL, sealer, emitFns: EMIT };
   return { store, feed, rt, publisher, derive };
 }
 
 const P = utf8('exporter-1');
+
+/** An assertion that the error is a SelfOutboxedError with this code. */
+const codeIs = (code: string) => (e: unknown): boolean => e instanceof SelfOutboxedError && e.code === code;
+/** An assertion that the error is a SelfOutboxedError with this code and exactly these details. */
+const refusal = (code: string, details: string[]) => (e: unknown): boolean => {
+  assert.ok(e instanceof SelfOutboxedError);
+  assert.equal(e.code, code);
+  assert.deepEqual(e.details, details);
+  return true;
+};
 
 test('should write no outbox row and one stream index row per event, and direct publish the derived event, when the kind is self-outboxed', async () => {
   const bus = new MemoryBus();
@@ -79,12 +89,12 @@ test('should answer the call with an error and write nothing when an entry decla
   const bus = new MemoryBus();
   const { store, rt } = await producer(bus);
   const wrong: EntryInput = { ...entry('batch', 'b1', 1), emits: [{ stream: 'handoff', event: { batch: 'other', seq: '1' } }] };
-  await assert.rejects(rt.append({ partition: P, entries: [wrong] }), /not what emit function version 1 derives/);
+  await assert.rejects(rt.append({ partition: P, entries: [wrong] }), codeIs('EMIT_MISMATCH'));
   const missing: EntryInput = { ...entry('drop', 'd1', 1), emits: [] };
-  await assert.rejects(rt.append({ partition: P, entries: [missing] }), /declares no event of stream drop_alert/);
+  await assert.rejects(rt.append({ partition: P, entries: [missing] }), codeIs('EMIT_MISMATCH'));
   const note: EntryInput = { ...entry('drop', 'd2', 1) };
   await assert.rejects(rt.append({ partition: P, entries: [note], notifications: [{ to: { kind: 'x', partition: P }, id: { subject: P, attempt: 1, kind: 'n' }, body: {} }] }),
-    /no outbox for notifications/);
+    codeIs('NO_OUTBOX'));
   assert.equal(store.log.length, 0);
   assert.equal(store.streamIndex.length, 0);
   // A later correct call still commits at seq 1: nothing of the refused calls was written.
@@ -97,16 +107,73 @@ test('should refuse to construct a self-outboxed runtime when a stream has no em
   const store = new MemoryStore();
   const noV2: EmitFunctions = { ...EMIT, drop_report: { 1: () => [] } };
   assert.throws(() => new CockroachOwnerRuntime({ declaration: DECL, store, slots: [0], load: new ManualLoad(), emitFns: noV2 }),
-    /stream drop_report: no emit function version 2/);
-  assert.throws(() => new CockroachOwnerRuntime({ declaration: DECL, store, slots: [0], load: new ManualLoad() }), /stream handoff: no emit function version 1/);
+    refusal('INVALID_DECLARATION', ['stream drop_report: no emit function version 2']));
+  assert.throws(() => new CockroachOwnerRuntime({ declaration: DECL, store, slots: [0], load: new ManualLoad() }),
+    refusal('INVALID_DECLARATION', ['stream handoff: no emit function version 1', 'stream drop_alert: no emit function version 1', 'stream drop_report: no emit function version 2']));
   assert.throws(() => new CockroachOwnerRuntime({ declaration: { ...DECL, statusReaders: true }, store, slots: [0], load: new ManualLoad(), emitFns: EMIT }),
-    /no report markers/);
+    refusal('INVALID_DECLARATION', ['a self-outboxed kind has no outbox, so no report markers (statusReaders)']));
+});
+
+test('should refuse to construct a self-outboxed runtime when a stream is report-gated', () => {
+  const store = new MemoryStore();
+  const [handoff, ...rest] = DECL.streams as [OwnerDeclaration['streams'][number], ...OwnerDeclaration['streams']];
+  assert.throws(() => new CockroachOwnerRuntime({ declaration: { ...DECL, streams: [{ ...handoff, reportGated: true }, ...rest] }, store, slots: [0], load: new ManualLoad(), emitFns: EMIT }),
+    refusal('INVALID_DECLARATION', ['stream handoff: a self-outboxed kind has no outbox, so no report-gated stream (C01 §3.4 rule 7)']));
+});
+
+/** One committed log row of each type: [batch, drop, report] at seq 1, 2, 3 of P. */
+async function threeRows() {
+  const bus = new MemoryBus();
+  const made = await producer(bus, 1);
+  assert.equal((await made.rt.append({ partition: P, entries: [entry('batch', 'b1', 1), entry('drop', 'd1', 2), entry('report', 'r1', 3)] })).r, 'Committed');
+  return { bus, ...made };
+}
+
+test('should refuse with EMIT_MISMATCH when the emit function gives fewer or more events than the row records', async () => {
+  const { store, rt, derive } = await threeRows();
+  const batchRow = store.log[0];
+  assert.ok(batchRow);
+  assert.equal(deriveEvents(DECL, derive.sealer, EMIT, batchRow).length, 1);
+  const fewer: EmitFunctions = { ...EMIT, handoff: { 1: () => [] } };
+  assert.throws(() => deriveEvents(DECL, derive.sealer, fewer, batchRow), codeIs('EMIT_MISMATCH'));
+  const more: EmitFunctions = { ...EMIT, handoff: { 1: (e) => [{ batch: 'b1', seq: e.seq.toString() }, { batch: 'extra', seq: e.seq.toString() }] } };
+  assert.throws(() => deriveEvents(DECL, derive.sealer, more, batchRow), codeIs('EMIT_MISMATCH'));
+  await rt.stop();
+});
+
+test('should publish nothing and make no progress past a row when the relay cannot derive the row\'s events', async () => {
+  const { bus, feed, rt, derive } = await threeRows();
+  const more: EmitFunctions = { ...EMIT, handoff: { 1: (e) => [{ batch: 'b1', seq: e.seq.toString() }, { batch: 'extra', seq: e.seq.toString() }] } };
+  const relay = new OutboxRelay({ bus, kind: DECL.kind, derive: { ...derive, emitFns: more } });
+  closers.add(() => relay.stop());
+  await relay.start();
+  await feed.resolve();
+  await until(() => relay.stats.ignoredAfterHalt >= 1);
+  assert.ok(relay.halted instanceof SelfOutboxedError);
+  assert.equal(relay.halted.code, 'EMIT_MISMATCH');
+  assert.equal(bus.records('ingx.handoff.v1').length, 0);
+  assert.equal(bus.records('ingx.alert.v1').length, 0, 'no event of the row, also of the streams that derive correctly');
+  assert.equal(relay.stats.rows, 0);
+  assert.equal(relay.stats.progress, 0, 'the resolved timestamp after the row is not passed on');
+  await relay.stop(); await rt.stop();
+});
+
+test('should refuse with INDEX_MISMATCH when the stream index names a row that derives no such event, and fill nothing for an unknown producer', async () => {
+  const { store, rt, derive } = await threeRows();
+  const dropRow = store.log[1];
+  assert.ok(dropRow);
+  const gf = new LogDerivedGapFill({ rows: async () => [{ streamSeq: 1n, row: dropRow }] }, [derive]);
+  await assert.rejects(gf.read(DECL.kind, P, 'handoff', 1n, 1n), codeIs('INDEX_MISMATCH'));
+  assert.deepEqual(await gf.read('unknown_kind', P, 'handoff', 1n, 1n), []);
+  assert.equal(gf.reads, 2);
+  await rt.stop();
 });
 
 test('C01 CP-9 self-outboxed: the relay derives byte-identical copies of the direct publish from the log; duplicates are dropped; three streams each in stream_seq order', async () => {
   const bus = new MemoryBus();
   const { feed, rt, publisher, derive } = await producer(bus);
   const relay = new OutboxRelay({ bus, kind: DECL.kind, derive });
+  closers.add(() => relay.stop());
   await relay.start();
   for (let i = 0; i < 3; i++) {
     const r = await rt.append({ partition: P, entries: [entry('batch', `b${i}`, 3 * i + 1), entry('drop', `d${i}`, 3 * i + 2), entry('report', `r${i}`, 3 * i + 3)] });
@@ -133,12 +200,16 @@ test('C01 CP-9 self-outboxed: the relay derives byte-identical copies of the dir
   // A consumer gets each event once, in stream_seq order, with the direct copies arriving again as duplicates.
   const got: FeedEvent[] = [];
   const c = new FeedConsumerRuntime({ bus, groupId: 'attr', sealer: new DevSealer(), gapTimeoutMs: 10_000, retryMs: 20 });
+  closers.add(() => c.stop());
   c.subscribe('ingx.alert.v1', { positions: [] }, 'committed', async (e) => { got.push(e); });
   await c.ready();
   await bus.produce('ingx.alert.v1', publisher.sent.filter((m) => m.topic === 'ingx.alert.v1')
     .map((m) => ({ key: m.key, value: m.value, headers: m.headers as Record<string, string | Uint8Array> })));
-  await until(() => got.length >= 6);
-  await sleep(30);
+  const alertParts = bus.topics.get('ingx.alert.v1')?.partitions ?? [];
+  await until(async () => {
+    const done = await bus.committedOffsets('attr.ingx.alert.v1', 'ingx.alert.v1');
+    return alertParts.every((recs, i) => (done.get(i) ?? 0n) === BigInt(recs.length));
+  }, 5_000, 'the consumer handled every record of the topic');
   assert.equal(got.length, 6, 'duplicates across the direct and relay paths are dropped');
   for (const s of ['drop_alert', 'drop_report']) assert.deepEqual(got.filter((e) => e.headers.stream === s).map((e) => e.headers.stream_seq), ['1', '2', '3']);
   await c.stop(); await relay.stop(); await rt.stop();
@@ -149,9 +220,13 @@ test('C01 CP-9 self-outboxed: a gap is filled through the stream index after gap
   await bus.ensureTopic('ingx.handoff.v1', 4);
   const { store, rt, publisher, derive } = await producer(bus, 1);
   const gf = new LogDerivedGapFill(memoryStreamIndex(store), [derive]);
+  let gotAtFirstRead: number | undefined;
+  const read = gf.read.bind(gf);
+  gf.read = (...a) => { gotAtFirstRead ??= got.length; return read(...a); };
   const got: FeedEvent[] = [];
   const alerts: unknown[] = [];
   const c = new FeedConsumerRuntime({ bus, groupId: 'attr', sealer: new DevSealer(), gapFill: gf, gapTimeoutMs: 60, retryMs: 20, alert: (a) => alerts.push(a) });
+  closers.add(() => c.stop());
   c.subscribe('ingx.handoff.v1', { positions: [] }, 'committed', async (e) => { got.push(e); });
   await c.ready();
   for (let i = 0; i < 4; i++) assert.equal((await rt.append({ partition: P, entries: [entry('batch', `g${i}`, i + 1)] })).r, 'Committed');
@@ -159,9 +234,8 @@ test('C01 CP-9 self-outboxed: a gap is filled through the stream index after gap
     .map((m) => ({ key: m.key, value: value ?? m.value, headers: m.headers as Record<string, string | Uint8Array> }));
   // Only seq 4 reaches the bus, and seq 2 arrives forged: seq 1–3 come from the log through the stream index.
   await bus.produce('ingx.handoff.v1', [...copy('2', utf8('forged')), ...copy('4')]);
-  await sleep(20);
-  assert.equal(got.length, 0, 'waits for the gap');
   await until(() => got.length === 4);
+  assert.equal(gotAtFirstRead, 0, 'nothing was delivered before the gap fill: the consumer waited for the gap');
   assert.deepEqual(got.map((e) => e.headers.stream_seq), ['1', '2', '3', '4']);
   assert.ok(gf.reads >= 1);
   assert.equal(feedEventDigest(got[1] as FeedEvent), feedEventDigest(copy('2')[0]?.value as Uint8Array), 'the database copy of seq 2 is applied, not the forged one');
@@ -173,21 +247,31 @@ test('C01 CP-8 self-outboxed: R_min over every cdc partition of the log changefe
   const bus = new MemoryBus();
   const { store, feed, rt, derive } = await producer(bus, 2);
   const relay = new OutboxRelay({ bus, kind: DECL.kind, derive });
+  closers.add(() => relay.stop());
   await relay.start();
   const emitter = new ClosureEmitter({ bus, declaration: DECL, store, feedSeqs: memoryFeedSeqReader(store), pollMs: 10, heartbeatMs: 60_000, sessionTimings: FAST.sessionTimings });
+  closers.add(() => emitter.stop());
   await emitter.start();
   const exporters = ['E1', 'E2', 'E3'].map(utf8);
   for (const e of exporters) for (let i = 0; i < 2; i++) await rt.append({ partition: e, entries: [entry('batch', `${hex(e)}-${i}`, i + 1)] });
+  /** Waits until the emitter read every relay progress record and then ran two more passes. */
+  const settled = async () => {
+    await until(() => emitter.stats.progressRecords >= relay.stats.progress, 5_000, 'the emitter read the relay progress');
+    const at = emitter.stats.passes;
+    await until(() => emitter.stats.passes >= at + 2, 5_000, 'two emitter passes');
+  };
   await feed.resolve(undefined, [0]);
   await until(() => relay.stats.progress >= 1);
-  await sleep(60);
+  await settled();
   assert.equal(emitter.rMin(), undefined, 'cdc partition 1 has no progress');
   const R1 = await feed.resolve();
   await until(() => emitter.rMin() === R1);
   bus.addPartitions(`cdc.${DECL.kind}`, 3);
   await rt.append({ partition: exporters[0] as Uint8Array, entries: [entry('batch', 'late', 3)] });
+  const progressBefore = relay.stats.progress;
   await feed.resolve(undefined, [0, 1]);
-  await sleep(80);
+  await until(() => relay.stats.progress >= progressBefore + 2);
+  await settled();
   assert.equal(emitter.rMin(), R1, 'held back by the new partition, never moved back');
   const R2 = await feed.resolve();
   await until(() => emitter.rMin() === R2);

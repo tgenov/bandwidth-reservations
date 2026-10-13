@@ -103,8 +103,13 @@ export interface RelayOptions {
 export class OutboxRelay {
   private readonly o: RelayOptions;
   private sub: BusSubscription | undefined;
-  /** Counters for tests and metrics. */
-  readonly stats = { rows: 0, deletesDropped: 0, progress: 0 };
+  /** Counters for tests and metrics. `ignoredAfterHalt`: records not handled because the relay halted. */
+  readonly stats = { rows: 0, deletesDropped: 0, progress: 0, ignoredAfterHalt: 0 };
+  /**
+   * Set when the events of a log row cannot be derived (a self-outboxed kind, RFC-006 §3.5). From then the relay
+   * publishes nothing, writes no progress and commits no offset, so no closure passes the row; a restart reads it again.
+   */
+  halted: Error | undefined;
   private readonly lastProgress = new Map<number, HlcTs>();
 
   constructor(o: RelayOptions) {
@@ -125,6 +130,7 @@ export class OutboxRelay {
   }
 
   private async onRecord(r: BusRecord): Promise<void> {
+    if (this.halted) { this.stats.ignoredAfterHalt += 1; return; }
     const d = this.o.derive;
     const m = d ? parseCdcLogMessage(r.value) : parseCdcMessage(r.value);
     if (!m) return;
@@ -141,7 +147,15 @@ export class OutboxRelay {
     if (m.type === 'log') {
       if (!d) return;
       // Records of one row in emits order; produce awaits each, so progress below stays after its rows.
-      for (const e of deriveEvents(d.declaration, d.sealer, d.emitFns, m.row)) {
+      let events;
+      try {
+        events = deriveEvents(d.declaration, d.sealer, d.emitFns, m.row);
+      } catch (e) {
+        this.halted = e instanceof Error ? e : new Error(String(e));
+        this.o.log?.('relay halted: the events of a log row cannot be derived', { kind: this.o.kind, seq: m.row.seq.toString(), error: this.halted.message });
+        return;
+      }
+      for (const e of events) {
         await this.o.bus.produce(e.topic, [{ key: e.msgKey, value: e.payload, headers: outboxHeadersToKafka(encodeJson(e.headers)) }]);
         this.stats.rows += 1;
       }

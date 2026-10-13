@@ -136,7 +136,7 @@ export class MemoryStore implements OwnerStore {
     return out;
   }
 
-  /** Fault injection for group acquisitions: throw after this many member updates (then nothing is applied). */
+  /** Fault injection for group acquisitions and group hand-offs: throw after this many member updates (then nothing is applied). */
   groupFailAfter: number | undefined;
   /** slot_group column values (kind|slot → group). */
   readonly slotGroups = new Map<string, string>();
@@ -162,6 +162,19 @@ export class MemoryStore implements OwnerStore {
       this.slotGroups.set(`${m.kind}|${m.slot}`, group);
     }
     return out;
+  }
+
+  async releaseGroup(held: Array<GroupMember & { epoch: bigint }>, sessionId: string, keepSession = true): Promise<void> {
+    // One transaction: decide on a copy, apply only when no member update failed.
+    const free: SlotRow[] = [];
+    for (const [i, h] of held.entries()) {
+      if (this.groupFailAfter !== undefined && i >= this.groupFailAfter) { this.groupFailAfter = undefined; throw new Error('injected: group transaction failed'); }
+      const r = this.slots.get(`${h.kind}|${h.slot}`);
+      if (r && r.sessionId === sessionId && r.epoch === h.epoch) free.push(r);
+    }
+    for (const r of free) r.sessionId = null;
+    const s = this.sessions.get(sessionId);
+    if (s && !keepSession) s.revoked = true;
   }
 
   async rehomeGroup(held: Array<GroupMember & { epoch: bigint }>, oldSession: string, newSession: string):
