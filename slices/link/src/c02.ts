@@ -2,8 +2,9 @@
  * C02 v1.0.0 (frozen) — the types of the link hold port and the link availability query that S-LINK provides.
  *
  * The names and the fields are copied from C02 "Schema". I1 provides `hold`, `convert` and `release`. I2 adds
- * the counter-offer, `query` and the availability query (`availability`, `fit_ranges`). The other operations
- * of C02 come in later increments (S-LINK plan §6).
+ * the counter-offer, `query` and the availability query (`availability`, `fit_ranges`). I3 adds `hold` check (8)
+ * `WAITING` and the link waiting port notifications `WAITING_NOTICE`, `GRANTED` and `WAITER_REFUSED`. The other
+ * operations of C02 come in later increments (S-LINK plan §6).
  */
 import type { CommandEnvelope, Epoch, Generation, HlcTs, PartitionKey, RoutingRefusal, Seq } from '@share/owner-runtime';
 
@@ -98,7 +99,7 @@ export type ReleaseOutcome = { result: 'RELEASED'; tombstoneUntil: EpochMs };
 export type ReleaseReply = (LinkStamp & ReleaseOutcome) | Refusal;
 
 export interface QueryCmd extends C02Body { request: RequestId }
-/** The decision part of a query reply. The reply adds the link stamp. I2 has no waiter, displacement or yield claim. */
+/** The decision part of a query reply. The reply adds the link stamp. I3 has no displacement and no yield claim. */
 export interface QueryState {
   state: 'UNSEEN' | 'HELD' | 'WAITING' | 'DISPLACED' | 'REFUSED' | 'RELEASED' | 'CONVERTED';
   attempt?: Attempt; aheadDeadline?: EpochMs;
@@ -106,6 +107,23 @@ export interface QueryState {
   tombstoneUntil?: EpochMs;
 }
 export type QueryReply = (LinkStamp & QueryState) | Refusal;
+
+// ---------- Link waiting port (notifications, link → account owner) ----------
+
+/** The notification kinds of the link waiting port that I3 sends. `YIELD_REQUEST` is I5; `DISPLACED` is I11. */
+export type WaitingKind = 'WAITING_NOTICE' | 'GRANTED' | 'WAITER_REFUSED';
+
+/** The content of a waiting-port notification after its identity (link, request, attempt, kind). */
+export type WaitingContent =
+  | { kind: 'WAITING_NOTICE'; aheadDeadline: EpochMs }
+  | { kind: 'GRANTED' }
+  | { kind: 'WAITER_REFUSED'; reason: 'NO_FIT'; counterOffer: CounterOffer };
+
+/**
+ * C02 `WaitingNotification`: a point-to-point state message. Identity: (link, request, attempt, kind). It
+ * carries the link's fence and the log sequence of the entry that it reflects.
+ */
+export type WaitingNotification = LinkStamp & { link: LinkId; request: RequestId; attempt: Attempt } & WaitingContent;
 
 // ---------- Link availability query ----------
 

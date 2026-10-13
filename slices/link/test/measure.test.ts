@@ -127,3 +127,60 @@ test('measurement: hold apply p99 is independent of the window length at 530,000
     for (const [name, v] of Object.entries(report)) assert.ok(v.p99 <= BOUND_US, `${name}: p99 ${v.p99.toFixed(1)} µs > ${BOUND_US} µs`);
   }
 });
+
+/**
+ * Exit criterion 5 of S-LINK I3 (the link part of X2-S05 "final or pending"): one scan of 1,024 waiters ≤ 1 ms,
+ * and a flash crowd of 7,500 waiters that one release frees completes in the release entry and 7 `Tick`
+ * continuations (8 scan parts) in ≤ 8 ms (est.). The figure is the apply in `LinkState`, on one core.
+ */
+test('measurement: a scan of 1,024 waiters and a flash crowd of 7,500 waiters in 8 scan parts',
+  { skip: enabled ? false : 'set LINK_MEASURE=1 (npm run measure)' }, () => {
+  const ts = `${BigInt(Date.UTC(2026, 2, 2, 9)) * 1_000_000n}.0000000000` as HlcTs;
+  const W = { start: M(10), end: M(11) };
+  const cmd = (seq: bigint, rate: number, wait: boolean, deadline: number): HoldCmd => ({
+    link: 'hot', receiverPartition: 'hot', request: { partition: utf8('acct'), seq }, account: utf8('acct'), leg: 'l',
+    holdKind: { kind: 'booking' }, rateMbps: rate, window: W, deadline, commitFence: deadline - 420, requestAge: ts, wait,
+    receiptMinute: M(9), policyVersion: 1n,
+  });
+  const crowd = (n: number): { st: LinkState; blocker: HoldCmd } => {
+    const st = new LinkState();
+    st.init({ link: 'hot', capacityMbps: 10, policy: DEFAULT_POLICY });
+    st.beginBatch(ts);
+    const blocker = cmd(1n, 10, false, Date.UTC(2026, 2, 2, 9, 0, 10));
+    st.decide({ op: 'hold', body: blocker }, ts, 1n);
+    for (let i = 0; i < n; i++) st.decide({ op: 'hold', body: cmd(BigInt(i + 2), 1, true, Date.UTC(2026, 2, 2, 9, 0, 20)) }, ts, BigInt(i + 2));
+    st.commit();
+    return { st, blocker };
+  };
+  const release = (blocker: HoldCmd) => ({ op: 'release' as const, body: {
+    link: 'hot', receiverPartition: 'hot', request: blocker.request, deadline: blocker.deadline, reason: 'REJECTED' as const, decisionTime: ts,
+  } });
+  const run = (n: number, samples: number): { us: number[]; parts: number } => {
+    const { st, blocker } = crowd(n);
+    const us: number[] = [];
+    let parts = 0;
+    for (let i = 0; i < samples + 20; i++) {
+      st.beginBatch(ts);
+      let seq = 1_000_000n;
+      const t0 = process.hrtime.bigint();
+      st.decide(release(blocker), ts, seq);
+      parts = 1;
+      while (st.scanPending) { seq += 1n; st.tick(ts, seq); parts += 1; }
+      const t1 = process.hrtime.bigint();
+      st.rollback();
+      if (i >= 20) us.push(Number(t1 - t0) / 1_000);
+    }
+    return { us, parts };
+  };
+  const p99 = (xs: number[]): number => xs.sort((a, b) => a - b)[Math.floor(xs.length * 0.99)] as number;
+  const scan = run(1_024, 300);
+  const flash = run(7_500, 100);
+  assert.equal(scan.parts, 1);
+  assert.equal(flash.parts, 8);
+  const report = { scan1024P99Us: p99(scan.us), flash7500P99Us: p99(flash.us) };
+  console.log(`# waiter scan cost (µs): ${JSON.stringify(report)}`);
+  if (process.env['LINK_MEASURE_STRICT'] !== '0') {
+    assert.ok(report.scan1024P99Us <= 1_000, `scan of 1,024 waiters p99 ${report.scan1024P99Us.toFixed(0)} µs > 1 ms`);
+    assert.ok(report.flash7500P99Us <= 8_000, `flash crowd p99 ${report.flash7500P99Us.toFixed(0)} µs > 8 ms`);
+  }
+});

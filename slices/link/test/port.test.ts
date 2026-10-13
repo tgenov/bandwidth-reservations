@@ -86,12 +86,16 @@ test('C02 provider test 1: hold decision table (TOMBSTONED, repeat after release
   }
 });
 
-test('C02 provider test 1: wait = true where it would wait answers UNAVAILABLE in I1 and records nothing', async () => {
+test('C02 provider test 1: wait = true where it would wait answers WAITING(1) and writes one Hold entry (I3 replaces the I1 UNAVAILABLE)', async () => {
   const h = await harness();
-  await h.stub.hold(h.stub.holdCmd({ rate: 6, window: W }));
+  const blocker = h.stub.holdCmd({ rate: 6, window: W });
+  await h.stub.hold(blocker);
   const n = h.rt.log(utf8(h.link)).length;
-  assert.equal(resultOf(await h.stub.hold(h.stub.holdCmd({ rate: 5, window: W, wait: true }))), 'UNAVAILABLE');
-  assert.equal(h.rt.log(utf8(h.link)).length, n);
+  const r = await h.stub.hold(h.stub.holdCmd({ rate: 5, window: W, wait: true }));
+  assert.equal(resultOf(r), 'WAITING');
+  assert.deepEqual([(r as { attempt: number }).attempt, (r as { aheadDeadline: number }).aheadDeadline], [1, blocker.deadline]);
+  assert.equal(h.rt.log(utf8(h.link)).length, n + 1);
+  assert.equal(h.rt.log(utf8(h.link)).at(-1)?.entry.kind, ENTRY.Hold);
   // wait = true that fits is HELD as usual.
   assert.equal(resultOf(await h.stub.hold(h.stub.holdCmd({ rate: 4, window: W, wait: true }))), 'HELD');
 });

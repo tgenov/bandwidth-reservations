@@ -23,7 +23,6 @@ does not have yet. The suites do not test them until the increment that provides
 
 | Contract | Behaviour | Provider | Increment |
 |---|---|---|---|
-| C02 `hold` check (8) | `WAITING(1, aheadDeadline)` for `wait = true` | Real link owner (answers `UNAVAILABLE`); the account link double throws | S-LINK I3 |
 | C08 §B | `catch_up` with and without `since` | Real identity owner | S-SEC-I2 (registered PENDING entry) |
 | C06 §7, §8 | Posting port and posting acknowledgement for usage batches (`runC06ProviderSuite`). Reservation batches run `runC06ReservationSuite` against the real ledger (MONEY-I2); the rate slice's settlement double does not run it yet | Real ledger | MONEY-I3 (registered PENDING entry) |
 
@@ -35,3 +34,4 @@ yet. The suite registers a PENDING entry for the double, so the gap shows in eve
 | Contract | Behaviour | Double | Provider has it since |
 |---|---|---|---|
 | C02 `hold` checks (5), (7); `query`; link availability query | The counter-offer on `NO_FIT` and `IN_FLIGHT`, `query`, `availability` and `fit_ranges` (`runC02ProviderSuite(…, { i2: true })`) | Account link double (`slices/account/owner/testing`) | S-LINK I2 |
+| C02 `hold` check (8); link waiting port | `WAITING(1, aheadDeadline)`, a grant that keeps the attempt, and the `GRANTED` notification with the same identity on the push and the relay (`runC02ProviderSuite(…, { i2: true, i3: true })`: provider tests 1, 4 and 13). The double has no I2 part, so the I2 PENDING entry stops its suite before the I3 part. The double throws on `wait = true` | Account link double (`slices/account/owner/testing`) | S-LINK I3 |

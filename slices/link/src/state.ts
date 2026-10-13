@@ -1,5 +1,5 @@
 /**
- * The apply state machine of one link (RFC-001 §3.3, §4.1, §4.2, §4.4, §7.3, §7.4), parts I1 and I2.
+ * The apply state machine of one link (RFC-001 §3.3, §4.1 … §4.4, §7.3, §7.4), parts I1, I2 and I3.
  *
  * `beginBatch(ts)` starts a batch at its commit timestamp `ts`. `decide(command, ts)` then applies one
  * command. It returns the outcome and tells if the command writes a log entry. A command that writes no
@@ -11,22 +11,28 @@
  * (`Decision.final`), so the record is known until D + 24 h. For a command whose record has gone from
  * memory, the owner reads that row and gives the record to `decide` as `recalled`.
  *
+ * Waiters (§4.3, I3). A hold with `wait = true` that only capacity in flight blocks registers a waiter. An entry
+ * that removes occupancy from `occ_all` (a release) or adds to `occ_firm` (a conversion) scans the waiters that
+ * overlap its range, in priority order, at most `scan_steps` of them. The scan grants, refuses for no fit, or
+ * updates the waiting notice. If the budget binds, the scan is pending, and `tick` continues it: the owner writes
+ * `Tick` entries before the next command. Each change for a waiter is a notice (`Decision.notices`).
+ *
  * Determinism (§7.4): the apply reads `ts`, never a clock. It uses integer arithmetic only. It
  * iterates maps in insertion order, which is a function of the log. The counter-offer budgets are step
  * counts that `beginBatch` resets. A replay calls `beginBatch` at each new `ts` (all entries of one batch
  * have the same `ts`), so it gets the same outcomes.
  */
 import { createHash } from 'node:crypto';
-import { encodeJson, type HlcTs, type WriterFence } from '@share/owner-runtime';
+import { compareHlc, encodeJson, type HlcTs, type WriterFence } from '@share/owner-runtime';
 import type {
   ConvertCmd, ConvertOutcome, CounterOffer, FitRanges, HoldCmd, HoldOutcome, LinkCommand, LinkId, Minute, QueryState,
-  ReleaseCmd, ReleaseOutcome, RequestId, Window,
+  ReleaseCmd, ReleaseOutcome, RequestId, WaitingContent, Window,
 } from './c02.ts';
 import { requestKey } from './c02.ts';
 import { CounterOfferBatch, earliest, fitRanges, horizonMinute, largestRate } from './counteroffer.ts';
 import { OccupancyTree } from './occupancy.ts';
 
-/** The policy parameters that I1 and I2 use (RFC-001 §7.3 `Init`; the full `Policy` entry is I4). */
+/** The policy parameters that I1 … I3 use (RFC-001 §7.3 `Init`; the full `Policy` entry is I4). */
 export interface LinkPolicy {
   version: string;
   /** POL-04, POL-26: 1 min. */
@@ -41,11 +47,13 @@ export interface LinkPolicy {
   counterofferSteps: number;
   /** RFC-001 §4.2 `counteroffer_batch_steps`: the most jumps for all refusals of one batch (4,096). */
   counterofferBatchSteps: number;
+  /** RFC-001 §4.3 `scan_steps`: the most waiters that one entry examines (1,024). */
+  scanSteps: number;
 }
 
 export const DEFAULT_POLICY: LinkPolicy = {
   version: '1', releaseGraceMs: 60_000, requestRecordTtlMs: 86_400_000, rateMinMbps: 1,
-  sellingHorizonMonths: 12, counterofferSteps: 512, counterofferBatchSteps: 4_096,
+  sellingHorizonMonths: 12, counterofferSteps: 512, counterofferBatchSteps: 4_096, scanSteps: 1_024,
 };
 
 /** The fixture command that registers the link (RFC-001 §7.3 `Init`; the registry feed is I9). */
@@ -55,7 +63,13 @@ export interface InitCmd { link: LinkId; capacityMbps: number; policy: LinkPolic
 export type Outcome =
   | HoldOutcome | ConvertOutcome | ReleaseOutcome
   | { code: 'UNKNOWN_LINK' } | { code: 'UNAVAILABLE' }
-  | { result: 'INITIALISED' } | { result: 'TAKEOVER' };
+  | { result: 'INITIALISED' } | { result: 'TAKEOVER' } | { result: 'TICK' };
+
+/**
+ * A change for a waiter that an entry makes (RFC-001 §4.3, §11.1). The owner sends it to the waiter's account
+ * owner as a C02 `WaitingNotification`, with the link stamp of the entry.
+ */
+export type WaitingNotice = { request: RequestId; account: Uint8Array; attempt: number } & WaitingContent;
 
 export interface Decision {
   outcome: Outcome;
@@ -67,7 +81,23 @@ export interface Decision {
   recordedSeq?: bigint;
   /** For an entry that records a final state of a request: the record after the entry (it writes `link_request`). */
   final?: RequestRecord;
+  /** The waiting-port notices of the entry, in the order of the scan (I3). */
+  notices?: WaitingNotice[];
+  /** The final records of other requests that the entry made (waiters refused by the scan). */
+  finals?: RequestRecord[];
 }
+
+/** A waiter (RFC-001 §3.3 "Waiters"): a request that waits for capacity in flight. It holds nothing. */
+export interface Waiter {
+  /** The hold command that registered it (rate, window, D, D_c, request_age, account). */
+  cmd: HoldCmd;
+  attempt: number;
+  /** The latest blocker deadline that the link told the account owner (ms). */
+  aheadDeadline: number;
+}
+
+/** Where a pending scan continues: its range, and the last waiter that it examined (by priority). */
+interface ScanCursor { start: number; end: number | null; after: HoldCmd }
 
 /** A capacity hold in `occ_all` (RFC-001 §3.3 "Capacity holds"). */
 export interface ActiveHold {
@@ -91,7 +121,7 @@ export interface LegPart {
 export interface RequestRecord {
   request: RequestId;
   madeBy: 'hold' | 'release';
-  state: 'HELD' | 'REFUSED' | 'RELEASED' | 'CONVERTED';
+  state: 'HELD' | 'WAITING' | 'REFUSED' | 'RELEASED' | 'CONVERTED';
   holdDigest?: string;
   /** The reply to a repeat of the hold. */
   holdOutcome?: HoldOutcome;
@@ -118,10 +148,18 @@ export class LinkState {
   appliedTs: HlcTs | undefined;
   /** The earliest time (ms) at which a final record can leave memory. Before it, `beginBatch` removes nothing. */
   nextPruneAt = Infinity;
+  /** A scan that the step budget stopped (RFC-001 §4.3 "scan-pending"). `tick` continues it. */
+  scanCursor: ScanCursor | undefined;
 
   private readonly holds = new Map<string, ActiveHold>();
   private readonly parts = new Map<string, LegPart>();
   private readonly records = new Map<string, RequestRecord>();
+  private readonly waiters = new Map<string, Waiter>();
+  /** The waiter keys in priority order: `request_age`, ties by request identity (RFC-001 §4.3). */
+  private readonly waitOrder: string[] = [];
+  /** The notices and the final records of other requests of the entry being decided. */
+  private notices: WaitingNotice[] = [];
+  private finals: RequestRecord[] = [];
   /** Per sending partition: the highest (generation, epoch) applied (RFC-001 §3.3 "Sender fences"). */
   private readonly fences = new Map<string, WriterFence>();
   private undo: Array<() => void> = [];
@@ -159,7 +197,7 @@ export class LinkState {
     this.undo.push(() => m.set(k, old));
   }
 
-  private setScalar<K extends 'link' | 'cRef' | 'policy' | 'appliedSeq' | 'appliedTs' | 'nextPruneAt'>(k: K, v: this[K]): void {
+  private setScalar<K extends 'link' | 'cRef' | 'policy' | 'appliedSeq' | 'appliedTs' | 'nextPruneAt' | 'scanCursor'>(k: K, v: this[K]): void {
     const old = this[k];
     this[k] = v;
     this.undo.push(() => { this[k] = old; });
@@ -199,9 +237,9 @@ export class LinkState {
     return this.batch.stepsLeft;
   }
 
-  /** The time (ms) until which memory keeps a record: the life of a hold, else D + release_grace. */
+  /** The time (ms) until which memory keeps a record: the life of a hold or a waiter, else D + release_grace. */
   private memoryUntil(r: RequestRecord): number {
-    return r.state === 'HELD' ? Infinity : r.deadline + this.policy.releaseGraceMs;
+    return isLive(r) ? Infinity : r.deadline + this.policy.releaseGraceMs;
   }
 
   private putRecord(key: string, r: RequestRecord): void {
@@ -269,22 +307,49 @@ export class LinkState {
   decide(cmd: LinkCommand, ts: HlcTs, seq: bigint, recalled?: RequestRecord): Decision {
     if (this.link === undefined || cmd.body.link !== this.link) return { outcome: { code: 'UNKNOWN_LINK' }, entry: false };
     this.seq = seq;
+    this.notices = [];
+    this.finals = [];
     this.recalled = recalled !== undefined && requestKey(recalled.request) === requestKey(cmd.body.request) ? recalled : undefined;
     try {
       switch (cmd.op) {
-        case 'hold': return this.hold(cmd.body, ts);
-        case 'convert': return this.convert(cmd.body, ts);
-        case 'release': return this.release(cmd.body, ts);
+        case 'hold': return this.withEffects(this.hold(cmd.body, ts));
+        case 'convert': return this.withEffects(this.convert(cmd.body, ts));
+        case 'release': return this.withEffects(this.release(cmd.body, ts));
       }
     } finally {
       this.recalled = undefined;
     }
   }
 
+  /** True if a scan is pending. The owner then writes `Tick` entries before the next command (RFC-001 §4.3). */
+  get scanPending(): boolean {
+    return this.scanCursor !== undefined;
+  }
+
+  /**
+   * The `Tick` continuation of a pending scan (RFC-001 §4.3, §7.3): it examines the next `scan_steps` waiters of
+   * the range, after the last one examined. With no pending scan, it writes no entry.
+   */
+  tick(ts: HlcTs, seq: bigint): Decision {
+    this.seq = seq;
+    this.notices = [];
+    this.finals = [];
+    const c = this.scanCursor;
+    if (c === undefined) return { outcome: { result: 'TICK' }, entry: false };
+    this.scan(c.start, c.end, ts, c.after);
+    return this.withEffects({ outcome: { result: 'TICK' }, entry: true });
+  }
+
+  private withEffects(d: Decision): Decision {
+    if (this.notices.length > 0) d.notices = this.notices;
+    if (this.finals.length > 0) d.finals = this.finals;
+    return d;
+  }
+
   /** The sequence of the entry being decided. */
   private seq = 0n;
 
-  /** RFC-001 §4.1, C02 `hold` checks (1) … (8). Waiting is I3. */
+  /** RFC-001 §4.1, C02 `hold` checks (1) … (8). Check (8) registers a waiter with no yields (yields are I5). */
   private hold(b: HoldCmd, ts: HlcTs): Decision {
     const key = requestKey(b.request);
     const rec = this.liveRecord(key, ts);
@@ -326,8 +391,16 @@ export class LinkState {
       const retryAfterMs = this.retryAfterMs(b, ts);
       return this.refuse(b, { result: 'REFUSED', reason: 'IN_FLIGHT', counterOffer, retryAfterMs });
     }
-    // (8) Waiting is I3. Give an explicit error, never a wrong answer (S-LINK plan §1 rule 1).
-    return { outcome: { code: 'UNAVAILABLE' }, entry: false, alert: 'WAIT_NOT_SUPPORTED' };
+    // (8) wait = true: a waiter at attempt 1, with the latest blocker deadline (P1-S07, P1-S34). It reserves
+    // nothing: a later hold is still checked against held capacity only (POL-05).
+    const aheadDeadline = Math.max(this.latestBlockerDeadline(b.window, b.rateMbps), 0);
+    const outcome: HoldOutcome = { result: 'WAITING', attempt: 1, aheadDeadline };
+    this.insertWaiter(key, { cmd: b, attempt: 1, aheadDeadline });
+    this.putRecord(key, {
+      request: b.request, madeBy: 'hold', state: 'WAITING', holdDigest: digest(b), holdOutcome: outcome,
+      deadline: b.deadline, expiresAt: b.deadline + this.policy.requestRecordTtlMs, seq: this.seq,
+    });
+    return { outcome, entry: true };
   }
 
   /** A refusal records a tombstone until D + release_grace. It is also the release acknowledgement. */
@@ -360,15 +433,129 @@ export class LinkState {
    * requests that overlap a conflict range of `occ_all` above C_ref − b.
    */
   private retryAfterMs(b: HoldCmd, ts: HlcTs): number {
-    const ranges = this.occAll.conflicts(b.window.start, b.window.end, this.cRef - b.rateMbps);
+    const latest = this.latestBlockerDeadline(b.window, b.rateMbps);
+    if (latest < 0) return 0;
+    const remainingNs = BigInt(latest) * 1_000_000n - wallNs(ts);
+    return remainingNs <= 0n ? 0 : Number((remainingNs + 999_999n) / 1_000_000n);
+  }
+
+  /** The largest D (ms) of the holds that overlap a conflict range of `occ_all` above C_ref − rate; −1 if none. */
+  private latestBlockerDeadline(w: Window, rate: number): number {
+    const ranges = this.occAll.conflicts(w.start, w.end, this.cRef - rate);
     let latest = -1;
     for (const h of this.holds.values()) {
       if (h.deadline <= latest) continue;
       if (ranges.some((r) => overlaps(h.window, r))) latest = h.deadline;
     }
-    if (latest < 0) return 0;
-    const remainingNs = BigInt(latest) * 1_000_000n - wallNs(ts);
-    return remainingNs <= 0n ? 0 : Number((remainingNs + 999_999n) / 1_000_000n);
+    return latest;
+  }
+
+  // ---------------- waiters and the scan (RFC-001 §4.3) ----------------
+
+  /** Insert a waiter at its place in priority order (journaled). */
+  private insertWaiter(key: string, w: Waiter): void {
+    this.setIn(this.waiters, key, w);
+    const i = this.upperBound(w.cmd);
+    this.waitOrder.splice(i, 0, key);
+    this.undo.push(() => { this.waitOrder.splice(i, 1); });
+  }
+
+  /** Remove a waiter (journaled). */
+  private removeWaiter(key: string): void {
+    const w = this.waiters.get(key);
+    if (!w) return;
+    const i = this.upperBound(w.cmd) - 1;
+    this.deleteIn(this.waiters, key);
+    this.waitOrder.splice(i, 1);
+    this.undo.push(() => { this.waitOrder.splice(i, 0, key); });
+  }
+
+  /** The first index in `waitOrder` whose waiter comes after `c` in priority order. */
+  private upperBound(c: HoldCmd): number {
+    let lo = 0;
+    let hi = this.waitOrder.length;
+    while (lo < hi) {
+      const mid = (lo + hi) >>> 1;
+      const w = this.waiters.get(this.waitOrder[mid] as string) as Waiter;
+      if (comparePriority(w.cmd, c) <= 0) lo = mid + 1;
+      else hi = mid;
+    }
+    return lo;
+  }
+
+  /**
+   * RFC-001 §4.3 `scan(R)`: the waiters that overlap [start, end), in priority order, after `after` if given. At
+   * most `scan_steps` of them. If waiters of the range are left, the scan is pending (`scanCursor`).
+   */
+  private scan(start: number, end: number | null, ts: HlcTs, after?: HoldCmd): void {
+    const range = { start, end };
+    const keys = this.waitOrder.slice(after === undefined ? 0 : this.upperBound(after));
+    let steps = 0;
+    let last: HoldCmd | undefined;
+    for (const key of keys) {
+      const w = this.waiters.get(key) as Waiter;
+      if (!overlaps(w.cmd.window, range)) continue;
+      if (steps >= this.policy.scanSteps) {
+        this.setScalar('scanCursor', { start, end, after: last as HoldCmd });
+        return;
+      }
+      steps += 1;
+      last = w.cmd;
+      this.examine(key, w, ts);
+    }
+    if (this.scanCursor !== undefined) this.setScalar('scanCursor', undefined);
+  }
+
+  /** One step of the scan for one waiter: skip, refuse, grant, or update its waiting notice. */
+  private examine(key: string, w: Waiter, ts: HlcTs): void {
+    const b = w.cmd;
+    const { start, end } = b.window;
+    // A waiter at or after its D_c cannot commit. The link grants it nothing; its account owner ends it (I3 of §3.4).
+    if (atOrAfterMs(ts, b.commitFence)) return;
+    // No fit on committed capacity: WAITER_REFUSED with a counter-offer, and a tombstone (P1-S42, P2-S52).
+    if (this.occFirm.peak(start, end) + b.rateMbps > this.cRef) {
+      this.refuseWaiter(key, w);
+      return;
+    }
+    // Fit beside every hold: the waiter becomes a hold at the same attempt (P1-S11, P2-S20, invariant I1).
+    if (this.occAll.peak(start, end) + b.rateMbps <= this.cRef) {
+      this.grant(key, w);
+      return;
+    }
+    // Still blocked: send the waiting notice again if its latest blocker changed (RFC-001 §4.3).
+    const aheadDeadline = Math.max(this.latestBlockerDeadline(b.window, b.rateMbps), 0);
+    if (aheadDeadline === w.aheadDeadline) return;
+    this.setIn(this.waiters, key, { ...w, aheadDeadline });
+    const rec = this.records.get(key) as RequestRecord;
+    this.putRecord(key, { ...rec, holdOutcome: { result: 'WAITING', attempt: w.attempt, aheadDeadline }, seq: this.seq });
+    this.notices.push({ request: b.request, account: b.account, attempt: w.attempt, kind: 'WAITING_NOTICE', aheadDeadline });
+  }
+
+  private grant(key: string, w: Waiter): void {
+    const b = w.cmd;
+    this.occAll.add(b.window.start, b.window.end, b.rateMbps);
+    this.removeWaiter(key);
+    this.setIn(this.holds, key, {
+      request: b.request, account: b.account, leg: b.leg, rateMbps: b.rateMbps, window: b.window,
+      deadline: b.deadline, commitFence: b.commitFence, requestAge: b.requestAge, attempt: w.attempt,
+    });
+    const rec = this.records.get(key) as RequestRecord;
+    this.putRecord(key, { ...rec, state: 'HELD', holdOutcome: { result: 'HELD', attempt: w.attempt }, seq: this.seq });
+    this.notices.push({ request: b.request, account: b.account, attempt: w.attempt, kind: 'GRANTED' });
+  }
+
+  private refuseWaiter(key: string, w: Waiter): void {
+    const b = w.cmd;
+    this.removeWaiter(key);
+    const counterOffer = this.counterOffer(b);
+    const rec = this.records.get(key) as RequestRecord;
+    const next: RequestRecord = {
+      ...rec, state: 'REFUSED', holdOutcome: { result: 'REFUSED', reason: 'NO_FIT', counterOffer },
+      tombstoneUntil: b.deadline + this.policy.releaseGraceMs, seq: this.seq,
+    };
+    this.putRecord(key, next);
+    this.finals.push(next);
+    this.notices.push({ request: b.request, account: b.account, attempt: w.attempt, kind: 'WAITER_REFUSED', reason: 'NO_FIT', counterOffer });
   }
 
   /** RFC-001 §4.4 "Convert". I1 has no clip (I6) and no displacement mark (I11). */
@@ -380,6 +567,8 @@ export class LinkState {
       if (rec.convertAttempt !== b.attempt || rec.convertDigest !== digest(b)) return { outcome: { code: 'MISMATCH' }, entry: false, alert: 'MISMATCH' };
       return { outcome: rec.convertOutcome as ConvertOutcome, entry: false, recordedSeq: rec.seq };
     }
+    // A waiter holds nothing: the account owner confirms only with every leg held (RFC-001 §4.4).
+    if (rec.state === 'WAITING') return { outcome: { code: 'NO_HOLD' }, entry: false, alert: 'NO_HOLD' };
     if (rec.state !== 'HELD') return { outcome: { code: 'TOMBSTONED' }, entry: false, alert: 'TOMBSTONED' };
     const h = this.holds.get(key) as ActiveHold;
     if (b.attempt !== h.attempt) return { outcome: { code: 'MISMATCH' }, entry: false, alert: 'MISMATCH' };
@@ -396,6 +585,8 @@ export class LinkState {
       convertDigest: digest(b), convertAttempt: b.attempt, convertOutcome: outcome, seq: this.seq,
     };
     this.putRecord(key, next);
+    // occ_firm grew over the window: the waiters there can no longer fit (P2-S52, RFC-001 §4.3).
+    this.scan(h.window.start, h.window.end, ts);
     return { outcome, entry: true, final: next };
   }
 
@@ -414,16 +605,22 @@ export class LinkState {
     }
     const newUntil = Math.max(rec.tombstoneUntil ?? 0, until);
     const deadline = Math.max(rec.deadline, b.deadline);
-    if (rec.state === 'HELD') {
-      const h = this.holds.get(key) as ActiveHold;
-      // The capacity is free for others from this entry (P1-S08, P2-S14).
-      this.occAll.add(h.window.start, h.window.end, -h.rateMbps);
-      this.deleteIn(this.holds, key);
+    if (rec.state === 'HELD' || rec.state === 'WAITING') {
+      const h = this.holds.get(key);
+      if (h) {
+        // The capacity is free for others from this entry (P1-S08, P2-S14).
+        this.occAll.add(h.window.start, h.window.end, -h.rateMbps);
+        this.deleteIn(this.holds, key);
+      } else {
+        this.removeWaiter(key);
+      }
       const next: RequestRecord = {
         ...rec, state: 'RELEASED', holdOutcome: { result: 'RELEASED' }, tombstoneUntil: newUntil,
         deadline, expiresAt: Math.max(rec.expiresAt, expiresAt), seq: this.seq,
       };
       this.putRecord(key, next);
+      // Released capacity goes to the oldest waiter that it fits, in this entry (P1-S11, P2-S16).
+      if (h) this.scan(h.window.start, h.window.end, ts);
       return { outcome: { result: 'RELEASED', tombstoneUntil: newUntil }, entry: true, final: next };
     }
     // A converted request keeps its part. A release after a conversion is a protocol defect.
@@ -443,7 +640,7 @@ export class LinkState {
   private liveRecord(key: string, ts: HlcTs): RequestRecord | undefined {
     const rec = this.records.get(key) ?? this.recalled;
     if (!rec) return undefined;
-    return rec.state !== 'HELD' && atOrAfterMs(ts, rec.expiresAt) ? undefined : rec;
+    return !isLive(rec) && atOrAfterMs(ts, rec.expiresAt) ? undefined : rec;
   }
 
   // ---------------- queries (not entries; RFC-001 §7.3) ----------------
@@ -458,6 +655,10 @@ export class LinkState {
     const tomb = rec.tombstoneUntil === undefined ? {} : { tombstoneUntil: rec.tombstoneUntil };
     if (rec.madeBy === 'release') return { state: 'RELEASED', ...tomb };
     if (rec.state === 'HELD') return { state: 'HELD', attempt: (this.holds.get(key) as ActiveHold).attempt };
+    if (rec.state === 'WAITING') {
+      const w = this.waiters.get(key) as Waiter;
+      return { state: 'WAITING', attempt: w.attempt, aheadDeadline: w.aheadDeadline };
+    }
     if (rec.state === 'REFUSED') {
       const o = rec.holdOutcome as Extract<HoldOutcome, { result: 'REFUSED' }>;
       const refusal = {
@@ -499,6 +700,11 @@ export class LinkState {
     return [...this.parts.values()];
   }
 
+  /** The waiters in priority order. */
+  waitersInOrder(): Waiter[] {
+    return this.waitOrder.map((k) => this.waiters.get(k) as Waiter);
+  }
+
   /** The record of a request in memory, or undefined if memory has none. */
   recordState(r: RequestId): { state: RequestRecord['state']; madeBy: RequestRecord['madeBy']; tombstoneUntil?: number } | undefined {
     const rec = this.records.get(requestKey(r));
@@ -522,6 +728,23 @@ export function atOrAfterMs(ts: HlcTs, ms: number): boolean {
 export function wallNs(ts: HlcTs): bigint {
   const dot = ts.indexOf('.');
   return BigInt(dot < 0 ? ts : ts.slice(0, dot));
+}
+
+/** A held or a waiting request: its record stays in memory, and stays live, for as long as it is. */
+function isLive(r: RequestRecord): boolean {
+  return r.state === 'HELD' || r.state === 'WAITING';
+}
+
+/**
+ * The waiter priority order of RFC-001 §4.3 (`priority_rule` = `request_age`, POL-02): the older `request_age`
+ * first, ties by request identity (account partition bytes, then sequence; RFC-000 §4.5).
+ */
+export function comparePriority(a: HoldCmd, b: HoldCmd): number {
+  const age = compareHlc(a.requestAge, b.requestAge);
+  if (age !== 0) return age;
+  const part = Buffer.compare(Buffer.from(a.request.partition), Buffer.from(b.request.partition));
+  if (part !== 0) return part;
+  return a.request.seq < b.request.seq ? -1 : a.request.seq > b.request.seq ? 1 : 0;
 }
 
 function overlaps(w: Window, r: { start: number; end: number | null }): boolean {

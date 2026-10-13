@@ -11,6 +11,7 @@ Run: `npm run typecheck:link`, `npm run test:link`, `REQUIRE_DEV_CELL=1 npm run 
 |---|---|---|
 | S-LINK-I1 Walking skeleton: hold, convert and release on one link | Delivered (`eb7895f`) | P1-S01 … S06, S08 … S10, S13, S14, S37, S77 |
 | S-LINK-I2 Counter-offers, request records and the availability query | Built, not committed | P1-S12, S15, S16, S17, S38, S39, S70, S73 |
+| S-LINK-I3 Waiting, grants and the waiting port | Built, not committed; manual proofs owed (see S-LINK-I3) | P1-S07, S11, S34 |
 
 ## S-LINK-I2
 
@@ -96,3 +97,64 @@ machine is necessary (`mutate` now also has the I2 parts of `owner.ts`; the comm
 - The `link_request` row TTL is declared and created (`ttl_expiration_expression`); its removal is not tested (the database job runs hourly).
 - The prune scan is linear in the records in memory, and runs only when the earliest due record is due (`nextPruneAt`). A heap by expiry is for SP4/I16.
 - The account link double has no I2 part (account slice).
+
+## S-LINK-I3
+
+### What it adds
+
+| Part | Where |
+|---|---|
+| `hold` check (8): `wait = true` that only capacity in flight blocks registers a waiter at attempt 1 and answers `WAITING(1, aheadDeadline)`, the latest D of the blockers. No yields (I5). The waiter holds nothing and reserves nothing (POL-05) | `src/state.ts` |
+| Waiters in priority order: `request_age`, ties by request identity (`comparePriority`); a sorted key list with journaled insert and remove | `src/state.ts` |
+| The scan (RFC-001 §4.3) in each release of a hold and each conversion, over the waiters that overlap the range, in priority order: skip at or after `D_c`; `WAITER_REFUSED(NO_FIT, counterOffer)` with a tombstone if no fit on `occ_firm`; `GRANTED` at the same attempt if fit on `occ_all`; else a new `WAITING_NOTICE` if the latest blocker changed | `src/state.ts` |
+| Policy field `scanSteps` (1,024). A scan that the budget stops is pending (`scanCursor`); `tick` continues it. The owner writes `Tick` entries in the same batch, before the next command | `src/state.ts`, `src/owner.ts` |
+| Request record state `WAITING` (kept for the life of the waiter). A repeat of the hold gets the present recorded state (`WAITING` with the last notified deadline, then `HELD(1)` after a grant, or the waiter refusal). `query` answers `WAITING` with attempt and `aheadDeadline`. `convert` of a waiter answers `NO_HOLD` (alerted) | `src/state.ts` |
+| Notices: each entry logs its notices (`notices`) and the final records of the waiters that its scan refused (`records`); the scan's refusal writes the `link_request` row of the waiter; the recall reads that record from the entry. A replay compares the notices too | `src/owner.ts` |
+| Waiting-port notifications: C01 notification rows in the batch (`DecideResult.notifications`, relayed by the runtime), and the push after commit (`onNotify`, after `leaseValid`). Body: the C02 `WaitingNotification` with the link stamp of the entry | `src/owner.ts`, `src/c02.ts` |
+
+### Exit criteria
+
+| # | Criterion | State | Proving tests |
+|---|---|---|---|
+| 1 | T-07 (no yield parts) | Met (double and in-memory runtime core). Dev cell: written, not run (manual proof owed) | `P1-S07 …`, `P1-S11 …`, `P1-S34 …`; `T-07 released capacity goes to the oldest waiter …`, `T-07 waiters with the same request_age …`, `T-07 a younger waiter that fits …`, `T-07 wait = false is refused IN_FLIGHT …`, `T-07 a waiter is refused NO_FIT … when the request ahead converts` (also the recall from `link_request`), `T-07 a waiter at or after its D_c is skipped …`, `T-07 a waiter one millisecond before its D_c is granted`, `T-07 scan budget: Tick continuations complete the scan before the next command …`, `T-07 the scan counts only the waiters that overlap …`, `T-07 a release of a waiter …`, `T-07 a repeat of a waiting hold …`, `T-07 a waiter whose latest blocker changes …`, `T-07 … open-ended …`; `should replay waiters, grants and Tick continuations … after a takeover`; dev cell: `test/integration/link-i3-crdb.test.ts` |
+| 2 | T-08b | Met at the C02 boundary (consumer stub with the C02 rules). The Kafka relay on the dev cell: manual proof owed (the integration test checks the outbox rows and the push, not Kafka) | `T-08b a GRANTED lost on the push and relayed after a newer WAITING_NOTICE …`, `T-08b query restores a lost notice …` |
+| 3 | C02 provider tests 1 (`WAITING`), 4 (a grant keeps the attempt), 13 (first two items) | Met | Suite `runC02ProviderSuite(…, { i2: true, i3: true })`: `C02 1 … WAITING(1, aheadDeadline …)`, `C02 4 … a grant keeps the attempt …`, `C02 13 … GRANTED is relayed …`; at the owner: `C02 provider test 13 the identity and the content are the same on the relay and on the push`, `C02 provider test 1: wait = true … WAITING(1) …` |
+| 4 | I1 property test with `wait = true` and waiters, against the oracle extended with POL-05 waiting | Met | `T-07 the P1-N1 properties and the POL-05 waiting oracle hold when 50 clients send 6 seeds × 1,500 commands …`, `T-07 the waiting oracle holds when the scan budget binds (scan_steps 1) …`, `should keep the P1-N1 properties and the waiting oracle on the real C01 runtime core …` |
+| 5 | Measurement: scan of 1,024 waiters ≤ 1 ms; flash crowd of 7,500 waiters in ≤ 8 continuations (≈ 8 ms) | Step count: met (the release entry and 7 Ticks, one batch). Wall-clock: written, not run (manual proof owed) | `should complete the scan of a flash crowd of 7,500 waiters in the release entry and 7 Tick continuations, in one batch`; `measurement: a scan of 1,024 waiters and a flash crowd of 7,500 waiters in 8 scan parts` (`npm run measure`) |
+
+The oracle (`MinuteOracle`) keeps its own waiter list in priority order (`oraclePriority`, written apart from
+`comparePriority`) and scans with no step budget: the `Tick` continuations are in the same batch before the next
+command, so the result is the same. The property run compares every notice of the log, in order, with the
+oracle's, and checks P1-N1 after each grant from the log rows alone. Deliberate breaks, run once: a grant check
+with `C_ref + 1`, and a reversed priority comparator. Each makes the three property tests and the T-07 order
+tests fail.
+
+I1 test changed: `C02 provider test 1: wait = true where it would wait answers UNAVAILABLE in I1 …` asserted the
+I1 placeholder (S-LINK plan §1 rule 1). I3 replaces that behaviour, so the test now asserts `WAITING(1, D)` and one
+`Hold` entry.
+
+### Gates (2026-10-13, agent run, contract and double based only)
+
+`npm run typecheck:link` clean; `npm run typecheck:contracts` clean; `npx eslint slices/link contracts` clean;
+`npm run test:link` 139 tests, 136 pass, 0 fail, 3 skipped (the three measurements, `LINK_MEASURE` not set);
+`npm run test:contracts` 81 tests, 78 pass, 0 fail, 3 todo (PENDING entries). Not run by the agent: the
+integration tests (`link-i3-crdb.test.ts`: written, not run), `npm run measure`, `npm run check`, Stryker.
+A person runs them before the merge.
+
+### Design issues found
+
+| Id | Where | Conflict | Proposed resolution |
+|---|---|---|---|
+| DI-10 | C01 §2.3 notification rows; C02 "Link waiting port" | The runtime writes a notification row `ifAbsent` by (subject, attempt, kind). C02 sends a `WAITING_NOTICE` again with new content under the same C02 identity (highest `linkSeq` wins), so the outbox keeps only the first copy | The link puts the log sequence in the C01 subject of a `WAITING_NOTICE` only. The C02 identity stays in the body. C01 or C02 note: the C01 id of a state message that changes content includes the sequence |
+| DI-11 | RFC-001 §4.3 scan | The scan sets a waiter's notice when it examines it. A younger waiter granted later in the same scan (or a new hold at check (6), or a grant outside the range) can become a later blocker, so the notified deadline can be too early until the next scan or `query` | Accept (the 5 s `query` reconcile and the next scan correct it), or the RFC computes the notices after the grants of the scan |
+| DI-12 | C02 `convert`; RFC-001 §4.4 | No reply is stated for a `convert` of a request that waits (it holds nothing) | The link answers `NO_HOLD` and alerts. C02 note |
+| DI-13 | RFC-001 §4.3, §7.4 | `scan_steps` is "an algorithm constant", but a replay needs the value of the log | `scanSteps` is in the policy of `Init` now; the `Policy` entry (I4) carries it |
+
+### Left for later increments
+
+- Yields, claims, `mark_waiting` (I5); `openYieldClaims` in `query` (I5); `DISPLACED` (I11).
+- Expiry requests for waiters after D (I8). A waiter after `D_c` stays registered until its account owner releases it.
+- The gRPC push transport: `onNotify` is the hook.
+- Scans after capacity rises (restoration, increase, offer release, leg changes): with those entries (I6, I12 … I15).
+- The scan copies the waiter keys of the range; an interval index of waiters is for SP4/I16.
+- The account link double has no I2 and no I3 part (account slice).

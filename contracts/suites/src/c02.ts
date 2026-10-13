@@ -7,6 +7,9 @@
  * registered with `{ i2: true }`. For another subject, the suite registers a PENDING entry for that part
  * (contracts/suites/ISSUES.md, "Known double gaps").
  *
+ * The S-LINK I3 part (provider tests 1 `WAITING`, 4 "a grant keeps the attempt", 13 first two items) runs only
+ * for a subject registered with `{ i2: true, i3: true }` that gives its notifications. Else a PENDING entry.
+ *
  * The types are copied from C02 "Schema" (the subset that the tests use). They are structurally the same
  * as the types of each slice, so each slice can give its own port.
  */
@@ -84,6 +87,8 @@ export interface C02HoldPort {
 export interface C02SuiteOptions {
   /** The counter-offer on NO_FIT and IN_FLIGHT, `query`, `availability` and `fit_ranges` (S-LINK I2). */
   i2?: boolean;
+  /** `hold` check (8) `WAITING`, grants and the waiting port notifications (S-LINK I3). Needs `i2` and `notifications`. */
+  i3?: boolean;
 }
 
 /** The capacity (Mbps) of the one link that every C02 subject registers. */
@@ -101,6 +106,18 @@ export interface C02Subject extends Closable {
   envelope(account: PartitionKey, sender?: { generation: Generation; epoch: Epoch }): CommandEnvelope;
   /** The provider's present time (ms since the Unix epoch). */
   nowMs(): number;
+  /**
+   * The link waiting port notifications so far (S-LINK I3): the copies pushed after commit and the copies
+   * relayed from the outbox, in order. Each copy is a C01 notification with a C02 `WaitingNotification` body.
+   */
+  notifications?(): { pushed: C02NotificationCopy[]; relayed: C02NotificationCopy[] };
+}
+
+/** A C01 point-to-point notification whose body is a C02 `WaitingNotification` (C02 "Link waiting port"). */
+export interface C02NotificationCopy {
+  to: { kind: string; partition: PartitionKey };
+  id: { subject: Uint8Array; attempt: number; kind: string };
+  body: C02LinkStamp & { link: string; request: C02RequestId; attempt: number; kind: string; aheadDeadline?: number };
 }
 
 // ---------- builders ----------
@@ -325,5 +342,57 @@ export function runC02ProviderSuite(name: string, make: SubjectFactory<C02Subjec
     assert.deepEqual(outcome(fr), { asOfSeq: stamp(held).linkSeq, ranges: [{ start: m - 60, end: m }, { start: m + 60, end: m + 120 }], continueFrom: null });
     const b = holdCmd(s, { account: 'b2', rate: 3, window: { start: m, end: m + 60 } });
     assert.deepEqual(outcome(await s.port.hold(env(s, b), b)), { result: 'HELD', attempt: 1 }, 'the query held nothing');
+  });
+
+  if (!opts.i3) {
+    test(`C02 [${name}] PENDING (S-LINK I3 part): hold check (8) WAITING, grants and the waiting port notifications`,
+      { todo: 'the subject does not provide the S-LINK I3 part (contracts/suites/ISSUES.md)' }, () => {});
+    return;
+  }
+
+  const notes = (s: C02Subject): { pushed: C02NotificationCopy[]; relayed: C02NotificationCopy[] } => {
+    assert.ok(s.notifications, 'the subject gives its waiting port notifications');
+    return s.notifications();
+  };
+  const sameRequest = (a: C02RequestId, b: C02RequestId): boolean =>
+    Buffer.from(a.partition).equals(Buffer.from(b.partition)) && a.seq === b.seq;
+
+  t('1', 'hold: wait = true blocked only by capacity in flight gives WAITING(1, aheadDeadline = the latest blocker D), and a query shows WAITING', async (s) => {
+    const a = holdCmd(s, { rate: C - 4, deadlineInMs: 20_000 });
+    const b = holdCmd(s, { account: 'b2', rate: 4, deadlineInMs: 25_000 });
+    assert.equal(outcome(await s.port.hold(env(s, a), a))['result'], 'HELD');
+    assert.equal(outcome(await s.port.hold(env(s, b), b))['result'], 'HELD');
+    const w = holdCmd(s, { account: 'b3', rate: 1, wait: true });
+    assert.deepEqual(outcome(await s.port.hold(env(s, w), w)), { result: 'WAITING', attempt: 1, aheadDeadline: b.deadline });
+    assert.deepEqual(outcome(await query(s)(env(s, w), { link: s.link, receiverPartition: s.link, request: w.request })),
+      { state: 'WAITING', attempt: 1, aheadDeadline: b.deadline });
+  });
+
+  t('4', 'attempts: a grant keeps the attempt; the waiter is held at attempt 1 and converts at attempt 1', async (s) => {
+    const a = holdCmd(s, { rate: C });
+    assert.equal(outcome(await s.port.hold(env(s, a), a))['result'], 'HELD');
+    const w = holdCmd(s, { account: 'b2', rate: 3, wait: true });
+    assert.deepEqual(outcome(await s.port.hold(env(s, w), w))['attempt'], 1);
+    await s.port.release(env(s, a), releaseCmd(s, a.request, a.deadline));
+    assert.deepEqual(outcome(await query(s)(env(s, w), { link: s.link, receiverPartition: s.link, request: w.request })), { state: 'HELD', attempt: 1 });
+    assert.deepEqual(outcome(await s.port.hold(env(s, w), w)), { result: 'HELD', attempt: 1 });
+    assert.deepEqual(outcome(await s.port.convert(env(s, w), convertCmd(s, w, 1))), { result: 'CONVERTED', part: 'p1' });
+  });
+
+  t('13', 'notifications: a GRANTED is relayed with the identity (link, request, attempt, kind), and the push has the same identity and content', async (s) => {
+    const a = holdCmd(s, { rate: C });
+    assert.equal(outcome(await s.port.hold(env(s, a), a))['result'], 'HELD');
+    const w = holdCmd(s, { account: 'b2', rate: 3, wait: true });
+    await s.port.hold(env(s, w), w);
+    const rel = await s.port.release(env(s, a), releaseCmd(s, a.request, a.deadline));
+    const { pushed, relayed } = notes(s);
+    const granted = relayed.filter((n) => n.body.kind === 'GRANTED' && sameRequest(n.body.request, w.request));
+    assert.equal(granted.length, 1, 'one relayed GRANTED for the waiter');
+    const g = granted[0] as C02NotificationCopy;
+    assert.deepEqual([g.body.link, g.body.attempt, g.body.linkSeq], [s.link, 1, stamp(rel).linkSeq], 'the grant is in the entry that frees the capacity');
+    assert.deepEqual([g.id.attempt, g.id.kind], [1, 'GRANTED']);
+    assert.ok(Buffer.from(g.to.partition).equals(Buffer.from(w.account)), 'the relay key is the waiter account partition');
+    const push = pushed.filter((n) => n.body.kind === 'GRANTED' && sameRequest(n.body.request, w.request));
+    assert.deepEqual(push, granted, 'the push and the relay have the same identity and content');
   });
 }

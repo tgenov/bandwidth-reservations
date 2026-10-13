@@ -8,7 +8,7 @@ export { C01_SUITE_DECLARATION, runC01ProviderSuite, type C01LogRow, type C01Sub
 export {
   C02_SUITE_CAPACITY, runC02ProviderSuite, type C02ConvertCmd, type C02ConvertReply, type C02HoldCmd, type C02HoldPort,
   type C02HoldReply, type C02ReleaseCmd, type C02ReleaseReply, type C02Subject, type C02SuiteOptions, type C02CounterOffer,
-  type C02QueryCmd, type C02QueryReply, type C02AvailabilityQuery, type C02AvailabilityReply, type C02FitRangesQuery, type C02FitRangesReply,
+  type C02QueryCmd, type C02QueryReply, type C02AvailabilityQuery, type C02AvailabilityReply, type C02FitRangesQuery, type C02FitRangesReply, type C02NotificationCopy,
 } from './c02.ts';
 export {
   runC08ProviderSuite, type C08CatchUpAnswer, type C08CatchUpRequest, type C08PrincipalContext, type C08SnapshotAccount,

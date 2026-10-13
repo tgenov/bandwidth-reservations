@@ -3,9 +3,10 @@
  * - a seeded random generator (mulberry32, as the prior `test/helpers.ts`);
  * - the runtime double with the link owner attached;
  * - the recorded account-owner stub, which sends C02 commands with C01 envelopes;
- * - the per-minute oracle (T-01), one cell per minute, for hold, convert and release.
+ * - the per-minute oracle (T-01), one cell per minute, for hold, convert and release, extended with POL-05
+ *   waiting (I3): waiters in priority order, and the scan of each release and conversion.
  */
-import type { CommandEnvelope, HlcTs, OwnerRuntime, PartitionKey } from '@share/owner-runtime';
+import type { CommandEnvelope, HlcTs, NotificationOut, OwnerRuntime, PartitionKey } from '@share/owner-runtime';
 import { hlcToWallMs, utf8 } from '@share/owner-runtime';
 import { RuntimeDouble } from '@share/owner-runtime/testing';
 import type {
@@ -44,6 +45,8 @@ export interface Harness {
   decided: DecidedRecord[];
   link: string;
   stub: AccountStub;
+  /** The waiting-port notifications that the owner pushed after each commit (`onNotify`), in order. */
+  pushed: NotificationOut[];
 }
 
 export function doubleLogReader(rt: RuntimeDouble): LogReader {
@@ -56,16 +59,18 @@ export async function harness(opts: { link?: string; capacity?: number; policy?:
   const link = opts.link ?? 'L1';
   const rt = new RuntimeDouble({ declaration, startMs: START_MS });
   const decided: DecidedRecord[] = [];
+  const pushed: NotificationOut[] = [];
   const owner = new LinkOwner(rt, {
     readLog: doubleLogReader(rt),
     onReply: (l) => rt.recordReply(l),
     onDecided: (d) => decided.push(d),
+    onNotify: (n) => pushed.push(n),
     ...opts.owner,
   });
   rt.attach(owner);
   const r = await owner.register(link, opts.capacity ?? 10, opts.policy ?? DEFAULT_POLICY);
   if (!('result' in r) || r.result !== 'INITIALISED') throw new Error(`register failed: ${JSON.stringify(r)}`);
-  return { rt, owner, decided, link, stub: new AccountStub(rt, owner, link) };
+  return { rt, owner, decided, link, stub: new AccountStub(rt, owner, link), pushed };
 }
 
 // ---------------- recorded account-owner stub ----------------
@@ -168,9 +173,37 @@ export function resultOf(r: unknown): string {
 
 interface OracleRequest {
   madeBy: 'hold' | 'release';
-  state: 'HELD' | 'REFUSED' | 'RELEASED' | 'CONVERTED';
+  state: 'HELD' | 'WAITING' | 'REFUSED' | 'RELEASED' | 'CONVERTED';
   holdDigest?: string; holdOutcome?: Outcome; convertDigest?: string; convertAttempt?: number; convertOutcome?: Outcome;
   rate?: number; window?: Window; deadline?: number; tombstoneUntil?: number;
+}
+
+/** A waiting-port notice as the oracle expects it: request key, kind, attempt and content. */
+export interface OracleNotice { request: string; kind: string; attempt: number; aheadDeadline?: number; counterOffer?: CounterOffer }
+
+/** The same form for a notice that the link logged (`LoggedPayload.notices`), so that the two compare. */
+export function noticeForm(n: { request: RequestId; kind: string; attempt: number; aheadDeadline?: number; counterOffer?: CounterOffer }): OracleNotice {
+  return {
+    request: requestKey(n.request), kind: n.kind, attempt: n.attempt,
+    ...(n.aheadDeadline === undefined ? {} : { aheadDeadline: n.aheadDeadline }),
+    ...(n.counterOffer === undefined ? {} : { counterOffer: n.counterOffer }),
+  };
+}
+
+/**
+ * POL-02 priority, written apart from the link's code: the older `request_age` first (the HLC as a wall part
+ * and a logical part), ties by the account partition in hex, then the request sequence.
+ */
+export function oraclePriority(a: HoldCmd, b: HoldCmd): number {
+  const [aw = '0', al = '0'] = a.requestAge.split('.');
+  const [bw = '0', bl = '0'] = b.requestAge.split('.');
+  const cmp = (x: bigint, y: bigint): number => (x < y ? -1 : x > y ? 1 : 0);
+  const age = cmp(BigInt(aw), BigInt(bw)) || cmp(BigInt(al), BigInt(bl));
+  if (age !== 0) return age;
+  const ap = Buffer.from(a.request.partition).toString('hex');
+  const bp = Buffer.from(b.request.partition).toString('hex');
+  if (ap !== bp) return ap < bp ? -1 : 1;
+  return cmp(a.request.seq, b.request.seq);
 }
 
 /**
@@ -182,6 +215,11 @@ interface OracleRequest {
  * jump search of RFC-001 §4.2 over the cells, which also counts the steps. The oracle throws if the two
  * differ. The step count decides "not found before t" against the per-refusal and per-batch budgets, with
  * the per-batch cache of the RFC. A new `ts` starts a new batch.
+ *
+ * Waiting (POL-05, RFC-001 §4.3). A hold with `wait = true` that fits committed but not held capacity waits,
+ * with the latest blocker deadline. A release of a hold and a conversion scan the waiters that overlap the
+ * window, in priority order, with no step budget: the link's `Tick` continuations are in the same batch, before
+ * the next command, so they give the same result. Each notice goes to `notices`, in order.
  */
 export class MinuteOracle {
   readonly firm: Int32Array;
@@ -198,6 +236,10 @@ export class MinuteOracle {
   private batchTs: HlcTs | undefined;
   private batchLeft = 0;
   private readonly cache = new Map<string, { version: number; earliest: CounterOffer['earliest'] }>();
+  /** The waiters in priority order. */
+  private waiters: Array<{ key: string; b: HoldCmd; ahead: number }> = [];
+  /** The waiting-port notices, in the order that the link must send them. */
+  readonly notices: OracleNotice[] = [];
 
   constructor(base: number, n: number, capacity: number, policy: LinkPolicy = DEFAULT_POLICY) {
     this.base = base; this.n = n; this.capacity = capacity; this.policy = policy; this.releaseGraceMs = policy.releaseGraceMs;
@@ -341,18 +383,15 @@ export class MinuteOracle {
         this.req.set(key, { madeBy: 'hold', state: 'HELD', holdDigest: digest(b), holdOutcome: o, rate: b.rateMbps, window: b.window, deadline: b.deadline });
         return o;
       }
-      if (b.wait) return { code: 'UNAVAILABLE' };
-      const counterOffer = this.counterOffer(b, ts);
-      // Blockers: holds that overlap a minute where all + b > capacity.
-      const [s, e] = this.span(b.window);
-      let latest = -1;
-      for (const r of this.req.values()) {
-        if (r.state !== 'HELD' || !r.window || r.deadline === undefined || r.deadline <= latest) continue;
-        const [hs, he] = this.span(r.window);
-        for (let t = Math.max(s, hs); t < Math.min(e, he); t++) {
-          if ((this.all[t] as number) + b.rateMbps > this.capacity) { latest = r.deadline; break; }
-        }
+      const latest = this.latestBlocker(b.window, b.rateMbps);
+      if (b.wait) {
+        const o: Outcome = { result: 'WAITING', attempt: 1, aheadDeadline: Math.max(latest, 0) };
+        this.req.set(key, { madeBy: 'hold', state: 'WAITING', holdDigest: digest(b), holdOutcome: o, rate: b.rateMbps, window: b.window, deadline: b.deadline });
+        this.waiters.push({ key, b, ahead: Math.max(latest, 0) });
+        this.waiters.sort((x, y) => oraclePriority(x.b, y.b));
+        return o;
       }
+      const counterOffer = this.counterOffer(b, ts);
       let retryAfterMs = 0;
       if (latest >= 0) {
         const ns = BigInt(latest) * 1_000_000n - tsNs;
@@ -366,11 +405,13 @@ export class MinuteOracle {
       if (rec.state === 'CONVERTED') {
         return rec.convertAttempt === b.attempt && rec.convertDigest === digest(b) ? rec.convertOutcome as Outcome : { code: 'MISMATCH' };
       }
+      if (rec.state === 'WAITING') return { code: 'NO_HOLD' };
       if (rec.state !== 'HELD') return { code: 'TOMBSTONED' };
       if (b.attempt !== 1) return { code: 'MISMATCH' };
       this.addTo(this.firm, rec.window as Window, rec.rate as number);
       const o: Outcome = { result: 'CONVERTED', part: b.part };
       Object.assign(rec, { state: 'CONVERTED', holdOutcome: { result: 'CONVERTED', part: b.part }, convertDigest: digest(b), convertAttempt: b.attempt, convertOutcome: o });
+      this.scan(rec.window as Window, ts);
       return o;
     }
     const b = cmd.body;
@@ -380,12 +421,59 @@ export class MinuteOracle {
       return { result: 'RELEASED', tombstoneUntil: until };
     }
     const newUntil = Math.max(rec.tombstoneUntil ?? 0, until);
-    if (rec.state === 'HELD') {
-      this.addTo(this.all, rec.window as Window, -(rec.rate as number));
-      Object.assign(rec, { state: 'RELEASED', holdOutcome: { result: 'RELEASED' } });
-    }
+    const wasHeld = rec.state === 'HELD';
+    if (wasHeld) this.addTo(this.all, rec.window as Window, -(rec.rate as number));
+    if (rec.state === 'WAITING') this.waiters = this.waiters.filter((w) => w.key !== key);
+    if (wasHeld || rec.state === 'WAITING') Object.assign(rec, { state: 'RELEASED', holdOutcome: { result: 'RELEASED' } });
     rec.tombstoneUntil = newUntil;
+    if (wasHeld) this.scan(rec.window as Window, ts);
     return { result: 'RELEASED', tombstoneUntil: newUntil };
+  }
+
+  /** The largest D of the held requests that overlap a minute where all + rate > capacity; −1 if none. */
+  private latestBlocker(w: Window, rate: number): number {
+    const [s, e] = this.span(w);
+    let latest = -1;
+    for (const r of this.req.values()) {
+      if (r.state !== 'HELD' || !r.window || r.deadline === undefined || r.deadline <= latest) continue;
+      const [hs, he] = this.span(r.window);
+      for (let t = Math.max(s, hs); t < Math.min(e, he); t++) {
+        if ((this.all[t] as number) + rate > this.capacity) { latest = r.deadline; break; }
+      }
+    }
+    return latest;
+  }
+
+  /** POL-05: the waiters that overlap `w`, in priority order: skip after D_c, refuse for no fit, grant, or notify. */
+  private scan(w: Window, ts: HlcTs): void {
+    const [s, e] = this.span(w);
+    const tsNs = wallNs(ts);
+    for (const x of [...this.waiters]) {
+      const [xs, xe] = this.span(x.b.window);
+      if (Math.max(s, xs) >= Math.min(e, xe)) continue;
+      if (tsNs >= BigInt(x.b.commitFence) * 1_000_000n) continue;
+      const rec = this.req.get(x.key) as OracleRequest;
+      const rate = x.b.rateMbps;
+      if (this.peak(this.firm, x.b.window) + rate > this.capacity) {
+        this.waiters = this.waiters.filter((y) => y.key !== x.key);
+        const counterOffer = this.counterOffer(x.b, ts);
+        Object.assign(rec, { state: 'REFUSED', holdOutcome: { result: 'REFUSED', reason: 'NO_FIT', counterOffer }, tombstoneUntil: x.b.deadline + this.releaseGraceMs });
+        this.notices.push({ request: x.key, kind: 'WAITER_REFUSED', attempt: 1, counterOffer });
+        continue;
+      }
+      if (this.peak(this.all, x.b.window) + rate <= this.capacity) {
+        this.addTo(this.all, x.b.window, rate);
+        this.waiters = this.waiters.filter((y) => y.key !== x.key);
+        Object.assign(rec, { state: 'HELD', holdOutcome: { result: 'HELD', attempt: 1 } });
+        this.notices.push({ request: x.key, kind: 'GRANTED', attempt: 1 });
+        continue;
+      }
+      const ahead = Math.max(this.latestBlocker(x.b.window, rate), 0);
+      if (ahead === x.ahead) continue;
+      x.ahead = ahead;
+      rec.holdOutcome = { result: 'WAITING', attempt: 1, aheadDeadline: ahead };
+      this.notices.push({ request: x.key, kind: 'WAITING_NOTICE', attempt: 1, aheadDeadline: ahead });
+    }
   }
 
   maxAll(): number {

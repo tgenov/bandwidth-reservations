@@ -1,5 +1,5 @@
 /**
- * The link schedule owner on the C01 runtime (RFC-001 §7.2, §8), parts I1 and I2.
+ * The link schedule owner on the C01 runtime (RFC-001 §7.2, §8), parts I1, I2 and I3.
  *
  * - The C02 link hold port: `hold`, `convert`, `release`, `query`. Each command comes with its C01
  *   `CommandEnvelope`. The owner checks the routing, calls `admitCommand`, and queues the command for
@@ -9,36 +9,48 @@
  * - One batch at a time for each link. A batch decides all its queued commands in `decide(ctx)` at the
  *   batch commit timestamp, and the owner answers only after `Committed` (C02 "Answered once durable").
  *   An entry that records a final state of a request also writes its `link_request` row (RFC-001 §4.4, §7.1).
+ * - The C02 link waiting port (I3): each notice of an entry is a C01 notification row in the outbox, written in the
+ *   batch transaction (the runtime relays it), and pushed with `onNotify` after the commit. A pending scan
+ *   continues in `Tick` entries, in the same batch, before the next command (RFC-001 §4.3).
  * - Before a batch, the owner reads the `link_request` row of each command whose request record has gone
  *   from memory, so the repeat gets the recorded answer (C02 provider test 3).
  * - Hooks: `onAcquire` and `onAdopt` rebuild the link by replay of its log. The replay compares each
  *   recorded outcome (RFC-001 §7.4). The first batch after a new epoch writes `Takeover(epoch)`.
  */
 import type {
-  AppendResult, AuditFields, CommandEnvelope, Epoch, EntryInput, Generation, HlcTs, InboundNotification, OwnerHooks,
-  OwnerRuntime, PartitionKey, ProjectionWrite, RoutingRefusal, Seq, SlotNo, WriterFence,
+  AppendResult, AuditFields, CommandEnvelope, Epoch, EntryInput, Generation, HlcTs, InboundNotification, NotificationOut,
+  OwnerHooks, OwnerRuntime, PartitionKey, ProjectionWrite, RoutingRefusal, Seq, SlotNo, WriterFence,
 } from '@share/owner-runtime';
 import { encodeJson, hex, hlcToWallMs, slotOfPartition, utf8 } from '@share/owner-runtime';
 import type {
-  AvailabilityQuery, AvailabilityReply, BodyOf, ConvertCmd, FitRangesQuery, FitRangesReply, HoldCmd, LinkCommand, LinkId,
-  LinkOp, LinkStamp, QueryCmd, QueryReply, ReleaseCmd, ReplyOf, RequestId,
+  AvailabilityQuery, AvailabilityReply, BodyOf, ConvertCmd, Fence, FitRangesQuery, FitRangesReply, HoldCmd, LinkCommand, LinkId,
+  LinkOp, LinkStamp, QueryCmd, QueryReply, ReleaseCmd, ReplyOf, RequestId, WaitingNotification,
 } from './c02.ts';
 import { requestKey } from './c02.ts';
 import { declaration, ENTRY, LINK_KIND } from './declaration.ts';
 import type { LoggedEntry, LogReader } from './log-source.ts';
 import {
   DEFAULT_POLICY, fenceBelow, LinkState, type Decision, type InitCmd, type LinkPolicy, type Outcome, type RequestRecord,
+  type WaitingNotice,
 } from './state.ts';
 
 /**
  * The payload of every log entry. It holds the command and its recorded outcome (RFC-001 §7.3). An entry that
  * records a final state of a request also holds the request record (`record`), which its `link_request` row
- * names (§4.4).
+ * names (§4.4). An entry that changes waiters also holds its notices (`notices`) and the final records of the
+ * waiters that its scan refused (`records`). A replay compares the notices too (§7.4).
  */
 export type LoggedPayload =
   | { v: 1; op: 'init'; init: InitCmd; outcome: Outcome }
   | { v: 1; op: 'takeover'; epoch: Epoch; generation: Generation; outcome: Outcome }
-  | { v: 1; op: LinkOp; body: LinkCommand['body']; outcome: Outcome; sender: SenderRef; record?: RequestRecord };
+  | { v: 1; op: 'tick'; outcome: Outcome; notices?: WaitingNotice[]; records?: RequestRecord[] }
+  | {
+    v: 1; op: LinkOp; body: LinkCommand['body']; outcome: Outcome; sender: SenderRef; record?: RequestRecord;
+    notices?: WaitingNotice[]; records?: RequestRecord[];
+  };
+
+/** The owner kind of the account owner, which receives the waiting-port notifications (C02). */
+export const ACCOUNT_KIND = 'account';
 
 /** The table of the `request` projection (RFC-001 §7.1 `link_request`). */
 export const LINK_REQUEST_TABLE = 'link_request';
@@ -68,6 +80,11 @@ export interface LinkOwnerOptions {
   onAlert?: (a: LinkAlert) => void;
   /** Called for each answered decision, in the order of decision (test instrumentation, T-01, T-03). */
   onDecided?: (d: DecidedRecord) => void;
+  /**
+   * The push of a waiting-port notification after its batch commits (RFC-001 §7.2 step 4: gRPC to the account
+   * owner). The transport is not in I3. The relay of the outbox row is the guaranteed path (C02 "Delivery").
+   */
+  onNotify?: (n: NotificationOut) => void;
 }
 
 /** One decision as the owner made it: the command, its outcome, the batch ts and the entry sequence. */
@@ -202,7 +219,10 @@ export class LinkOwner implements OwnerHooks {
     if (!row) return undefined;
     const seq = BigInt(String(row.seq));
     const entry = (await this.o.readLog(mem.partition, seq - 1n)).find((e) => e.seq === seq);
-    const record = entry ? (entry.payload as { record?: RequestRecord }).record : undefined;
+    const payload = entry?.payload as { record?: RequestRecord; records?: RequestRecord[] } | undefined;
+    const key = requestKey(request);
+    // The entry's own record, or the record of a waiter that its scan refused (I3).
+    const record = [payload?.record, ...(payload?.records ?? [])].find((r) => r !== undefined && requestKey(r.request) === key);
     if (!record) {
       this.alert({ kind: 'REQUEST_ROW_WITHOUT_RECORD', link: mem.link, request: requestKey(request), detail: `seq ${seq}` });
       return undefined;
@@ -370,6 +390,7 @@ export class LinkOwner implements OwnerHooks {
       let seqs: Array<Seq | undefined> = [];
       let entries: EntryInput[] = [];
       let projections: ProjectionWrite[] = [];
+      let notifications: NotificationOut[] = [];
       let decidedAt: HlcTs | undefined;
       const result: AppendResult = await this.rt.append({
         partition: mem.partition,
@@ -377,9 +398,15 @@ export class LinkOwner implements OwnerHooks {
           // A restart re-runs decide at a new ts: start again from the committed state.
           mem.state.rollback();
           mem.state.beginBatch(ctx.ts);
-          decisions = []; seqs = []; entries = []; projections = []; decidedAt = ctx.ts;
+          decisions = []; seqs = []; entries = []; projections = []; notifications = []; decidedAt = ctx.ts;
           let seq = ctx.head(mem.partition).seq;
           const generation = ctx.head(mem.partition).generation;
+          const fence: Fence = { generation, epoch };
+          /** The notices, the other final records and the request rows of one entry. */
+          const effects = (d: Decision, at: Seq): void => {
+            for (const n of d.notices ?? []) notifications.push(this.notification(mem.link, n, at, fence));
+            for (const r of d.finals ?? []) projections.push(requestRow(mem.link, r, at));
+          };
           if (takeover) {
             seq += 1n;
             entries.push(this.entry(ENTRY.Takeover, `takeover:${generation}:${epoch}`,
@@ -397,12 +424,23 @@ export class LinkOwner implements OwnerHooks {
               entries.push(this.entry(ENTRY.Init, `init:${p.init.link}`, { v: 1, op: 'init', init: p.init, outcome: d.outcome }));
             } else {
               mem.state.recordFence(senderKey(p.sender.kind, p.sender.partition), p.sender);
-              entries.push(this.commandEntry(p.cmd, p.sender, d.outcome, d.final));
+              entries.push(this.commandEntry(p.cmd, p.sender, d));
               if (d.final) projections.push(requestRow(mem.link, d.final, seq));
+              effects(d, seq);
+            }
+            // A scan that the step budget stopped continues in Tick entries before the next command (RFC-001 §4.3).
+            while (mem.state.scanPending) {
+              const t = mem.state.tick(ctx.ts, seq + 1n);
+              seq += 1n;
+              mem.state.advance(seq, ctx.ts);
+              entries.push(this.entry(ENTRY.Tick, `tick:${mem.link}:${seq}`, {
+                v: 1, op: 'tick', outcome: t.outcome, ...(t.notices ? { notices: t.notices } : {}), ...(t.finals ? { records: t.finals } : {}),
+              }));
+              effects(t, seq);
             }
           }
           // No entry: every command is answered from the committed state, and nothing is written.
-          return entries.length === 0 ? null : { entries, projections };
+          return entries.length === 0 ? null : { entries, projections, notifications };
         },
       });
 
@@ -411,6 +449,7 @@ export class LinkOwner implements OwnerHooks {
           mem.state.commit();
           if (entries.length > 0) mem.lastEntryEpoch = epoch;
           this.answer(mem, batch, decisions, seqs, decidedAt as HlcTs);
+          this.push(mem, notifications);
           return;
         case 'ConditionFailed':
           if (result.which === 'decide' && entries.length === 0) {
@@ -480,6 +519,25 @@ export class LinkOwner implements OwnerHooks {
     });
   }
 
+  /** Push the notifications of a committed batch (RFC-001 §7.2 step 4). `leaseValid` comes first (C01 CC-7). */
+  private push(mem: LinkMemory, notifications: NotificationOut[]): void {
+    if (notifications.length === 0 || !this.o.onNotify || !this.rt.leaseValid(mem.slot).valid) return;
+    for (const n of notifications) this.o.onNotify(n);
+  }
+
+  /**
+   * A waiting-port notice as a C01 notification row (RFC-001 §7.1 `link_outbox`; C02 `WaitingNotification`). The
+   * C02 identity (link, request, attempt, kind) is in the body. The C01 id is the same for the push and the relay.
+   * A `WAITING_NOTICE` is sent again with new content under the same C02 identity, so its C01 subject also has the
+   * log sequence: else the outbox keeps only the first copy (S-LINK I3 design issue DI-10).
+   */
+  private notification(link: LinkId, n: WaitingNotice, seq: Seq, fence: Fence): NotificationOut {
+    const { account, ...content } = n;
+    const subject = `${link}|${requestKey(n.request)}${n.kind === 'WAITING_NOTICE' ? `|${seq}` : ''}`;
+    const body: WaitingNotification = { linkFence: fence, linkSeq: seq, link, ...content };
+    return { to: { kind: ACCOUNT_KIND, partition: account }, id: { subject: utf8(subject), attempt: n.attempt, kind: n.kind }, body };
+  }
+
   private refuseAll(batch: Pending[], refusal: RoutingRefusal): void {
     for (const p of batch) p.resolve(refusal);
   }
@@ -512,6 +570,7 @@ export class LinkOwner implements OwnerHooks {
     let d: Decision;
     if (p.op === 'init') d = mem.state.init(p.init);
     else if (p.op === 'takeover') d = { outcome: { result: 'TAKEOVER' }, entry: true };
+    else if (p.op === 'tick') d = mem.state.tick(e.ts, e.seq);
     else {
       d = mem.state.decide({ op: p.op, body: p.body } as LinkCommand, e.ts, e.seq);
       mem.state.recordFence(senderKey(p.sender.kind, p.sender.partition), p.sender);
@@ -519,7 +578,9 @@ export class LinkOwner implements OwnerHooks {
     }
     mem.state.advance(e.seq, e.ts);
     mem.lastEntryEpoch = e.epoch;
-    if (!d.entry || hex(encodeJson(d.outcome)) !== hex(encodeJson(p.outcome))) {
+    const notices = 'notices' in p ? p.notices ?? [] : [];
+    if (!d.entry || hex(encodeJson(d.outcome)) !== hex(encodeJson(p.outcome))
+      || hex(encodeJson(d.notices ?? [])) !== hex(encodeJson(notices))) {
       this.alert({ kind: 'OUTCOME_MISMATCH_ON_REPLAY', link: mem.link, detail: `seq ${e.seq}` });
       return false;
     }
@@ -532,12 +593,15 @@ export class LinkOwner implements OwnerHooks {
     return { kind, schemaV: 1, identity: utf8(identity), audit: AUDIT, payload };
   }
 
-  private commandEntry(cmd: LinkCommand, sender: SenderRef, outcome: Outcome, record?: RequestRecord): EntryInput {
+  private commandEntry(cmd: LinkCommand, sender: SenderRef, d: Decision): EntryInput {
     const key = requestKey(cmd.body.request);
     const kind = cmd.op === 'hold' ? ENTRY.Hold : cmd.op === 'convert' ? ENTRY.Convert : ENTRY.Release;
     // A release can write a second entry only to extend its tombstone, so its identity has D.
     const identity = cmd.op === 'release' ? `release:${key}:${cmd.body.deadline}` : `${cmd.op}:${key}`;
-    const e = this.entry(kind, identity, { v: 1, op: cmd.op, body: cmd.body, outcome, sender, ...(record ? { record } : {}) });
+    const e = this.entry(kind, identity, {
+      v: 1, op: cmd.op, body: cmd.body, outcome: d.outcome, sender, ...(d.final ? { record: d.final } : {}),
+      ...(d.notices ? { notices: d.notices } : {}), ...(d.finals ? { records: d.finals } : {}),
+    });
     e.senderFence = sender;
     e.audit = { ...AUDIT, on_behalf_of: { account: hex(sender.partition), request_ref: key } };
     return e;
