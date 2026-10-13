@@ -13,11 +13,12 @@
     "test:integration": "node --test --test-concurrency=1 'test/integration/*.test.ts'"
   },
   "dependencies": {
-    "kafkajs": "^2.2.4",
+    "@platformatic/kafka": "2.14.0",
     "pg": "^8.13.1"
   },
   "devDependencies": {
+    "@share/owner-migrate": "1.0.0-alpha.1",
     "@types/pg": "^8.11.10",
-    "@share/owner-migrate": "1.0.0-alpha.1"
+    "kafkajs": "^2.2.4"
   }
 }

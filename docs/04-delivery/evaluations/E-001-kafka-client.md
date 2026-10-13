@@ -241,18 +241,23 @@ dev dependency (it stays the oracle of the parity test), and add the §7 rule to
 
 ## 10. How to reproduce
 
-The benchmark script and the two adapters are in the spike branches
-`worktree-agent-a597626db5e14b04e` (Platformatic) and `worktree-agent-a3df83caf27c14e9a`
-(Confluent). These branches are not merged. When the chosen client is merged, the script goes
-to `tools/bench/bus-bench.ts`.
+The benchmark script is `tools/bench/bus-bench.ts`. `platformatic` is the runtime's `KafkaBus`
+(`platform/runtime/src/feed/kafka-bus.ts`). `kafkajs` is the old adapter, kept as a baseline in
+`tools/bench/kafkajs-bus.ts`. The Confluent adapter is not merged.
 
 ```
 npm run dev:up
-BUS_CLIENT=kafkajs|platformatic|confluent node tools/bench/bus-bench.ts
+npm run bench:bus
+BUS_CLIENT=platformatic|kafkajs node tools/bench/bus-bench.ts
 BUS_CLIENT=… BUS_MODE=idle node tools/bench/bus-bench.ts
 ```
 
-Run the clients one after the other. Make sure no other process uses the broker.
+Run the clients one after the other. Make sure no other process uses the broker. The script
+deletes its topic at the end.
+
+The kafkajs baseline does not have the BT-001 patch, because the patch was removed with
+kafkajs. Thus its idle CPU is much higher than the "kafkajs (patched)" value in §5.2. In one
+run on 2026-10-13 it used 700 ms of CPU in 30 s idle (Platformatic: 44 ms).
 
 ## 11. Decision
 

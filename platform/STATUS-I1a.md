@@ -25,7 +25,7 @@ Steps 3–8 (migrations, CockroachDB runtime core, direct publish, canary, dev c
   exclusive), batch transaction (fence, stops, heads, conditions incl. `displacementRead`, `decide` per attempt,
   seal + C08 §J chain, log/head/outbox/projections in one txn), retry protocol (5 restarts + 1 fresh ⇒ Retry),
   2 s abandon, 15 s backstop ⇒ Ambiguous, resolution by `batch_id`, `Overloaded` from loop shedding/admission.
-- Direct publish: `KafkaPublisher` (kafkajs, idempotent, acks=all). Canary kind: `platform/examples/canary/`.
+- Direct publish: `KafkaPublisher` (`@platformatic/kafka` since E-001, idempotent, acks=all). Canary kind: `platform/examples/canary/`.
 - Dev cell: `platform/dev/docker-compose.yml`, `npm run dev:up` / `dev:down`.
 - Tests: `npm run test:platform` (29 pass), `npm run test:platform:integration` (10; skip without the dev cell).
 

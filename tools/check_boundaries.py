@@ -10,6 +10,9 @@ Rules:
 - contracts/ (the contract suites) is neutral. Every slice and the platform may
   import it. A file under contracts/ may import only platform packages and
   contracts/ itself: never a slice.
+- Kafka (E-001, engineering.md §3): a file in a src/ folder under platform/ or slices/ must
+  not import or require kafkajs or @nestjs/microservices. Only platform/runtime/src/ may import
+  @platformatic/kafka: all Kafka traffic goes through FeedBus and the runtime publisher.
 Package names are read from each workspace's package.json.
 Exit code 1 if a rule is broken.
 """
@@ -19,6 +22,26 @@ import re
 import sys
 
 IMPORT = re.compile(r"""(?:^|\s)(?:import|export)\b[^'"]*?from\s*['"]([^'"]+)['"]|import\(\s*['"]([^'"]+)['"]\s*\)""", re.M)
+REQUIRE = re.compile(r"""\brequire\(\s*['"]([^'"]+)['"]\s*\)""")
+KAFKA_BANNED = ("kafkajs", "@nestjs/microservices")
+KAFKA_CLIENT = "@platformatic/kafka"
+
+
+def package_of(spec):
+    """The package name of a bare import specifier (`@scope/name` or `name`)."""
+    return "/".join(spec.split("/")[:2]) if spec.startswith("@") else spec.split("/")[0]
+
+
+def kafka_problem(rel, spec):
+    """The Kafka rule for one import of the file at repository path `rel`, or None."""
+    if spec.startswith(".") or rel[0] not in ("platform", "slices") or "src" not in rel:
+        return None
+    pkg = package_of(spec)
+    if pkg in KAFKA_BANNED:
+        return f"{'/'.join(rel)}: imports {pkg} ({spec}); use FeedBus and the runtime publisher (E-001)"
+    if pkg == KAFKA_CLIENT and tuple(rel[:3]) != ("platform", "runtime", "src"):
+        return f"{'/'.join(rel)}: imports {pkg} outside platform/runtime/src; use FeedBus and the runtime publisher (E-001)"
+    return None
 
 
 def area_of(rel):
@@ -46,7 +69,10 @@ def main():
             continue
         rel = f.relative_to(repo).parts
         mine = area_of(rel)
-        for m in IMPORT.finditer(f.read_text()):
+        text = f.read_text()
+        specs = [m.group(1) or m.group(2) for m in IMPORT.finditer(text)] + [m.group(1) for m in REQUIRE.finditer(text)]
+        problems.extend(p for p in (kafka_problem(rel, s) for s in specs) if p)
+        for m in IMPORT.finditer(text):
             spec = m.group(1) or m.group(2)
             target = None
             if spec.startswith("."):
@@ -60,8 +86,7 @@ def main():
                 elif tr and tr[0] in ("platform", "contracts"):
                     target = (tr[0], None)
             else:
-                base = "/".join(spec.split("/")[:2]) if spec.startswith("@") else spec.split("/")[0]
-                target = owner_of_pkg.get(base)
+                target = owner_of_pkg.get(package_of(spec))
             if target is None:
                 continue
             if mine[0] == "platform" and target[0] == "slice":

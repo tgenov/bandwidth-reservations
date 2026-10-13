@@ -9,7 +9,6 @@ import assert from 'node:assert/strict';
 import { connect } from 'node:net';
 import { randomBytes } from 'node:crypto';
 import pg from 'pg';
-import { Kafka, logLevel } from 'kafkajs';
 import type { EntryInput, OwnerDeclaration, OwnerHooks, ProjectionWrite, RowRef, SlotNo } from '../../src/index.ts';
 import {
   CockroachOwnerRuntime, KafkaBus, KafkaPublisher, ManualLoad, MemoryPublisher, PgStore, chainGenesis, chainNext,
@@ -311,20 +310,17 @@ test('CP-1: two processes contend for a slot across a pause; one committed write
 test('should publish directly to Kafka after Committed (idempotent producer, acks=all) when Kafka is available', { ...T, skip: KAFKA_SKIP }, async () => {
   const publisher = new KafkaPublisher({ brokers: BROKERS, clientId: `${KIND}-holder` });
   const { rt, close } = await boot([0, 1, 2, 3], publisher);
-  const kafka = new Kafka({ clientId: 'itest-consumer', brokers: BROKERS, logLevel: logLevel.NOTHING });
-  const admin = new KafkaBus({ brokers: BROKERS, clientId: 'itest-admin' });
-  try { await admin.ensureTopic(`${KIND}.counter.v1`, 4); } finally { await admin.close(); }
-  const consumer = kafka.consumer({ groupId: `itest-${KIND}` });
-  await consumer.connect();
-  open.push(() => consumer.disconnect());
-  await consumer.subscribe({ topic: `${KIND}.counter.v1`, fromBeginning: true });
+  const bus = new KafkaBus({ brokers: BROKERS, clientId: 'itest-consumer' });
+  open.push(() => bus.close());
+  await bus.ensureTopic(`${KIND}.counter.v1`, 4);
   const got: string[] = [];
-  await consumer.run({ eachMessage: async ({ message }) => { got.push(String(message.headers?.['stream_seq'] ?? '')); } });
+  const sub = await bus.subscribe({ groupId: `itest-${KIND}`, topics: [`${KIND}.counter.v1`], fromBeginning: true,
+    onRecord: async (r) => { got.push(Buffer.from(r.headers['stream_seq'] ?? []).toString()); } });
   const P = fresh();
   assert.equal((await rt.append({ partition: P, entries: [entry('k1'), entry('k2')] })).r, 'Committed');
   for (let i = 0; i < 100 && got.length < 2; i++) await sleep(100);
   assert.deepEqual(got.sort(), ['1', '2']);
-  await consumer.disconnect();
+  await sub.stop();
   await close();
 });
 

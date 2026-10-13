@@ -6,7 +6,7 @@
 | Found | 2026-10-13, in the integration tests of `platform/runtime` |
 | Environment | Node.js 24 (pinned in `.nvmrc`) and Node.js 26.10.0 |
 | Severity | Medium: CPU waste on every open connection, and a warning on each connection |
-| Local state | Patched at runtime (commit `66ab6b6`) |
+| Local state | Workaround retired: runtime moved to `@platformatic/kafka` (E-001), 2026-10-13. `billing/` (prior art, not a workspace) still uses kafkajs 2.2.4 and still has the defect |
 | Upstream state | Reported, not fixed. Fix PRs are open but not merged. The upstream has had no commit since 2024-05-16 |
 
 ## Upstream reports
@@ -54,22 +54,29 @@ if (!this.throttleCheckTimeoutId) {
    The process shows constant CPU use while the connection is idle.
 
 The test `should schedule no pending-request check when nothing is pending and the queue
-was never throttled` in `platform/runtime/test/kafkajs-request-queue.test.ts` fails
-against the unpatched library.
+was never throttled` in `platform/runtime/test/kafkajs-request-queue.test.ts` failed
+against the unpatched library. That test was removed with the workaround.
 
-## Local workaround
+## Local workaround (retired)
 
-`platform/runtime/src/feed/kafkajs-request-queue.ts` replaces
-`RequestQueue.prototype.scheduleCheckPendingRequests` when the runtime loads. The new
-method:
+Commit `66ab6b6` added the workaround. It was removed on 2026-10-13, when the runtime changed
+to `@platformatic/kafka` ([E-001](../04-delivery/evaluations/E-001-kafka-client.md)).
+
+`platform/runtime/src/feed/kafkajs-request-queue.ts` replaced
+`RequestQueue.prototype.scheduleCheckPendingRequests` when the runtime loaded. The new
+method did these steps:
 
 - schedules no check when no request is pending;
 - uses the remaining throttle time when it is more than 0;
 - else uses the kafkajs poll interval (10 ms).
 
-The pure function `pendingCheckDelayMs` holds this rule, and unit tests cover it.
+The pure function `pendingCheckDelayMs` held this rule, and unit tests covered it.
 
 ## Removal condition
+
+The second condition below became true on 2026-10-13 (E-001). The patch and its test are
+removed from `platform/runtime`. `billing/` does not have the patch. It keeps kafkajs and the
+defect until it is retired (E-001 §11).
 
 Remove the patch and its test when one of these is true:
 

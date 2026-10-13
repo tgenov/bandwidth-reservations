@@ -28,6 +28,7 @@ Rules that are easy to miss:
 | `npm run test:<slice>` / `typecheck:<slice>` | One slice: `platform`, `link`, `sec`, `account`, `rate`, `contracts`. |
 | `npm run test:integration` | Integration tests on the dev cell (`npm run dev:up` / `dev:down`). |
 | `npm run measure` | Wall-clock measurements (opt-in, machine-dependent). |
+| `npm run bench:bus` | FeedBus client bench on the dev cell (E-001 §10). `BUS_CLIENT=platformatic\|kafkajs`, `BUS_MODE=idle` for idle CPU. |
 | `npm run mutation:<link\|rate\|account>` | Stryker mutation testing on the money and capacity modules (slow). |
 | `npm run lint` / `lint:fix` | ESLint. |
 | `npm run specs` / `specs:regen` | Requirements check (`check_specs.py`); `regen` regenerates `conformance.md` rows. |

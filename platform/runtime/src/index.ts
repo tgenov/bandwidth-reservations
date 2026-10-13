@@ -17,8 +17,7 @@ export type { OutboxMessage } from './batch/attempt.ts';
 export { EventLoopMonitor, ManualLoad, type LoadMonitor } from './load.ts';
 
 // ---------- I1b: feeds, relay, closure, consumer runtime, reporting, status readers, placement feed, ACLs ----------
-export { partitionForKey, type FeedBus, type BusRecord, type BusProduceRecord, type BusSubscription, type BusSubscribeOptions } from './feed/bus.ts';
-export { pendingCheckDelayMs } from './feed/kafkajs-request-queue.ts';
+export { partitionForKey, targetPartition, type FeedBus, type BusRecord, type BusProduceRecord, type BusSubscription, type BusSubscribeOptions } from './feed/bus.ts';
 export { waitForTopicLeaders, type TopicMetadataFetch } from './feed/topic-leaders.ts';
 export { MemoryBus } from './feed/memory-bus.ts';
 export { KafkaBus, type KafkaBusOptions } from './feed/kafka-bus.ts';

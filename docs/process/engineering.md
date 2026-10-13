@@ -140,6 +140,13 @@ Rules:
 - Keep each change small. Every changed line must come from the task. Do not add an
   abstraction that no current test needs.
 - Do not turn off a type check or a lint rule to make code pass.
+- **Kafka** ([E-001](../04-delivery/evaluations/E-001-kafka-client.md)). All Kafka traffic goes
+  through `FeedBus` and the runtime publisher (`platform/runtime`). No owner uses
+  `@nestjs/microservices` for Kafka. Code in `src/` does not import `kafkajs`. Only
+  `platform/runtime/src` imports the Kafka client (`@platformatic/kafka`). Every producer sets the
+  Java-compatible partitioner (`compatibilityPartitioner`). The client's default partitioner puts
+  keyed records on different partitions and gives no error. `tools/check_boundaries.py` checks
+  the imports.
 - Write comments and documents in ASD-STE100 Simplified Technical English.
 
 ## 10. Commits

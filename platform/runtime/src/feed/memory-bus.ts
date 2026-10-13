@@ -2,7 +2,7 @@
  * An in-memory bus with Kafka's partition, offset and consumer-group behaviour, for unit tests.
  * Tests can add partitions (a partition-count increase), fail produces and look at every record.
  */
-import { headerBytes, partitionForKey, type BusProduceRecord, type BusRecord, type BusSubscribeOptions, type BusSubscription, type FeedBus } from './bus.ts';
+import { headerBytes, targetPartition, type BusProduceRecord, type BusRecord, type BusSubscribeOptions, type BusSubscription, type FeedBus } from './bus.ts';
 
 interface MemTopic { partitions: BusRecord[][]; compacted: boolean }
 
@@ -53,7 +53,7 @@ export class MemoryBus implements FeedBus {
     if (!this.topics.has(topic)) await this.ensureTopic(topic, this.autoCreatePartitions);
     const t = this.topics.get(topic) as MemTopic;
     for (const r of records) {
-      const p = r.partition ?? (r.key ? partitionForKey(r.key, t.partitions.length) : 0);
+      const p = targetPartition(topic, r, t.partitions.length);
       const part = t.partitions[p];
       if (!part) throw new Error(`${topic} has no partition ${p}`);
       part.push({ topic, partition: p, offset: BigInt(part.length), key: r.key, value: r.value, headers: headerBytes(r.headers) });

@@ -31,7 +31,7 @@ passes 17 tests on the dev cell (CockroachDB 24.3.5 with 3 nodes, Kafka 3.9 with
 | Grants and roles §2.3, conformance job (CP-11) | `migrate/src/grants.ts` | unit; CP-11 (cell) |
 | Kafka producer ACL generator §2.5 | `acl/kafka-acl.ts` | unit |
 | Placement feed `placement.slot_map.v1` with a fixed map; `slotOf`/`route('account')` from it §3.8 | `placement/slot-map.ts` | unit |
-| Buses: `KafkaBus` (kafkajs) and `MemoryBus`; `MemoryChangefeed` in `/testing` | `feed/` | all of the above |
+| Buses: `KafkaBus` (`@platformatic/kafka`, E-001) and `MemoryBus`; `MemoryChangefeed` in `/testing` | `feed/` | all of the above |
 
 Runtime options added: `feeds` (bus, gap fill, gap timeout, alert, `producerOf`), `slotMap`, and `testing.postAcquisitionWaitMs` / `markerChunkMax`.
 New runtime methods: `grantReadLease`, `attachReader`, `detachReader`, `feedConsumer`, and `markersWritten` (for tests).

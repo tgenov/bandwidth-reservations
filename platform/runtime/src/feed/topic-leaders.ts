@@ -1,8 +1,8 @@
 /**
- * Wait until a new topic's partitions all have a leader. kafkajs `createTopics({ waitForLeaders: true })`
- * retries only LEADER_NOT_AVAILABLE; when the broker's metadata cache has not caught up with the controller
- * yet (a busy cell), the metadata request answers UNKNOWN_TOPIC_OR_PARTITION and createTopics fails.
- * This polls the metadata with a bound instead, and fails with a message that names the topic.
+ * Wait until a new topic's partitions all have a leader. The Kafka client does not wait after it creates a
+ * topic. While the broker's metadata cache is behind the controller (a busy cell), the metadata request
+ * answers UNKNOWN_TOPIC_OR_PARTITION or LEADER_NOT_AVAILABLE. This polls the metadata with a bound, and
+ * fails with a message that names the topic. The fetch gives those two errors as an error with `type`.
  */
 import { systemClock, type WallClock } from '../clock.ts';
 

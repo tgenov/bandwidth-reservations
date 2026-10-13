@@ -21,6 +21,7 @@
     "contracts/suites"
   ],
   "scripts": {
+    "bench:bus": "node tools/bench/bus-bench.ts",
     "check": "npm run -s check:boundaries && npm run -s lint && npm run -s typecheck && npm run -s test:unit && npm run -s test:contracts",
     "check:boundaries": "python3 tools/check_boundaries.py",
     "ci": "bash tools/ci.sh",
