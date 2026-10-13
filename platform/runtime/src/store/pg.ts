@@ -5,7 +5,7 @@ import { decodeJson, encodeJson, hex } from '../bytes.ts';
 import { assertIdentifier, tableNames } from '../declaration.ts';
 import { AmbiguousCommitError, isLockTimeout, isRetryable, sqlState } from '../errors.ts';
 import { GatewayTiers, TierTimeout, withTierTimeout, type GatewayTiersOptions } from './tiers.ts';
-import { hlc } from '../hlc.ts';
+import { ceilMicrosLiteral, hlc } from '../hlc.ts';
 import { homeKey } from '../home.ts';
 import { PARAMS } from '../params.ts';
 import { keyObject, rowId } from '../rowref.ts';
@@ -747,6 +747,25 @@ export class PgStore implements OwnerStore {
   async listPartitions(kind: string, slot: SlotNo): Promise<Uint8Array[]> {
     const r = await this.query(`SELECT partition FROM ${assertIdentifier(tableNames(kind).head)} WHERE slot = $1 AND adopted`, [slot]);
     return (r.rows as Row[]).map((x) => bytes(x['partition']));
+  }
+
+  async pendingMovesFrom(kind: string, fromSlot: SlotNo): Promise<Array<{ partition: Uint8Array; to: SlotNo; ts: HlcTs }>> {
+    const t = tableNames(kind);
+    // V59-7: unadopted heads whose last row (the `moved` entry, found by the (partition, seq) index) this slot wrote.
+    const r = await this.query(
+      `SELECT h.partition, h.slot, h.ts::STRING AS ts FROM ${assertIdentifier(t.head)} AS h
+         JOIN ${assertIdentifier(t.log)} AS l ON l.partition = h.partition AND l.seq = h.seq
+        WHERE NOT h.adopted AND h.slot <> $1 AND l.slot = $1`, [fromSlot]);
+    return (r.rows as Row[]).map((x) => ({ partition: bytes(x['partition']), to: Number(x['slot']), ts: hlc(String(x['ts'])) }));
+  }
+
+  async readReportThrough(kind: string, slot: SlotNo, minTs: HlcTs): Promise<HlcTs | null> {
+    // C01 §3.3 step 5: a bounded-staleness point read; report_through is monotone, so any timestamp ≥ minTs will do.
+    const r = await this.query(
+      `SELECT report_through::STRING AS rt FROM owner_slot AS OF SYSTEM TIME with_min_timestamp('${ceilMicrosLiteral(minTs)}'::TIMESTAMPTZ)
+        WHERE kind = $1 AND slot = $2`, [kind, slot]);
+    const v = (r.rows as Row[])[0]?.['rt'];
+    return v === null || v === undefined ? null : hlc(String(v));
   }
 
   async readTiming(shard: number): Promise<TimingRow> {

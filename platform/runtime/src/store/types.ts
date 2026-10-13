@@ -138,6 +138,16 @@ export interface OwnerStore {
     Promise<{ rows: Array<LogRowWrite & { ts: HlcTs }>; through: HlcTs }>;
   /** Partitions whose head names the slot and is adopted (the partitions the slot serves, C01 §3.2). */
   listPartitions?(kind: string, slot: SlotNo): Promise<Uint8Array[]>;
+  /**
+   * V59-7: partitions moved out of `fromSlot` and not adopted yet: heads with adopted = false whose last row (the
+   * `moved` entry) the slot wrote. A successor of the slot pushes its first marker to the slot each head names.
+   */
+  pendingMovesFrom?(kind: string, fromSlot: SlotNo): Promise<Array<{ partition: Uint8Array; to: SlotNo; ts: HlcTs }>>;
+  /**
+   * C01 §3.3 step 5: `owner_slot(kind, slot).report_through` by a bounded-staleness read with minimum timestamp
+   * `minTs` (`report_through` is monotone, so the value seen at any timestamp stays true). Null before the first marker.
+   */
+  readReportThrough?(kind: string, slot: SlotNo, minTs: HlcTs): Promise<HlcTs | null>;
   withReadTx<T>(at: 'present' | HlcTs, fn: (tx: ReadTx) => Promise<T>): Promise<T>;
   followerRead<T>(fn: (tx: ReadTx) => Promise<T>): Promise<{ value: T; servedAt: HlcTs }>;
   close(): Promise<void>;

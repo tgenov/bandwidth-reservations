@@ -6,7 +6,7 @@
 import type { HlcTs, ProjectionWrite, ReadTx, RowRef, SlotNo } from '../api.ts';
 import { hex } from '../bytes.ts';
 import { AmbiguousCommitError, retryableError } from '../errors.ts';
-import { compareHlc, hlc } from '../hlc.ts';
+import { compareHlc, hlc, hlcBefore } from '../hlc.ts';
 import { outcomeIdsOf } from './pg.ts';
 
 import { rowId } from '../rowref.ts';
@@ -67,11 +67,45 @@ export class MemoryStore implements OwnerStore {
     }
   }
 
-  /** Placement's Stop: insert the stop and bump stops_version of the slot (C01 §3.2). */
-  stopPartition(kind: string, slot: SlotNo, partition: Uint8Array, detectionRef: Uint8Array): void {
+  /**
+   * Placement's Stop in one step: insert the stop and bump stops_version of each fenced slot (C01 §3.2; both slots
+   * during a move). Returns the step's timestamp (the `enforced_at` of the stop).
+   */
+  stopPartition(kind: string, slot: SlotNo | SlotNo[], partition: Uint8Array, detectionRef: Uint8Array): HlcTs {
     this.stops.set(`${kind}|${hex(partition)}`, detectionRef);
-    const row = this.slots.get(`${kind}|${slot}`);
-    if (row) row.stopsVersion += 1n;
+    for (const s of Array.isArray(slot) ? slot : [slot]) {
+      const row = this.slots.get(`${kind}|${s}`);
+      if (row) row.stopsVersion += 1n;
+    }
+    return this.nowTs();
+  }
+
+  /** Placement's Resume in one step: lift the stop and bump stops_version of each fenced slot (C01 §3.2). */
+  resumePartition(kind: string, slot: SlotNo | SlotNo[], partition: Uint8Array): HlcTs {
+    this.stops.delete(`${kind}|${hex(partition)}`);
+    for (const s of Array.isArray(slot) ? slot : [slot]) {
+      const row = this.slots.get(`${kind}|${s}`);
+      if (row) row.stopsVersion += 1n;
+    }
+    return this.nowTs();
+  }
+
+  /** Reads of `owner_slot.report_through` by the bounded read of C01 §3.3 step 5 (tests count them). */
+  reportThroughReads = 0;
+
+  async readReportThrough(kind: string, slot: SlotNo): Promise<HlcTs | null> {
+    this.reportThroughReads += 1;
+    return this.slots.get(`${kind}|${slot}`)?.reportThrough ?? null;
+  }
+
+  async pendingMovesFrom(kind: string, fromSlot: SlotNo): Promise<Array<{ partition: Uint8Array; to: SlotNo; ts: HlcTs }>> {
+    const out: Array<{ partition: Uint8Array; to: SlotNo; ts: HlcTs }> = [];
+    for (const [k, h] of this.heads) {
+      if (!k.startsWith(`${kind}|`) || h.adopted || h.slot === fromSlot) continue;
+      const last = this.log.find((l) => hex(l.partition) === hex(h.partition) && l.seq === h.seq);
+      if (last?.slot === fromSlot) out.push({ partition: h.partition, to: h.slot, ts: h.ts });
+    }
+    return out;
   }
 
   slotRow(kind: string, slot: SlotNo): SlotRow | undefined {
@@ -308,13 +342,6 @@ export class MemoryStore implements OwnerStore {
   }
 }
 
-/** The HLC timestamp just below `t` (one logical tick, or the wall time below). */
-function hlcBefore(t: HlcTs): HlcTs {
-  const [wall = '0', logical = '0'] = t.split('.');
-  const l = BigInt(logical);
-  return l > 0n ? hlc(`${wall}.${(l - 1n).toString().padStart(10, '0')}`) : hlc(`${BigInt(wall) - 1n}.9999999999`);
-}
-
 function applyProjection(rows: Map<string, unknown>, p: ProjectionWrite): void {
   const id = rowId({ table: p.table, key: p.key });
   if (p.op === 'delete') rows.delete(id);
@@ -323,7 +350,7 @@ function applyProjection(rows: Map<string, unknown>, p: ProjectionWrite): void {
 
 class MemoryTxn implements BatchTxn {
   private readonly store: MemoryStore;
-  private fenceSeen: { kind: string; slot: SlotNo; epoch: bigint; sessionId: string | null } | undefined;
+  private fenceSeen: { kind: string; slot: SlotNo; epoch: bigint; sessionId: string | null; stopsVersion: bigint } | undefined;
   private readonly headsSeen = new Map<string, string>();
   private pending: { kind: string; w: BatchWrites } | undefined;
   private firstWrites: ProjectionWrite[] = [];
@@ -348,7 +375,7 @@ class MemoryTxn implements BatchTxn {
     }
     const r = this.store.slotRow(kind, slot);
     if (!r) return undefined;
-    this.fenceSeen = { kind, slot, epoch: r.epoch, sessionId: r.sessionId };
+    this.fenceSeen = { kind, slot, epoch: r.epoch, sessionId: r.sessionId, stopsVersion: r.stopsVersion };
     return { sessionId: r.sessionId, epoch: r.epoch, stopsVersion: r.stopsVersion, reportThrough: r.reportThrough, markerSeq: r.markerSeq };
   }
 
@@ -443,7 +470,8 @@ class MemoryTxn implements BatchTxn {
     const f = this.fenceSeen;
     if (f) {
       const r = this.store.slotRow(f.kind, f.slot);
-      if (!r || r.epoch !== f.epoch || r.sessionId !== f.sessionId) throw retryableError('fence row changed');
+      // A Stop or Resume writes stops_version: serialisable order restarts a batch that read the old value (C01 §3.2).
+      if (!r || r.epoch !== f.epoch || r.sessionId !== f.sessionId || r.stopsVersion !== f.stopsVersion) throw retryableError('fence row changed');
     }
     for (const [k, batch] of this.headsSeen) {
       const h = this.store.heads.get(k);

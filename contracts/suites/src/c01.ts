@@ -43,6 +43,31 @@ export interface C01Subject extends Closable {
   putDisplacementMarker(link: PartitionKey, request: Uint8Array, attempt: number): void;
   /** The next append restarts `n` times before its last attempt commits. */
   restartNext(n: number): void;
+  /** The subject's hook calls, in order: `movedOut:<hex>`, `adopt:<hex>:<generation>` (S-PLAT-I3). */
+  events: string[];
+  /**
+   * The move protocol (C01 §3.3), from the subject (slot A) to a target slot B of the same kind held by `target`.
+   * `moveOut` runs steps 1 to 3 (B prepared, `moved` committed in A); `adopt` runs steps 4 and 5 in B.
+   */
+  moves: {
+    target: { runtime: OwnerRuntime; slot: SlotNo; events: string[] };
+    moveOut(partition: PartitionKey): Promise<void>;
+    adopt(partition: PartitionKey): Promise<void>;
+  };
+  /** Placement's integrity stop and resume of a partition (C01 §2.6, §3.2), enforced at the subject's slot fence. */
+  stops: {
+    stop(partition: PartitionKey, detectionRef: Uint8Array): Promise<void>;
+    resume(partition: PartitionKey): Promise<void>;
+  };
+}
+
+/** Hooks that record the move hooks as `events` entries (subjects use it). */
+export function c01MoveEvents(events: string[]): Pick<import('@share/owner-runtime').OwnerHooks, 'onMovedOut' | 'onAdopt'> {
+  const h = (p: PartitionKey): string => Buffer.from(p).toString('hex');
+  return {
+    onMovedOut(p) { events.push(`movedOut:${h(p)}`); },
+    async onAdopt(p, g) { events.push(`adopt:${h(p)}:${g}`); },
+  };
 }
 
 const AUDIT: AuditFields = {
@@ -214,6 +239,36 @@ export function runC01ProviderSuite(name: string, make: SubjectFactory<C01Subjec
     assert.equal(log[0]?.senderFence, undefined);
     assert.deepEqual([log[1]?.senderFence?.generation, log[1]?.senderFence?.epoch], [0, 3n]);
     assert.deepEqual(identities(await s.readLog(P, 2n)), ['fenced']);
+  });
+
+  t('CP-5', 'MOVING in A between moved and adopt, MOVED(B, g+1) once adopted; no entry commits in B before adopt; onMovedOut after moved, onAdopt after adopt; seq continues in B', async (s) => {
+    const hx = Buffer.from(P).toString('hex');
+    committed(await s.runtime.append({ partition: P, entries: [entry('a1'), entry('a2')] }));
+    const B = s.moves.target;
+    await s.moves.moveOut(P);
+    assert.deepEqual(s.events.filter((e) => e.startsWith('movedOut:')), [`movedOut:${hx}`]);
+    assert.deepEqual(await s.runtime.append({ partition: P, entries: [entry('a3')] }), { r: 'Moving' });
+    assert.deepEqual(await B.runtime.append({ partition: P, entries: [entry('b0')] }, { slot: B.slot }), { r: 'Moving' });
+    assert.deepEqual(B.events.filter((e) => e.startsWith('adopt:')), []);
+    await s.moves.adopt(P);
+    assert.deepEqual(B.events.filter((e) => e.startsWith('adopt:')), [`adopt:${hx}:1`]);
+    assert.deepEqual(await s.runtime.append({ partition: P, entries: [entry('a4')] }), { r: 'Moved', slot: B.slot, generation: 1 });
+    const r = committed(await B.runtime.append({ partition: P, entries: [entry('b1', { emit: true })] }, { slot: B.slot }));
+    assert.ok(r.seqFrom > 2n, `seq continues in B: ${r.seqFrom}`);
+    assert.deepEqual(r.streamSeqs['counter'], [1n, 1n]);
+    assert.equal(B.runtime.generation(P), 1);
+  });
+
+  t('CP-6', 'Stopped(detectionRef) while an integrity stop is open: nothing of the partition commits, another partition commits, resume lifts it', async (s) => {
+    const ref = bytes('detection-1');
+    const other = bytes('c01-other');
+    committed(await s.runtime.append({ partition: P, entries: [entry('before')] }));
+    await s.stops.stop(P, ref);
+    assert.deepEqual(await s.runtime.append({ partition: P, entries: [entry('stopped')] }), { r: 'Stopped', detectionRef: ref });
+    committed(await s.runtime.append({ partition: other, entries: [entry('free')] }));
+    await s.stops.resume(P);
+    committed(await s.runtime.append({ partition: P, entries: [entry('after')] }));
+    assert.deepEqual(identities(await s.readLog(P)), ['before', 'after']);
   });
 
   t('CC-5', 'admitCommand: a committed sender fence is the high-water; a lower fence is refused with the recorded fence', async (s) => {

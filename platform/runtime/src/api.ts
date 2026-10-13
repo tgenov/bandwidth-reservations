@@ -205,6 +205,11 @@ export interface AppendOptions {
   firstStatement?: ProjectionWrite[];
   abandonBeforeCommitMs?: Millis;
   lane?: 'primary' | 'second';
+  /**
+   * The slot the command was routed to (`CommandEnvelope.routedTo.slot`). Optional (an addition to C01 §2.4): without
+   * it the runtime finds the slot from its moves, the account slot map and the home slot (C01 §3.3, §3.8).
+   */
+  slot?: SlotNo;
 }
 
 export type AppendResult =

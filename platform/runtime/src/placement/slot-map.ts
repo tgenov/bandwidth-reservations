@@ -64,6 +64,7 @@ export class SlotMapCache {
   private sub: BusSubscription | undefined;
   /** Set when the feed broke the insert-only rule; routing stops. */
   broken = false;
+  private readonly listeners: Array<(v: SlotMapVersion) => void> = [];
 
   constructor(o?: SlotMapCacheOptions) {
     this.o = o;
@@ -90,7 +91,15 @@ export class SlotMapCache {
       return;
     }
     this.seen.set(key, body);
-    if (this.v === undefined || v.version > this.v.version) this.v = v;
+    if (this.v === undefined || v.version > this.v.version) {
+      this.v = v;
+      for (const l of this.listeners) l(v);
+    }
+  }
+
+  /** Calls `handler` for each new current version, in version order (the holder's splitting rules, C01 §3.8). */
+  onVersion(handler: (v: SlotMapVersion) => void): void {
+    this.listeners.push(handler);
   }
 
   slotOf(account: Uint8Array): SlotOfAnswer | undefined {

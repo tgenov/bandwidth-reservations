@@ -33,3 +33,22 @@ export function hlcToWallMs(t: HlcTs): number {
 export function hlcAddMs(t: HlcTs, ms: number): HlcTs {
   return hlc(hlcParts(t).wallNs + BigInt(Math.round(ms * 1_000_000)));
 }
+
+/** The HLC timestamp just below `t` (one logical tick, or the wall time below). */
+export function hlcBefore(t: HlcTs): HlcTs {
+  const [wall = '0', logical = '0'] = t.split('.');
+  const l = BigInt(logical);
+  return l > 0n ? hlc(`${wall}.${(l - 1n).toString().padStart(10, '0')}`) : hlc(`${BigInt(wall) - 1n}.9999999999`);
+}
+
+/** ceil to a microsecond, as a TIMESTAMPTZ literal (with_min_timestamp takes a TIMESTAMPTZ). */
+export function ceilMicrosLiteral(t: HlcTs): string {
+  const { wallNs, logical } = hlcParts(t);
+  let us = wallNs / 1000n;
+  if (wallNs % 1000n !== 0n || logical > 0n) us += 1n;
+  const ms = Number(us / 1000n);
+  const frac = (us % 1_000_000n).toString().padStart(6, '0');
+  const iso = new Date(ms).toISOString().slice(0, 19).replace('T', ' ');
+  return `${iso}.${frac}+00:00`;
+}
+

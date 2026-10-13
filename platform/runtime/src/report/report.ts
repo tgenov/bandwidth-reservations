@@ -32,6 +32,10 @@ export interface ReadLease {
 /** The holder's channel to a status reader: push "committed through" and get "applied through" back. */
 export interface ReaderChannel {
   apply(slot: SlotNo, through: HlcTs): Promise<HlcTs>;
+  /** C01 §3.3 step 3: `moved` of the partition committed at `ts` in the slot; the reader answers it by rule 4. */
+  movedOut?(slot: SlotNo, partition: Uint8Array, ts: HlcTs): void;
+  /** C01 §3.3 step 5: `adopt` committed at `ts`; the reader answers the partition by rule 2 only at or above `ts`. */
+  adopted?(slot: SlotNo, partition: Uint8Array, ts: HlcTs): void;
 }
 
 export type LeaseAnswer =
@@ -53,6 +57,11 @@ export class SlotReport {
   readonly applied = new Map<string, HlcTs>();
   markerScheduled = false;
   markerRunning = false;
+  /**
+   * C01 §3.3 step 6 (R47-16): after an `adopt`, the position stays below `cap` (just below the adopt's ts) until
+   * `untilMonotonic` (read_lease + ε after the adopt commit), so no entry of the adopted partition is reported early.
+   */
+  readonly holds: Array<{ cap: HlcTs; untilMonotonic: MonotonicNs }> = [];
 
   constructor(initial: HlcTs) {
     this.position = initial;
@@ -74,6 +83,11 @@ export class SlotReport {
     for (const l of this.liveLeases(now)) {
       const a = this.applied.get(l.readerId);
       if (a === undefined || compareHlc(a, t) < 0) t = a ?? this.position;
+    }
+    for (let i = this.holds.length - 1; i >= 0; i--) {
+      const h = this.holds[i] as { cap: HlcTs; untilMonotonic: MonotonicNs };
+      if (h.untilMonotonic <= now) { this.holds.splice(i, 1); continue; }
+      if (compareHlc(h.cap, t) < 0) t = h.cap;
     }
     return compareHlc(t, this.position) > 0 ? t : this.position;
   }

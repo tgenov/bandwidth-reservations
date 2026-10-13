@@ -26,13 +26,44 @@ export interface SlotHolding {
   stops: Map<string, Uint8Array | null>;
   /** hex(partition) → the chain this process last committed (C08 §J head comparison). */
   chains: Map<string, Uint8Array>;
-  /** Partitions held locally after a chain mismatch (C08 §J, RFC-006 §3.7). */
-  integrityHolds: Set<string>;
+  /** Partitions held locally after a chain mismatch (C08 §J, RFC-006 §3.7): hex → the hold. */
+  integrityHolds: Map<string, IntegrityHold>;
+  /**
+   * The slot where a creation of this partition (no head row) may commit (C01 §3.8): the account slot map with a
+   * splitting slot's upper half in s + n (V59-2). Undefined: no rule (a kind on a fixed map). Another slot ⇒ MOVED.
+   */
+  creationSlot?: (partition: Uint8Array) => SlotNo | undefined;
 }
+
+/** A local hold after a head-chain mismatch (C08 §J, R46-12): only audit's stop and resume lift it. */
+export interface IntegrityHold {
+  /** The `integrity_report` facts (C08 §J): the head's seq and the chain observed on it. */
+  partition: Uint8Array; seq: bigint; observedChain: Uint8Array;
+  /** The report is sent (or being sent): the runtime retries until audit accepts it. */
+  reporting?: boolean;
+  /** audit's detection_ref, once `integrity_report` was accepted. */
+  detectionRef?: Uint8Array;
+  /** The stop with this detection_ref was seen open (a later read without it is the resume). */
+  stopSeen: boolean;
+}
+
+/** The platform's own entries in an owner's log (C01 §3.3): `moved` and `adopt`. Not declared by the owner. */
+export const PLATFORM_ENTRY = { moved: -1, adopt: -2 } as const;
+
+/** True for the platform's own entry kinds (owners skip them on replay). */
+export function isPlatformEntry(kind: number): boolean {
+  return kind === PLATFORM_ENTRY.moved || kind === PLATFORM_ENTRY.adopt;
+}
+
+/** A platform step of the move protocol carried as a call of the slot batch (C01 §3.3 steps 3 and 5). */
+export type PlatformOp =
+  | { op: 'moved'; to: SlotNo; generation: number }
+  | { op: 'adopt'; from: SlotNo; generation: number; fence: { reportThrough: HlcTs | null } };
 
 export interface PendingCall {
   call: AppendCall;
   opts: AppendOptions;
+  platform?: PlatformOp;
 }
 
 export interface OutboxMessage {
@@ -57,6 +88,8 @@ export interface AttemptPlan {
   /** Entries that make a report marker due (C01 §3.4): reportWanted, or an event on a reportGated stream.
    *  `pending` is the entry's pendingAnswered (C04 v2.1). All carry the batch's ts. */
   reportDue: Array<{ pending?: Uint8Array }>;
+  /** Moves committed by this batch (C01 §3.3 steps 3 and 5). */
+  moves: Array<{ partition: Uint8Array; op: 'moved' | 'adopt'; to: SlotNo; generation: number }>;
 }
 
 export interface AttemptEnv {
@@ -123,6 +156,8 @@ export async function runAttempt(tx: BatchTxn, env: AttemptEnv, calls: PendingCa
   const timing = await tx.readTiming(holding.slot % PARAMS.timingShards);
   const partitions = uniquePartitions(calls.map((c) => c.call.partition));
   const stops = new Map(holding.stopsVersion === fence.stopsVersion ? holding.stops : []);
+  // C01 §3.3 step 5: the adopt batch re-reads the partition's stops.
+  for (const c of calls) if (c.platform?.op === 'adopt') stops.delete(hex(c.call.partition));
   const unknownStops = partitions.filter((p) => !stops.has(hex(p)));
   if (unknownStops.length > 0) {
     const open = await tx.readStops(kind, unknownStops);
@@ -130,6 +165,15 @@ export async function runAttempt(tx: BatchTxn, env: AttemptEnv, calls: PendingCa
   }
   holding.stopsVersion = fence.stopsVersion;
   holding.stops = stops;
+  // C08 §J (R46-12): a local hold ends only by audit's stop and resume: its stop seen open, then no longer open.
+  for (const p of partitions) {
+    const k = hex(p);
+    const hold = holding.integrityHolds.get(k);
+    if (!hold?.detectionRef) continue;
+    const open = stops.get(k);
+    if (open && bytesEqual(open, hold.detectionRef)) hold.stopSeen = true;
+    else if (!open && hold.stopSeen) { holding.integrityHolds.delete(k); holding.chains.delete(k); }
+  }
 
   const heads = await tx.readHeads(kind, partitions);
   const refs = calls.flatMap((c) => [...conditionRows(c.call), ...(c.call.reads ?? [])]);
@@ -170,6 +214,7 @@ export async function runAttempt(tx: BatchTxn, env: AttemptEnv, calls: PendingCa
   const senderFences: AttemptPlan['senderFences'] = [];
   const committedPartitions = new Map<string, Uint8Array>();
   const reportDue: AttemptPlan['reportDue'] = [];
+  const moves: AttemptPlan['moves'] = [];
 
   const readRow = (ref: RowRef): unknown | undefined => {
     const id = rowId(ref);
@@ -185,26 +230,49 @@ export async function runAttempt(tx: BatchTxn, env: AttemptEnv, calls: PendingCa
     const key = hex(call.partition);
     const stop = stops.get(key);
     if (stop) { verdicts.push({ kind: 'result', result: { r: 'Stopped', detectionRef: stop }, committed: false }); continue; }
-    if (holding.integrityHolds.has(key)) {
-      // TODO(S-PLAT-I1 rest, C08 §J integrity_report): send integrity_report to audit; Stopped carries audit's detection_ref.
-      verdicts.push({ kind: 'result', result: { r: 'Stopped', detectionRef: new Uint8Array() }, committed: false });
+    const hold = holding.integrityHolds.get(key);
+    if (hold) {
+      verdicts.push({ kind: 'result', result: { r: 'Stopped', detectionRef: hold.detectionRef ?? new Uint8Array() }, committed: false });
       continue;
     }
     const dbHead = heads.get(key);
     const head = working.get(key) ?? dbHead;
-    if (head && head.slot !== holding.slot) {
-      verdicts.push({ kind: 'result', result: head.adopted ? { r: 'Moved', slot: head.slot, generation: head.generation } : { r: 'Moving' }, committed: false });
-      continue;
+    const op = pc.platform;
+    if (op?.op === 'adopt') {
+      // C01 §3.3 step 5: adopt(g+1) only on head(X).slot = B ∧ generation = g+1 ∧ adopted = false.
+      if (!head || head.slot !== holding.slot || head.adopted || head.generation !== op.generation) {
+        verdicts.push({ kind: 'result', result: { r: 'ConditionFailed', which: 'adopt' }, committed: false });
+        continue;
+      }
+    } else {
+      if (head && head.slot !== holding.slot) {
+        verdicts.push({ kind: 'result', result: head.adopted ? { r: 'Moved', slot: head.slot, generation: head.generation } : { r: 'Moving' }, committed: false });
+        continue;
+      }
+      if (head && !head.adopted) {
+        verdicts.push({ kind: 'result', result: { r: 'Moving' }, committed: false });
+        continue;
+      }
+      if (!head) {
+        // C01 §3.8: a creation commits only in the slot the map places it in (V59-2: s + n for a splitting upper half).
+        const home = holding.creationSlot?.(call.partition);
+        if (home !== undefined && home !== holding.slot) {
+          verdicts.push({ kind: 'result', result: { r: 'Moved', slot: home, generation: 0 }, committed: false });
+          continue;
+        }
+      }
     }
-    if (head && !head.adopted) {
-      // TODO(I3, C01 §3.3): the `adopt` call itself is exempt.
-      verdicts.push({ kind: 'result', result: { r: 'Moving' }, committed: false });
-      continue;
+    if (op?.op === 'moved') {
+      if (!head) { verdicts.push({ kind: 'result', result: { r: 'ConditionFailed', which: 'noHead' }, committed: false }); continue; }
+      if (op.generation !== head.generation + 1) {
+        verdicts.push({ kind: 'result', result: { r: 'ConditionFailed', which: 'generation' }, committed: false });
+        continue;
+      }
     }
     // C08 §J: compare the head's chain with the holder's memory; a mismatch holds the partition locally.
     const mem = holding.chains.get(key);
     if (!working.has(key) && dbHead && mem && !bytesEqual(mem, dbHead.chain)) {
-      holding.integrityHolds.add(key);
+      holding.integrityHolds.set(key, { stopSeen: false, partition: call.partition, seq: dbHead.seq, observedChain: dbHead.chain });
       verdicts.push({ kind: 'result', result: { r: 'Stopped', detectionRef: new Uint8Array() }, committed: false });
       continue;
     }
@@ -229,7 +297,9 @@ export async function runAttempt(tx: BatchTxn, env: AttemptEnv, calls: PendingCa
 
     let decided: DecideResult | null;
     try {
-      if (call.decide) {
+      if (op) {
+        decided = { entries: [platformEntry(op)] };
+      } else if (call.decide) {
         const allowed = new Set([...conditionRows(call), ...(call.reads ?? [])].map(rowId));
         const ctx: BatchContext = {
           ts, timing, conditionResults, ...(slotPos !== undefined ? { slotPosition: slotPos + 1n } : {}),
@@ -247,11 +317,11 @@ export async function runAttempt(tx: BatchTxn, env: AttemptEnv, calls: PendingCa
       }
       if (decided === null) { verdicts.push({ kind: 'result', result: { r: 'ConditionFailed', which: 'decide' }, committed: false }); continue; }
       for (const w of decided.projections ?? []) checkProjectionWrite(decl, w);
-      for (const e of decided.entries) retentionCode(decl, e.kind);
+      if (!op) for (const e of decided.entries) retentionCode(decl, e.kind);
       for (const e of decided.entries) for (const em of e.emits ?? []) {
         if (!decl.streams.some((s) => s.name === em.stream)) throw new Error(`stream ${em.stream} is not declared by ${kind}`);
       }
-      if (decl.selfOutboxed) {
+      if (decl.selfOutboxed && !op) {
         // RFC-006 §3.5: the relay derives the events from the row; they must be what the emit functions give.
         if ((decided.notifications ?? []).length > 0) throw new SelfOutboxedError('NO_OUTBOX', `${kind} is self-outboxed: it has no outbox for notifications`);
         if (!env.emitFns) throw new Error(`${kind} is self-outboxed: the runtime needs its emit functions`);
@@ -312,7 +382,7 @@ export async function runAttempt(tx: BatchTxn, env: AttemptEnv, calls: PendingCa
       const payload = env.sealer.seal(encodeJson(plain), { ...sealCtx, rowKind: `entry:${entry.kind}` });
       const audit = env.sealer.seal(encodeJson(entry.audit), { ...sealCtx, rowKind: 'audit' });
       const emitsBytes = encodeJson(emits);
-      const retention = retentionCode(decl, entry.kind);
+      const retention = op ? 0 : retentionCode(decl, entry.kind);
       // C08 §J: chained after sealing, over the stored ciphertexts; recomputed on every attempt.
       next.chain = chainNext(next.chain, {
         kindName: kind, partition: call.partition, seq: next.seq, slot: holding.slot, generation: next.generation,
@@ -325,7 +395,8 @@ export async function runAttempt(tx: BatchTxn, env: AttemptEnv, calls: PendingCa
       next.ts = ts;
       if (entry.senderFence) senderFences.push(entry.senderFence);
       // C01 §3.4: a marker is due once the report position passes this entry; pendingAnswered goes in its list.
-      const wanted = decl.entryKinds.find((k) => k.kind === entry.kind)?.reportWanted === true;
+      // C01 §3.4 (R47-03): a marker is also due for a `moved` entry (the report fence of §3.3 step 4).
+      const wanted = op?.op === 'moved' || decl.entryKinds.find((k) => k.kind === entry.kind)?.reportWanted === true;
       const gated = (entry.emits ?? []).some((em) => decl.streams.find((s) => s.name === em.stream)?.reportGated === true);
       if (wanted || gated) reportDue.push(entry.pendingAnswered ? { pending: entry.pendingAnswered } : {});
     }
@@ -352,6 +423,14 @@ export async function runAttempt(tx: BatchTxn, env: AttemptEnv, calls: PendingCa
       projections.push(w);
     }
     if (!head) next.ts = ts;
+    if (op?.op === 'moved') {
+      // C01 §3.3 step 3: the head row names B with generation g+1, not adopted, in the same batch.
+      next.slot = op.to; next.generation = op.generation; next.adopted = false;
+      moves.push({ partition: call.partition, op: 'moved', to: op.to, generation: op.generation });
+    } else if (op?.op === 'adopt') {
+      next.adopted = true;
+      moves.push({ partition: call.partition, op: 'adopt', to: holding.slot, generation: op.generation });
+    }
     // R47-14: every committing call upserts its head with this batch's batch_id.
     working.set(key, next);
     committedPartitions.set(key, call.partition);
@@ -366,12 +445,26 @@ export async function runAttempt(tx: BatchTxn, env: AttemptEnv, calls: PendingCa
 
   const anyCommit = verdicts.some((v) => v.kind === 'result' && v.committed);
   return {
-    ts, timing, batchId, verdicts, anyCommit, publish, senderFences, reportDue,
+    ts, timing, batchId, verdicts, anyCommit, publish, senderFences, reportDue, moves,
     partitions: [...committedPartitions.values()],
     writes: { ts, log, outbox, heads: [...working.values()], projections,
       ...(streamIndex.length > 0 ? { streamIndex } : {}),
       ...(slotPos !== undefined && slotPos !== startPos ? { slotPosition: { slot: holding.slot, position: slotPos } } : {}) },
   };
+}
+
+/** The platform entry of a move step (C01 §3.3): audit by the platform principal, payload the step's facts. */
+function platformEntry(op: PlatformOp): import('../api.ts').EntryInput {
+  const audit: import('../api.ts').AuditFields = {
+    schema: 'audit.v1', principal: { principal_id: 'platform_runtime', kind: 'service', tenant: { kind: 'none' } },
+    decided_at: 'commit', policy_version: 1,
+  };
+  if (op.op === 'moved') {
+    return { kind: PLATFORM_ENTRY.moved, schemaV: 1, identity: new TextEncoder().encode(`moved:${op.generation}`), audit,
+      payload: { to: op.to, generation: op.generation } };
+  }
+  return { kind: PLATFORM_ENTRY.adopt, schemaV: 1, identity: new TextEncoder().encode(`adopt:${op.generation}`), audit,
+    payload: { from: op.from, generation: op.generation, fence: op.fence } };
 }
 
 function kafkaHeaders(h: Record<string, string>, partition: Uint8Array): Record<string, string | Buffer> {

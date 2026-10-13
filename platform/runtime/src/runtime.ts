@@ -1,18 +1,18 @@
 import { hostname } from 'node:os';
 import type {
-  AppendCall, AppendOptions, AppendResult, Epoch, FeedCheckpoint, FeedEvent, Generation, HlcTs, MonotonicNs,
+  AppendCall, AppendOptions, AppendResult, Epoch, FeedCheckpoint, FeedEvent, Generation, HlcTs, MapVersion, MonotonicNs,
   OpenedLogRow, OwnerDeclaration, OwnerHooks, OwnerKind, OwnerRuntime, PartitionKey, ReadTx, ReportMarker, RouteInfo, Seq, SlotNo,
-  SlotOfAnswer, StreamSeq, TimingSnapshot, WriterFence,
+  SlotMapVersion, SlotOfAnswer, StreamSeq, TimingSnapshot, WriterFence,
 } from './api.ts';
-import type { AttemptPlan, OutboxMessage, PendingCall, SlotHolding } from './batch/attempt.ts';
+import { isPlatformEntry, type AttemptPlan, type OutboxMessage, type PendingCall, type PlatformOp, type SlotHolding } from './batch/attempt.ts';
 import { executeBatch, type BatchOutcome } from './batch/execute.ts';
 import { bytesEqual, decodeJson, encodeJson, hex } from './bytes.ts';
 import { FENCE_KEY, PAYLOAD_KEY } from './batch/attempt.ts';
 import { tableNames } from './declaration.ts';
 import { assertDeclaration } from './declaration.ts';
-import { compareHlc, hlcFromWallMs, hlcToWallMs } from './hlc.ts';
+import { compareHlc, hlcBefore, hlcFromWallMs, hlcToWallMs } from './hlc.ts';
 import { systemClock, type WallClock } from './clock.ts';
-import { slotOfPartition } from './home.ts';
+import { home, slotOfPartition } from './home.ts';
 import { EventLoopMonitor, type LoadMonitor } from './load.ts';
 import { DEFAULT_SESSION_TIMINGS, PARAMS, type SessionTimings } from './params.ts';
 import { MemoryPublisher, type Publisher } from './publisher.ts';
@@ -24,7 +24,7 @@ import { encodeMarker, markerSealContext } from './feed/wire.ts';
 import { FeedConsumerRuntime, type ConsumerAlert } from './consumer/consumer.ts';
 import type { GapFillSource } from './consumer/gapfill.ts';
 import { REPORT, SlotReport, markerChunks, outcomeStream, reportsMarkers, type LeaseAnswer, type ReaderChannel } from './report/report.ts';
-import type { SlotMapCache } from './placement/slot-map.ts';
+import { slotOfInMap, type SlotMapCache } from './placement/slot-map.ts';
 import { isRetryable } from './errors.ts';
 import { SelfOutboxedError, emitFunctionErrors, openLogRow, type EmitFunctions } from './selfout/derive.ts';
 import { CheckpointError, type CheckpointStore } from './checkpoint/store.ts';
@@ -106,6 +106,15 @@ export interface OwnerRuntimeOptions {
   offsetCheck?: { intervalMs?: number; onGiveUp?: () => void; onLevel?: (level: OffsetLevel, s: OffsetSample) => void; onSample?: (s: OffsetSample) => void };
   /** The checkpoint store of the process's own region (RFC-006 §12.11): `putCheckpoint`, `getCheckpoint`. */
   checkpoints?: CheckpointStore;
+  /** The move protocol (C01 §3.3): the holders of other slots, the pre-warm of a partition, the fence wait. */
+  moves?: MoveOptions;
+  /**
+   * C08 §J `integrity_report` to audit (R46-12): sent once for each local hold after a head-chain mismatch, retried
+   * until audit accepts it; the answer's detection_ref is then the `Stopped` result's.
+   */
+  integrityReport?: (r: IntegrityReport) => Promise<{ detectionRef: Uint8Array }>;
+  /** Placement's `ackSplitting` (C01 §2.7, R47-05): the account kind's holder calls it for each splitting slot. */
+  placement?: { ackSplitting(req: AckSplittingRequest): Promise<{ recorded: true }> };
   /** Test-only overrides of C01 §7 values. */
   testing?: {
     sessionTimings?: Partial<SessionTimings>;
@@ -116,8 +125,44 @@ export interface OwnerRuntimeOptions {
     postAcquisitionWaitMs?: number;
     /** Ids per report marker (C01 §3.4 rule 5); default 5,000. */
     markerChunkMax?: number;
+    /** read_lease + ε after an adopt commit (C01 §3.3 step 6); default 500 ms. */
+    adoptReportWaitMs?: number;
   };
 }
+
+/** A holder's report fence for a move (C01 §3.3 step 4): `owner_slot(kind, slot).report_through`. */
+export interface ReportFence { kind: OwnerKind; slot: SlotNo; reportThrough: HlcTs }
+
+/** The channel to the holder of a move's target slot (C01 §3.3 step 4, V59-7): it receives the source's fence. */
+export interface MoveInbox { fence(f: ReportFence): void }
+
+/** Move options of a runtime (C01 §3.3). */
+export interface MoveOptions {
+  /** The inbox of the holder of `slot` (step 4 push; V59-7), or undefined when it is not known. */
+  peer?: (kind: OwnerKind, slot: SlotNo) => MoveInbox | undefined;
+  /**
+   * Step 2 pre-warm: the owner loads the partition from these rows (by (partition, seq), platform entries left out):
+   * at `prepareAdopt` every row, at `adopt` only the rows above the ones it got. It may load a checkpoint first.
+   */
+  prewarm?: (partition: PartitionKey, rows: OpenedLogRow[]) => void | Promise<void>;
+  /** Step 5: with no fence push in this time, read `owner_slot(kind, A)` by a bounded read (default 100 ms). */
+  fenceReadAfterMs?: number;
+  /** Step 5: the interval of those reads (default 100 ms). */
+  fencePollMs?: number;
+}
+
+/** C08 §J `integrity_report` (kind, partition, seq, observed_chain). */
+export interface IntegrityReport { kind: OwnerKind; partition: PartitionKey; seq: Seq; observedChain: Uint8Array }
+
+/** C01 §2.7 `ackSplitting` request. */
+export interface AckSplittingRequest {
+  kind: 'account'; slot: SlotNo; mapVersion: MapVersion; epoch: Epoch; upperHalf: Uint8Array[]; asOf: HlcTs;
+}
+
+/** C01 §2.7 `HolderPlacementApi.listPartitions` answer. */
+export type ListPartitionsAnswer =
+  | { partitions: Uint8Array[]; asOf: HlcTs; epoch: Epoch }
+  | { refused: 'NOT_ACKED' | 'NOT_OWNER' };
 
 interface Queued extends PendingCall {
   resolve(r: AppendResult): void;
@@ -144,6 +189,10 @@ interface Lane {
   pushedThrough: HlcTs;
   /** Ambiguous batches of the slot not yet resolved: one may be committed below a later ts and not pushed yet. */
   unresolved: number;
+  /** C01 §3.3 step 4, V59-7: fences owed to the targets of moves out of this slot, pushed once a marker covers `ts`. */
+  pendingFences: Array<{ to: SlotNo; ts: HlcTs }>;
+  /** C01 §3.8: the map version whose splitting state of this slot the holder applied and acknowledged. */
+  splitAcked?: MapVersion;
 }
 
 function slotKeyBytes(slot: SlotNo): Uint8Array {
@@ -180,6 +229,17 @@ export class CockroachOwnerRuntime implements OwnerRuntime {
   private groupLeader: CockroachOwnerRuntime | undefined;
   private readonly lanes = new Map<SlotNo, Lane>();
   private readonly generations = new Map<string, Generation>();
+  /** C01 §3.3: partitions placed in a slot other than their home slot (a prepared or adopted move). */
+  private readonly placed = new Map<string, SlotNo>();
+  /** Moves this process prepared as the target (step 2) and not yet adopted. */
+  private readonly prepared = new Map<string, { partition: PartitionKey; from: SlotNo; to: SlotNo; generation: Generation; seq: Seq }>();
+  /** Fences pushed to this process (step 4), by `${kind}|${slot}`, and the adopts that wait for one. */
+  private readonly fencesIn = new Map<string, HlcTs>();
+  private readonly fenceWaiters = new Set<() => void>();
+  /** Counts of the fence checks of step 5: by push, and by bounded reads of owner_slot. */
+  readonly moveStats = { fencesPushed: 0, fencesRead: 0 };
+  /** The account map version this process applied for the splitting rules (C01 §3.8). */
+  private appliedMap: SlotMapVersion | undefined;
   private readonly fences = new Map<string, WriterFence>();
   private readonly timers = new Map<string, { partition: PartitionKey; timeout: NodeJS.Timeout }>();
   private readonly reportHandlers: Array<(slot: SlotNo, p: HlcTs) => void> = [];
@@ -216,13 +276,14 @@ export class CockroachOwnerRuntime implements OwnerRuntime {
     this.session = new Session(this.store, timings,
       { host: o.host ?? hostname(), region: o.region ?? 'r1', facility: o.facility ?? 'r1a', kind: this.decl.kind },
       {
-        onRevoked: () => this.serialised(() => this.rehome()),
+        onRevoked: () => { const revoked = this.session.sessionId; return this.serialised(() => this.rehome(revoked)); },
         onResume: () => this.serialised(() => this.resume()),
         onTick: () => this.serialised(async () => { await this.refreshTiming(); await this.acquireWanted(); }),
       });
     if (o.standby) {
       const apply = o.standby.apply;
-      this.standbyTail = new StandbyTail((rows) => apply(rows.map((r) => openLogRow(this.decl, this.sealer, r))));
+      // The platform's own entries (moved, adopt) are not the owner's: the owner's memory never sees them.
+      this.standbyTail = new StandbyTail((rows) => apply(rows.filter((r) => !isPlatformEntry(r.kind)).map((r) => openLogRow(this.decl, this.sealer, r))));
     }
     if (o.slotGroup) {
       for (const m of o.slotGroup.members) {
@@ -265,6 +326,11 @@ export class CockroachOwnerRuntime implements OwnerRuntime {
     await this.session.open();
     this.started = true;
     if (this.standbyTail) await this.tailStandby();
+    if (this.o.slotMap && this.decl.kind === 'account') {
+      const cur = this.o.slotMap.current();
+      if (cur) this.applyMap(cur);
+      this.o.slotMap.onVersion((v) => this.applyMap(v));
+    }
     await this.serialised(() => this.acquireWanted());
     this.session.start();
     this.startHeartbeat();
@@ -414,7 +480,32 @@ export class CockroachOwnerRuntime implements OwnerRuntime {
   // ---------------- appending (C01 §2.4, §3.2) ----------------
 
   append(call: AppendCall, opts: AppendOptions = {}): Promise<AppendResult> {
-    const slot = slotOfPartition(call.partition, this.decl.slotCount);
+    return this.enqueue(call, opts, undefined);
+  }
+
+  /**
+   * The slot of a partition in this process (C01 §3.3, §3.8): the slot the command was routed to (`opts.slot`), else a
+   * move this process prepared or adopted, else the account slot map (a splitting upper half: s + n when this process
+   * holds it, V59-2), else the home slot on the kind's fixed map.
+   */
+  slotFor(partition: PartitionKey, routed?: SlotNo): SlotNo {
+    if (routed !== undefined) return routed;
+    const placed = this.placed.get(hex(partition));
+    if (placed !== undefined) return placed;
+    const v = this.appliedMap;
+    if (v) {
+      const a = slotOfInMap(v, partition);
+      if (a.headDecides) {
+        const upper = a.slot + (v.previousCount ?? v.slotCount);
+        return this.lanes.has(upper) && !this.lanes.has(a.slot) ? upper : a.slot;
+      }
+      return a.slot;
+    }
+    return slotOfPartition(partition, this.decl.slotCount);
+  }
+
+  private enqueue(call: AppendCall, opts: AppendOptions, platform: PlatformOp | undefined, slotOverride?: SlotNo): Promise<AppendResult> {
+    const slot = slotOverride ?? this.slotFor(call.partition, opts.slot);
     const lane = this.lanes.get(slot);
     // Precondition (C01 §3.2): the caller holds the slot; a slot not held by this process is lost to it.
     if (!lane || lane.released) return Promise.resolve({ r: 'StaleEpoch' });
@@ -422,7 +513,7 @@ export class CockroachOwnerRuntime implements OwnerRuntime {
       return Promise.resolve({ r: 'Overloaded', retryAfterMs: PARAMS.overloadedRetryAfterMs });
     }
     return new Promise<AppendResult>((resolve, reject) => {
-      lane.queue.push({ call, opts, resolve, reject });
+      lane.queue.push({ call, opts, ...(platform ? { platform } : {}), resolve, reject });
       this.pump(lane);
     });
   }
@@ -533,6 +624,7 @@ export class CockroachOwnerRuntime implements OwnerRuntime {
     } catch (e) {
       outcome = { kind: 'failed', error: e instanceof Error ? e : new Error(String(e)) };
     }
+    this.reportIntegrity(lane);
     switch (outcome.kind) {
       case 'answered':
         this.lastTiming = outcome.plan.timing;
@@ -577,6 +669,26 @@ export class CockroachOwnerRuntime implements OwnerRuntime {
       lane.holding.chains.set(hex(h.partition), h.chain);
       this.generations.set(hex(h.partition), h.generation);
     }
+    for (const m of plan.moves) {
+      if (m.op === 'moved') {
+        // C01 §3.3 step 3: from this commit A answers MOVING for X; the owner cancels X's timers and decides nothing.
+        this.cancelTimersOf(m.partition);
+        // Step 4: kinds with markers owe B the report fence; kinds without status readers skip it.
+        if (reportsMarkers(this.decl)) lane.pendingFences.push({ to: m.to, ts: plan.ts });
+        for (const [id, ch] of this.readers) {
+          try { ch.movedOut?.(lane.holding.slot, m.partition, plan.ts); } catch (e) { this.log('reader moved push failed', { reader: id, error: String(e) }); }
+        }
+        try { this.hooks?.onMovedOut(m.partition); } catch (e) { this.log('onMovedOut failed', { error: String(e) }); }
+      } else {
+        // C01 §3.3 step 6 (R47-16): no report of an entry of X until read_lease + ε after the adopt commit.
+        const waitMs = this.o.testing?.adoptReportWaitMs ?? REPORT.postAcquisitionWaitMs;
+        lane.report.holds.push({ cap: hlcBefore(plan.ts), untilMonotonic: process.hrtime.bigint() + BigInt(Math.round(waitMs * 1e6)) });
+        this.placed.set(hex(m.partition), lane.holding.slot);
+        for (const [id, ch] of this.readers) {
+          try { ch.adopted?.(lane.holding.slot, m.partition, plan.ts); } catch (e) { this.log('reader adopt push failed', { reader: id, error: String(e) }); }
+        }
+      }
+    }
     for (const f of plan.senderFences) this.recordFence(f, f);
     this.directPublish(plan.publish);
     // RFC-006 §4.4: a push advances the standby's complete position only when no other batch of the slot can be
@@ -616,9 +728,10 @@ export class CockroachOwnerRuntime implements OwnerRuntime {
   /** Resolution steps 1–3 for an Ambiguous batch (C01 §3.1, §3.2; R47-14). */
   private async resolveAmbiguous(lane: Lane, plan: AttemptPlan): Promise<void> {
     let read: ResolutionRead;
+    const sessionId = this.session.sessionId;
     try {
       read = await this.retryUntilAnswered(() => this.store.resolutionRead(
-        this.decl.kind, this.session.shard, this.session.sessionId, [lane.holding.slot], plan.partitions));
+        this.decl.kind, this.session.shard, sessionId, [lane.holding.slot], plan.partitions));
     } finally {
       lane.unresolved -= 1;
     }
@@ -632,7 +745,7 @@ export class CockroachOwnerRuntime implements OwnerRuntime {
       this.loseSlot(lane.holding.slot, 'staleEpoch');
       return;
     }
-    if (read.sessionRevoked) { await this.rehome(); return; }
+    if (read.sessionRevoked) { await this.rehome(sessionId); return; }
     // Step 4 (C01 §3.1): the slot's report position is set to T_res (never back).
     const r = lane.report;
     if (compareHlc(read.tRes, r.committedThrough) > 0) r.committedThrough = read.tRes;
@@ -660,9 +773,11 @@ export class CockroachOwnerRuntime implements OwnerRuntime {
 
   private newLane(slot: SlotNo, epoch: Epoch, initial: HlcTs): Lane {
     const lane: Lane = {
-      holding: { slot, epoch, sessionId: this.session.sessionId, stopsVersion: null, stops: new Map(), chains: new Map(), integrityHolds: new Set() },
+      holding: { slot, epoch, sessionId: this.session.sessionId, stopsVersion: null, stops: new Map(), chains: new Map(), integrityHolds: new Map(),
+        creationSlot: (p) => this.creationSlot(p) },
       queue: [], running: false, secondRunning: false, inFlight: [new Set(), new Set()], gate: null, released: false,
       report: new SlotReport(initial), markerWanted: false, reportableTimer: undefined, pushedThrough: initial, unresolved: 0,
+      pendingFences: [],
     };
     this.lanes.set(slot, lane);
     return lane;
@@ -751,6 +866,7 @@ export class CockroachOwnerRuntime implements OwnerRuntime {
         await tx.rollback().catch(() => {}); tx.close(false);
         r.firstMarkerPending = false;
         r.due = r.due.filter((d) => compareHlc(d.ts, prev) > 0);
+        this.pushFences(lane, prev);
         return;
       }
       const ts = await tx.readTs();
@@ -788,6 +904,7 @@ export class CockroachOwnerRuntime implements OwnerRuntime {
       r.due = r.due.filter((d) => compareHlc(d.ts, P) > 0);
       this.markersWritten.push(...markers);
       this.directPublish(publish);
+      this.pushFences(lane, P);
     } catch (e) {
       // Not known to be written: the next marker re-reads report_through, so the chain stays whole.
       if (isRetryable(e)) await tx.rollback().catch(() => {});
@@ -864,6 +981,7 @@ export class CockroachOwnerRuntime implements OwnerRuntime {
       this.log('standby catch-up', { slots, rowsRead: fresh.length, catchUpRows: t.stats.catchUpRows });
     }
     for (const a of acquired) this.newLane(a.slot, a.epoch, catchUp.tRes);
+    for (const a of acquired) await this.findPendingMoves(a.slot);
     for (const a of acquired) {
       this.log('acquired', { slot: a.slot, epoch: a.epoch.toString(), catchUp: catchUp.tRes });
       try { await this.rebuildFences(a.slot); } catch (e) { this.log('fence rebuild failed', { slot: a.slot, error: String(e) }); }
@@ -874,8 +992,10 @@ export class CockroachOwnerRuntime implements OwnerRuntime {
   }
 
   /** Re-home (C01 §3.1): new session, conditional transfer of each slot at its own epoch, steps 1–4, onAcquire('rehome'). */
-  private async rehome(): Promise<void> {
-    if (this.groupLeader) { const l = this.groupLeader; await l.serialised(() => l.rehome()); return; }
+  private async rehome(revoked?: string): Promise<void> {
+    // One re-home per revoked session: the renewal and a resolution read can both report the same revocation.
+    if (revoked !== undefined && revoked !== this.session.sessionId) return;
+    if (this.groupLeader) { const l = this.groupLeader; await l.serialised(() => l.rehome(revoked)); return; }
     if (this.groupMembers.length > 0) { await this.rehomeGroup(); return; }
     const lanes = [...this.lanes.values()];
     let release: () => void = noop;
@@ -911,13 +1031,14 @@ export class CockroachOwnerRuntime implements OwnerRuntime {
     if (this.groupMembers.length > 0) { await this.resumeGroup(); return; }
     const lanes = [...this.lanes.values()];
     await this.waitIdle(lanes);
+    const sessionId = this.session.sessionId;
     const read = await this.retryUntilAnswered(() => this.store.resolutionRead(
-      this.decl.kind, this.session.shard, this.session.sessionId, lanes.map((l) => l.holding.slot), []));
+      this.decl.kind, this.session.shard, sessionId, lanes.map((l) => l.holding.slot), []));
     for (const l of lanes) {
       const row = read.slots.get(l.holding.slot);
       if (!row || row.epoch !== l.holding.epoch || row.sessionId !== this.session.sessionId) this.loseSlot(l.holding.slot, 'taken');
     }
-    if (read.sessionRevoked) { await this.rehome(); return; }
+    if (read.sessionRevoked) { await this.rehome(sessionId); return; }
     // Step 4: report position = T_res, then onReportable without a further wait (C01 §3.1).
     for (const l of lanes) if (!l.released) this.startReporting(l, read.tRes, false);
   }
@@ -1102,7 +1223,7 @@ export class CockroachOwnerRuntime implements OwnerRuntime {
     this.lanes.delete(slot);
     for (const q of lane.queue.splice(0)) q.resolve({ r: 'StaleEpoch' });
     for (const [k, t] of this.timers) {
-      if (slotOfPartition(t.partition, this.decl.slotCount) === slot) { clearTimeout(t.timeout); this.timers.delete(k); }
+      if (this.slotFor(t.partition) === slot) { clearTimeout(t.timeout); this.timers.delete(k); }
     }
     this.log('slot released', { slot, reason });
     this.hooks?.onRelease(slot, reason);
@@ -1114,10 +1235,11 @@ export class CockroachOwnerRuntime implements OwnerRuntime {
    * A partition's log rows from `fromSeq`, by (partition, seq) across the slots it lived in, with payload and
    * audit opened (C01 §3.1 "Rebuilding a partition"). For replay on takeover, Ambiguous reload and adopt.
    */
-  async readLog(partition: PartitionKey, fromSeq: Seq = 1n): Promise<OpenedLogRow[]> {
+  async readLog(partition: PartitionKey, fromSeq: Seq = 1n, o: { platform?: boolean } = {}): Promise<OpenedLogRow[]> {
     if (!this.store.readLogRows) throw new Error('the store cannot read log rows');
     const rows = await this.store.readLogRows(this.decl.kind, partition, fromSeq);
-    return rows.map((r) => openLogRow(this.decl, this.sealer, r));
+    // The platform's `moved` and `adopt` entries take a seq but are not the owner's (C01 §3.3); `platform: true` keeps them.
+    return rows.filter((r) => o.platform === true || !isPlatformEntry(r.kind)).map((r) => openLogRow(this.decl, this.sealer, r));
   }
 
   /** The partitions the slot serves: heads that name it and are adopted (C01 §3.2). For onAcquire rebuilds. */
@@ -1130,8 +1252,16 @@ export class CockroachOwnerRuntime implements OwnerRuntime {
   private async rebuildFences(slot: SlotNo): Promise<void> {
     if (!this.store.listPartitions || !this.store.readLogRows) return;
     for (const p of await this.store.listPartitions(this.decl.kind, slot)) {
-      for (const row of await this.readLog(p)) if (row.senderFence) this.recordFence(row.senderFence, row.senderFence);
+      // C01 §3.3: a partition adopted into this slot is routed here by every later holder of the slot.
+      if (slotOfPartition(p, this.decl.slotCount) !== slot) this.placed.set(hex(p), slot);
+      await this.rebuildPartitionFences(p);
     }
+  }
+
+  /** R47-24: the high-water marks that one partition's entries record (on onAdopt, C01 §3.3 step 5). */
+  private async rebuildPartitionFences(partition: PartitionKey): Promise<void> {
+    if (!this.store.readLogRows) return;
+    for (const row of await this.readLog(partition)) if (row.senderFence) this.recordFence(row.senderFence, row.senderFence);
   }
 
   /**
@@ -1145,6 +1275,229 @@ export class CockroachOwnerRuntime implements OwnerRuntime {
     if (!this.leaseValid(slot).valid) throw new Error(`slot ${slot} is not held with a valid lease`);
     await this.publisher.publish([{ topic: m.topic, key: partition, value,
       headers: { ...headers, partition: Buffer.from(partition), kind: 'message', epoch: this.epoch(slot).toString() } }]);
+  }
+
+  // ---------------- moves (C01 §3.3) and splitting (C01 §3.8) ----------------
+
+  /**
+   * Step 3, in the holder of A: append `moved(to, generation)` in the slot's next batch. The head row then names `to`
+   * with `generation` (= g + 1) and `adopted = false`; from the commit A answers MOVING for the partition, cancels its
+   * timers and calls `onMovedOut`. `ConditionFailed('generation')` when `generation` is not the head's + 1,
+   * `ConditionFailed('noHead')` for a partition with no head row; the other results as for `append`.
+   */
+  moveOut(partition: PartitionKey, to: SlotNo, generation: Generation): Promise<AppendResult> {
+    return this.enqueue({ partition }, {}, { op: 'moved', to, generation });
+  }
+
+  /**
+   * Step 2, in the holder of B: this process routes the partition to `to` from now on (a call answers MOVING until
+   * `adopt`), and the owner pre-warms it from its log by (partition, seq) (`moves.prewarm`).
+   */
+  async prepareAdopt(m: { partition: PartitionKey; from: SlotNo; to: SlotNo; generation: Generation }): Promise<void> {
+    const key = hex(m.partition);
+    this.placed.set(key, m.to);
+    let seq = 0n;
+    if (this.store.readLogRows) {
+      const rows = await this.store.readLogRows(this.decl.kind, m.partition, 1n);
+      seq = rows.at(-1)?.seq ?? 0n;
+      const own = rows.filter((r) => !isPlatformEntry(r.kind)).map((r) => openLogRow(this.decl, this.sealer, r));
+      await this.o.moves?.prewarm?.(m.partition, own);
+    }
+    this.prepared.set(key, { ...m, seq });
+  }
+
+  /** The inbox of this process for the report fences of moves into its slots (step 4 push, V59-7). */
+  moveInbox(): MoveInbox {
+    return {
+      fence: (f) => {
+        if (f.kind !== this.decl.kind) return;
+        const k = `${f.kind}|${f.slot}`;
+        const cur = this.fencesIn.get(k);
+        if (cur === undefined || compareHlc(f.reportThrough, cur) > 0) this.fencesIn.set(k, f.reportThrough);
+        for (const w of [...this.fenceWaiters]) w();
+      },
+    };
+  }
+
+  /**
+   * Steps 5 and 6, in the holder of B: wait for A's report fence (`owner_slot(kind, A).report_through` ≥ ts(moved), by
+   * the pushed marker or, after `fenceReadAfterMs`, by bounded reads; kinds without markers do not wait), give the
+   * owner the rows above its pre-warm, append `adopt(g + 1)` conditional on the head naming B unadopted at g + 1, then
+   * rebuild the partition's admitCommand marks and call `onAdopt`. B reports no entry of the partition until read_lease
+   * + ε after the commit. `ConditionFailed('notPrepared')` without `prepareAdopt`; `ConditionFailed('adopt')` when
+   * the head does not name B unadopted at the generation.
+   */
+  async adopt(partition: PartitionKey): Promise<AppendResult> {
+    const key = hex(partition);
+    const m = this.prepared.get(key);
+    if (!m) return { r: 'ConditionFailed', which: 'notPrepared' };
+    const lane = this.lanes.get(m.to);
+    if (!lane || lane.released) return { r: 'StaleEpoch' };
+    const head = (await this.retryUntilAnswered(() => this.store.resolutionRead(
+      this.decl.kind, this.session.shard, this.session.sessionId, [], [partition]))).heads.get(key);
+    if (!head || head.slot !== m.to || head.adopted || head.generation !== m.generation) return { r: 'ConditionFailed', which: 'adopt' };
+    const fence = reportsMarkers(this.decl) ? await this.waitFence(m.from, head.ts) : null;
+    if (this.store.readLogRows && this.o.moves?.prewarm) {
+      const rows = (await this.store.readLogRows(this.decl.kind, partition, m.seq + 1n)).filter((r) => !isPlatformEntry(r.kind));
+      if (rows.length > 0) await this.o.moves.prewarm(partition, rows.map((r) => openLogRow(this.decl, this.sealer, r)));
+    }
+    let r = await this.enqueue({ partition }, {}, { op: 'adopt', from: m.from, generation: m.generation, fence: { reportThrough: fence } }, m.to);
+    if (r.r === 'Ambiguous') {
+      // M1: the slot decides nothing until resolution completes; then the head row tells if the adopt committed.
+      while (lane.gate) await lane.gate.catch(() => {});
+      const h = (await this.retryUntilAnswered(() => this.store.resolutionRead(
+        this.decl.kind, this.session.shard, this.session.sessionId, [], [partition]))).heads.get(key);
+      if (h && h.slot === m.to && h.adopted && h.generation === m.generation) r = { r: 'Committed', seqFrom: h.seq, seqTo: h.seq, ts: h.ts, streamSeqs: {} };
+    }
+    if (r.r !== 'Committed') return r;
+    this.prepared.delete(key);
+    await this.rebuildPartitionFences(partition);
+    await this.hooks?.onAdopt(partition, m.generation);
+    return r;
+  }
+
+  /** Step 5 fence check: A's report_through at or above ts(moved), pushed or read (C01 §3.3). */
+  private waitFence(from: SlotNo, tsMoved: HlcTs): Promise<HlcTs> {
+    const key = `${this.decl.kind}|${from}`;
+    const ok = (t: HlcTs | null | undefined): t is HlcTs => t !== undefined && t !== null && compareHlc(t, tsMoved) >= 0;
+    const pushed = this.fencesIn.get(key);
+    if (ok(pushed)) { this.moveStats.fencesPushed += 1; return Promise.resolve(pushed); }
+    const afterMs = this.o.moves?.fenceReadAfterMs ?? 100;
+    const pollMs = this.o.moves?.fencePollMs ?? 100;
+    return new Promise<HlcTs>((resolve, reject) => {
+      let done = false;
+      let timer: NodeJS.Timeout | undefined;
+      const finish = (t: HlcTs, how: 'fencesPushed' | 'fencesRead'): void => {
+        if (done) return;
+        done = true;
+        if (timer) clearTimeout(timer);
+        this.fenceWaiters.delete(waiter);
+        this.moveStats[how] += 1;
+        resolve(t);
+      };
+      const waiter = (): void => { const p = this.fencesIn.get(key); if (ok(p)) finish(p, 'fencesPushed'); };
+      this.fenceWaiters.add(waiter);
+      const read = async (): Promise<void> => {
+        if (done) return;
+        if (this.localStopped || this.stopping) { done = true; this.fenceWaiters.delete(waiter); reject(new Error('runtime stopped while waiting for a move fence')); return; }
+        try {
+          const t = await this.store.readReportThrough?.(this.decl.kind, from, tsMoved);
+          if (ok(t)) { finish(t, 'fencesRead'); return; }
+        } catch (e) { this.log('fence read failed', { from, error: String(e) }); }
+        if (!done) { timer = setTimeout(() => { void read(); }, pollMs); timer.unref(); }
+      };
+      timer = setTimeout(() => { void read(); }, afterMs);
+      timer.unref();
+    });
+  }
+
+  /** Push the report fence to the target of each move out of this slot that the marker at `through` covers. */
+  private pushFences(lane: Lane, through: HlcTs): void {
+    const due = lane.pendingFences.filter((f) => compareHlc(f.ts, through) <= 0);
+    if (due.length === 0) return;
+    lane.pendingFences = lane.pendingFences.filter((f) => compareHlc(f.ts, through) > 0);
+    for (const f of due) {
+      const inbox = this.o.moves?.peer?.(this.decl.kind, f.to);
+      if (!inbox) { this.log('no inbox for a move fence; the target reads owner_slot', { to: f.to }); continue; }
+      try { inbox.fence({ kind: this.decl.kind, slot: lane.holding.slot, reportThrough: through }); }
+      catch (e) { this.log('move fence push failed', { to: f.to, error: String(e) }); }
+    }
+  }
+
+  /** V59-7: the successor of A finds the moves out of A not adopted yet; its first marker is pushed to each target. */
+  private async findPendingMoves(slot: SlotNo): Promise<void> {
+    const lane = this.lanes.get(slot);
+    if (!lane || !reportsMarkers(this.decl) || !this.store.pendingMovesFrom) return;
+    try {
+      for (const m of await this.store.pendingMovesFrom(this.decl.kind, slot)) lane.pendingFences.push({ to: m.to, ts: m.ts });
+    } catch (e) { this.log('pending moves read failed', { slot, error: String(e) }); }
+  }
+
+  /** The slot where a creation of the partition may commit (C01 §3.8; V59-2), from the applied account map. */
+  private creationSlot(partition: PartitionKey): SlotNo | undefined {
+    const v = this.appliedMap;
+    if (!v) return undefined;
+    const a = slotOfInMap(v, partition);
+    return a.headDecides ? a.slot + (v.previousCount ?? v.slotCount) : a.slot;
+  }
+
+  /** A new account map version (C01 §3.8): its creation rules apply at once; each held splitting slot is acknowledged. */
+  private applyMap(v: SlotMapVersion): void {
+    this.appliedMap = v;
+    const n = v.previousCount;
+    if (n === undefined || !this.o.placement) return;
+    for (const [slot, lane] of this.lanes) {
+      if (slot < n && v.splitState[slot] === 'splitting' && lane.splitAcked !== v.version) {
+        this.ackSplit(lane, v).catch((e: unknown) => this.log('ackSplitting failed', { slot, error: String(e) }));
+      }
+    }
+  }
+
+  /**
+   * R47-05: once no batch of the slot that started before the version was applied is in flight or unresolved, list
+   * the slot's upper-half accounts as of then and call placement's `ackSplitting`.
+   */
+  private async ackSplit(lane: Lane, v: SlotMapVersion): Promise<void> {
+    const n = v.previousCount;
+    const placement = this.o.placement;
+    if (n === undefined || !placement || !this.store.listPartitions) return;
+    await this.waitIdle([lane]);
+    while (lane.gate) await lane.gate.catch(() => {});
+    if (lane.released) return;
+    const s = lane.holding.slot;
+    const asOf = this.store.clusterTime ? await this.store.clusterTime() : hlcFromWallMs(this.wallMs());
+    const upperHalf = (await this.store.listPartitions(this.decl.kind, s)).filter((p) => home(p) % (2 * n) === s + n);
+    await placement.ackSplitting({ kind: 'account', slot: s, mapVersion: v.version, epoch: lane.holding.epoch, upperHalf, asOf });
+    lane.splitAcked = v.version;
+  }
+
+  /**
+   * C01 §2.7 `HolderPlacementApi.listPartitions` (R47-05), answered by the slot's holder: NOT_OWNER without the slot;
+   * NOT_ACKED before this process applied the version and resolved the slot's batches in flight; else the served
+   * partitions with home mod `home.mod` = `home.eq`.
+   */
+  async listPartitionsFor(req: { kind: 'account'; slot: SlotNo; mapVersion: MapVersion; home: { mod: number; eq: number } }): Promise<ListPartitionsAnswer> {
+    const lane = this.lanes.get(req.slot);
+    if (req.kind !== this.decl.kind || !lane || lane.released) return { refused: 'NOT_OWNER' };
+    const applied = this.appliedMap !== undefined && this.appliedMap.version >= req.mapVersion;
+    // Acknowledged: no batch that started before the version is open. Else the slot must be idle with nothing unresolved.
+    const acked = lane.splitAcked !== undefined && lane.splitAcked >= req.mapVersion;
+    if (!applied || (!acked && (lane.running || lane.secondRunning || lane.gate !== null || lane.unresolved > 0))) return { refused: 'NOT_ACKED' };
+    if (!this.store.listPartitions) throw new Error('the store cannot list partitions');
+    const asOf = this.store.clusterTime ? await this.store.clusterTime() : hlcFromWallMs(this.wallMs());
+    const partitions = (await this.store.listPartitions(this.decl.kind, req.slot)).filter((p) => home(p) % req.home.mod === req.home.eq);
+    return { partitions, asOf, epoch: lane.holding.epoch };
+  }
+
+  /** C08 §J (R46-12): send `integrity_report` once for each new local hold; retried until audit accepts it. */
+  private reportIntegrity(lane: Lane): void {
+    const send = this.o.integrityReport;
+    if (!send) return;
+    for (const hold of lane.holding.integrityHolds.values()) {
+      if (hold.reporting) continue;
+      hold.reporting = true;
+      const report: IntegrityReport = { kind: this.decl.kind, partition: hold.partition, seq: hold.seq, observedChain: hold.observedChain };
+      const run = async (): Promise<void> => {
+        for (let attempt = 0; !this.localStopped && !lane.released; attempt++) {
+          try { hold.detectionRef = (await send(report)).detectionRef; return; }
+          catch (e) {
+            this.log('integrity_report failed; retrying', { error: String(e), attempt });
+            await new Promise((r) => { const t = setTimeout(r, Math.min(5_000, 100 * 2 ** Math.min(attempt, 6))); t.unref(); });
+          }
+        }
+      };
+      run().catch(() => { /* logged */ });
+    }
+  }
+
+  /** The keys of the partition's armed timers (tests; CC-2). */
+  timerKeys(partition: PartitionKey): string[] {
+    const prefix = `${hex(partition)}|`;
+    return [...this.timers.keys()].filter((k) => k.startsWith(prefix)).map((k) => k.slice(prefix.length));
+  }
+
+  private cancelTimersOf(partition: PartitionKey): void {
+    for (const key of this.timerKeys(partition)) this.cancelTimer(partition, key);
   }
 
   // ---------------- leases, fences, time ----------------
@@ -1163,8 +1516,7 @@ export class CockroachOwnerRuntime implements OwnerRuntime {
     return this.generations.get(hex(partition)) ?? 0;
   }
 
-  /** C01 §3.8, R47-24: the high-water marks are rebuilt from the log before onAcquire (rebuildFences).
-   *  TODO(I3, R47-24): the same on onAdopt. */
+  /** C01 §3.8, R47-24: the high-water marks are rebuilt from the log before onAcquire and before onAdopt. */
   admitCommand(sender: { kind: OwnerKind; partition: PartitionKey }, fence: WriterFence):
     { admit: true } | { admit: false; recorded: WriterFence } {
     const recorded = this.fences.get(`${sender.kind}|${hex(sender.partition)}`);
@@ -1268,8 +1620,8 @@ export class CockroachOwnerRuntime implements OwnerRuntime {
 
   // ---------------- routing (fixed map, C01 §3.8) ----------------
 
-  /** C01 §3.8: the account kind routes by the slot-map feed; other kinds by their fixed slot count.
-   *  TODO(I3, C01 §3.8): cache refresh by STALE_EPOCH, MOVED and MOVING answers; holderHint and readers. */
+  /** C01 §3.8: the account kind routes by the slot-map feed; other kinds by their fixed slot count and this process's
+   *  moves. A sender follows MOVED and MOVING answers itself (`routeAfterRefusal`). */
   route(kind: OwnerKind, partition: PartitionKey): RouteInfo {
     if (kind === 'account' && this.o.slotMap?.current()) {
       const a = this.slotOf(partition);
@@ -1278,11 +1630,11 @@ export class CockroachOwnerRuntime implements OwnerRuntime {
     }
     const count = kind === this.decl.kind ? this.decl.slotCount : this.o.routeSlotCounts?.[kind];
     if (count === undefined) throw new Error(`no slot count for kind ${kind} (fixed map of I1a)`);
-    const slot = slotOfPartition(partition, count);
+    const slot = kind === this.decl.kind ? this.slotFor(partition) : slotOfPartition(partition, count);
     return { slot, generation: kind === this.decl.kind ? this.generation(partition) : 0, epoch: kind === this.decl.kind ? this.epoch(slot) : 0n, readers: [] };
   }
 
-  /** Fixed map: headDecides always false in I1 (plan §3). */
+  /** The placement feed's answer (headDecides during a split, C01 §3.8), else the fixed map (headDecides false). */
   slotOf(account: PartitionKey): SlotOfAnswer {
     const fromFeed = this.o.slotMap?.slotOf(account);
     if (fromFeed) return fromFeed;

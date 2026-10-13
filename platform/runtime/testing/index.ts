@@ -131,6 +131,10 @@ export class RuntimeDouble implements OwnerRuntime {
   private readonly lastEpoch = new Map<SlotNo, Epoch>();
   private readonly stops = new Map<string, Uint8Array>();
   private readonly movedOut = new Map<string, { slot: SlotNo; generation: Generation; adopted: boolean }>();
+  /** Partitions prepared for a move into this double (C01 §3.3 step 2): Moving until `adopt`. */
+  private readonly incoming = new Map<string, { slot: SlotNo; generation: Generation }>();
+  /** Partitions placed in a slot other than their home slot (prepared or adopted here). */
+  private readonly placed = new Map<string, SlotNo>();
   private readonly fences = new Map<string, WriterFence>();
   private readonly timers = new Map<string, { partition: PartitionKey; key: string; atTs: HlcTs }>();
   private readonly subscriptions = new Map<string, Array<{ gate: 'committed' | 'reported'; handler: (e: FeedEvent) => Promise<void> }>>();
@@ -237,7 +241,7 @@ export class RuntimeDouble implements OwnerRuntime {
   }
 
   /** Open an integrity stop: appends for the partition answer Stopped (CC-4). */
-  stop(partition: PartitionKey, detectionRef = new Uint8Array([1])): void {
+  stop(partition: PartitionKey, detectionRef: Uint8Array = new Uint8Array([1])): void {
     this.stops.set(hex(partition), detectionRef);
   }
 
@@ -245,11 +249,24 @@ export class RuntimeDouble implements OwnerRuntime {
     this.stops.delete(hex(partition));
   }
 
-  /** Simulate `moved(to, g+1)` committing in this slot: Moving until adopted, then Moved; calls onMovedOut (CC-2). */
+  /**
+   * Simulate `moved(to, g+1)` committing in this slot: Moving until adopted, then Moved; the partition's timers are
+   * cancelled (C01 §3.7) and onMovedOut is called (CC-2).
+   */
   moveOut(partition: PartitionKey, toSlot: SlotNo): void {
     const st = this.state(partition);
     this.movedOut.set(hex(partition), { slot: toSlot, generation: st.generation + 1, adopted: false });
+    for (const [k, t] of this.timers) if (hex(t.partition) === hex(partition)) this.timers.delete(k);
     this.hooks?.onMovedOut(partition);
+  }
+
+  /**
+   * C01 §3.3 step 2 in the target (as `CockroachOwnerRuntime.prepareAdopt`): the partition is routed to `to` here and
+   * answers Moving until `adopt`.
+   */
+  prepareAdopt(m: { partition: PartitionKey; from: SlotNo; to: SlotNo; generation: Generation }): void {
+    this.incoming.set(hex(m.partition), { slot: m.to, generation: m.generation });
+    this.placed.set(hex(m.partition), m.to);
   }
 
   /** The target adopted the partition: this slot now answers Moved(slot, g+1). */
@@ -258,12 +275,26 @@ export class RuntimeDouble implements OwnerRuntime {
     if (m) m.adopted = true;
   }
 
-  /** Simulate `adopt(g)` committing here: the partition is served with generation g; calls onAdopt (CC-3). */
-  async adopt(partition: PartitionKey, generation: Generation): Promise<void> {
+  /**
+   * Simulate `adopt(g)` committing here: the partition is served with generation g (default: the prepared one);
+   * calls onAdopt (CC-3). When a double of the same world moved it out, its log, seq and stream sequences continue
+   * here and that double answers Moved from now on.
+   */
+  async adopt(partition: PartitionKey, generation?: Generation): Promise<void> {
+    const k = hex(partition);
+    const inc = this.incoming.get(k);
+    const g = generation ?? inc?.generation ?? this.state(partition).generation + 1;
+    const source = this.world.members.find((d) => d !== this && d.movedOut.has(k));
+    if (source) {
+      const from = source.state(partition);
+      this.partitions.set(k, { ...from, streams: { ...from.streams }, log: [...from.log] });
+      source.markAdoptedElsewhere(partition);
+    }
     const st = this.state(partition);
-    st.generation = generation; st.adopted = true; st.slot = slotOfPartition(partition, this.slotCount);
-    this.movedOut.delete(hex(partition));
-    await this.hooks?.onAdopt(partition, generation);
+    st.generation = g; st.adopted = true; st.slot = inc?.slot ?? this.placed.get(k) ?? slotOfPartition(partition, this.slotCount);
+    this.incoming.delete(k);
+    this.movedOut.delete(k);
+    await this.hooks?.onAdopt(partition, g);
   }
 
   /** Acquire (or re-acquire) a slot: epoch + 1, onAcquire. Log, heads and rows survive (they are the database). */
@@ -384,7 +415,7 @@ export class RuntimeDouble implements OwnerRuntime {
     this.decideRuns[idx] = 0;
     const scripted = this.script.shift();
     const result = scripted === undefined
-      ? this.commitDefault(call, idx)
+      ? this.commitDefault(call, idx, opts)
       : typeof scripted === 'function' ? scripted(call, opts) : scripted;
     this.appends.push({ call, opts, result });
     this.trace.push({ t: 'append', partition: hex(call.partition), result: result.r });
@@ -499,12 +530,13 @@ export class RuntimeDouble implements OwnerRuntime {
 
   // ---------------- default append path ----------------
 
-  private commitDefault(call: AppendCall, idx: number): AppendResult {
+  private commitDefault(call: AppendCall, idx: number, opts?: AppendOptions): AppendResult {
     const key = hex(call.partition);
-    const slot = slotOfPartition(call.partition, this.slotCount);
+    const slot = opts?.slot ?? this.placed.get(key) ?? slotOfPartition(call.partition, this.slotCount);
     if (!this.held.has(slot)) return { r: 'StaleEpoch' };
     const stop = this.stops.get(key);
     if (stop) return { r: 'Stopped', detectionRef: stop };
+    if (this.incoming.has(key)) return { r: 'Moving' };
     const moved = this.movedOut.get(key);
     if (moved) return moved.adopted ? { r: 'Moved', slot: moved.slot, generation: moved.generation } : { r: 'Moving' };
 

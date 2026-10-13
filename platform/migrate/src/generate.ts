@@ -45,8 +45,14 @@ export function platformMigration(): Migration {
       `CREATE TABLE IF NOT EXISTS placement_integrity_stops (
   kind STRING, partition BYTES, detection_ref BYTES NOT NULL,
   state STRING CHECK (state IN ('stopped','resumed')), checkpoint BYTES NULL, at DECIMAL NOT NULL,
+  fenced_slots INT4[] NULL, resumed_at DECIMAL NULL, resume_fenced_slots INT4[] NULL, incident_decision_ref BYTES NULL,
   PRIMARY KEY (kind, partition, detection_ref)
 )`,
+      // C01 §8: nullable columns added for Stop and Resume (S-PLAT-I3: fenced slots, resume, incident decision).
+      `ALTER TABLE placement_integrity_stops ADD COLUMN IF NOT EXISTS fenced_slots INT4[] NULL`,
+      `ALTER TABLE placement_integrity_stops ADD COLUMN IF NOT EXISTS resumed_at DECIMAL NULL`,
+      `ALTER TABLE placement_integrity_stops ADD COLUMN IF NOT EXISTS resume_fenced_slots INT4[] NULL`,
+      `ALTER TABLE placement_integrity_stops ADD COLUMN IF NOT EXISTS incident_decision_ref BYTES NULL`,
       // C08 §C: slot-wide commit position of kinds that declare slotPositions (an addition to C01 §2.3).
       `CREATE TABLE IF NOT EXISTS owner_slot_position (
   kind STRING NOT NULL, slot INT4 NOT NULL, position INT8 NOT NULL, PRIMARY KEY (kind, slot)

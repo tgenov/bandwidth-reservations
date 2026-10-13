@@ -1,7 +1,7 @@
 /** @share/owner-runtime — C01 v1 owner runtime (S-PLAT I1a, I1b). */
 export * from './api.ts';
 export { systemClock, type WallClock } from './clock.ts';
-export { hlc, compareHlc, hlcFromWallMs, hlcToWallMs, hlcAddMs, hlcParts } from './hlc.ts';
+export { hlc, compareHlc, hlcFromWallMs, hlcToWallMs, hlcAddMs, hlcParts, hlcBefore } from './hlc.ts';
 export { home, homeKey, reverseBits20, slotOfPartition, isPowerOfTwo } from './home.ts';
 export { chainGenesis, chainNext, type ChainRow } from './chain.ts';
 export { DevSealer, type Sealer, type SealContext } from './sealer.ts';
@@ -9,7 +9,11 @@ export { validateDeclaration, validTopic, assertDeclaration, assertIdentifier, p
 export { rowId } from './rowref.ts';
 export { PARAMS } from './params.ts';
 export { hex, fromHex, utf8, bytesEqual, encodeJson, decodeJson } from './bytes.ts';
-export { CockroachOwnerRuntime, NotInThisIncrement, SlotGroupError, type SlotGroupErrorCode, type OwnerRuntimeOptions } from './runtime.ts';
+export {
+  CockroachOwnerRuntime, NotInThisIncrement, SlotGroupError, type SlotGroupErrorCode, type OwnerRuntimeOptions, type MoveOptions, type MoveInbox,
+  type ReportFence, type IntegrityReport, type AckSplittingRequest, type ListPartitionsAnswer,
+} from './runtime.ts';
+export { PLATFORM_ENTRY, isPlatformEntry, type PlatformOp, type IntegrityHold } from './batch/attempt.ts';
 export { PgStore, C02_DISPLACEMENT, pgFeedSeqReader, type PgStoreOptions, type DisplacementBinding } from './store/pg.ts';
 export type { OwnerStore, StoredHead, BatchWrites } from './store/types.ts';
 export { KafkaPublisher, MemoryPublisher, type Publisher, type KafkaPublisherOptions } from './publisher.ts';
@@ -65,6 +69,38 @@ export {
   STANDBY_PUSH_QUEUE_MAX, type GrpcStandbyChannelOptions, type GrpcStandbyChannelStats, type GrpcStandbyServerOptions,
   type StandbyCodecErrorCode,
 } from './standby/grpc.ts';
+
+// ---------- I3: moves, integrity stops, slot map service ----------
+export {
+  IntegrityStopService, IntegrityStopError, FenceSlotMissingError, INTEGRITY_STOP_ERROR_CODES, MemoryIntegrityStopStore, placementSlotLocator,
+  type IntegrityStopErrorCode, type StopRequest, type ResumeRequest, type StopAck, type IntegrityStopCaller, type IntegrityStopRow,
+  type PartitionMoveRow, type MoveLookup, type IntegrityStopTx, type IntegrityStopStore, type SlotLocator, type HeadInspector,
+  type PlacementSlotLocatorOptions, type IntegrityStopServiceOptions,
+} from './placement/integrity-stop.ts';
+export {
+  encodeStopRequest, decodeStopRequest, encodeResumeRequest, decodeResumeRequest, encodeStopAck, decodeStopAck, IntegrityStopCodecError,
+  INTEGRITY_STOP_CODEC_ERROR_CODES, type IntegrityStopCodecErrorCode,
+} from './placement/integrity-stop-codec.ts';
+export {
+  GrpcIntegrityStopServer, GrpcIntegrityStopClient, INTEGRITY_STOP_PATH, INTEGRITY_RESUME_PATH, SHARE_ERROR_HEADER, WORKLOAD_HEADER,
+  type IntegrityStopHandler, type GrpcIntegrityStopServerOptions, type GrpcIntegrityStopClientOptions,
+} from './placement/integrity-stop-grpc.ts';
+export {
+  SlotMapService, MemorySlotMapStore, SlotMapError, accountTopicPartitions, SPLIT_PARALLELISM, type SlotMapErrorCode, type SlotMapStore,
+  type SlotMapServiceOptions, type HolderPartitionLister, type ProbeAccountRow, type SplitAckRow, type RequestRow, type DoublingState,
+  type DoublingPhase, type SlotProgress, type ReslotRequest, type ReslotRefusal, type ReslotAnswer, type DoublingStep,
+} from './placement/slot-map-service.ts';
+export {
+  DevSummarySigner, verifyProbeSetSummary, probeSetDigest, probeSetSummaryBytes, signProbeSetSummary, sortProbeSet,
+  type ProbeSetSummary, type ProbeMember, type SummarySigner,
+} from './placement/probe-set.ts';
+export { PgSlotMapStore, SLOT_MAP_EXTRA_TABLES, type SlotMapPgPool, type SlotMapPgClient } from './placement/pg-slot-map-store.ts';
+export {
+  MoveCoordinator, MemoryMoveStore, MoveError, HotPartitionDetector, MOVE_CUTOVER_MAX_MS, HOT_RATE_PER_S, HOT_WINDOW_MS,
+  type MoveRequest, type MoveHolders, type MoveStore, type MoveErrorCode, type MoveCutoverAlert, type Scheduler, type MoveCoordinatorOptions,
+} from './placement/moves.ts';
+export { staleSenderAction, type StaleSenderAction } from './fencing.ts';
+export { PgIntegrityStopStore, type PgClientLike, type PgPoolLike, type PgIntegrityStopStoreOptions } from './placement/pg-integrity-stop.ts';
 
 // TODO(S-PLAT-I1 item 15, C01 §3.1–§3.6): TLA+ model of sessions, revocation, resume, re-home, epochs, slot batches,
 //   handoff, read leases, report position, marker chain, relay progress and closure; TLC in CI.

@@ -36,7 +36,7 @@ async function setup(timeouts: number) {
     if (n <= timeouts) tx.readFence = () => Promise.reject(new TierTimeout(n - 1, 400));
     return tx;
   };
-  const holding: SlotHolding = { slot: 0, epoch: got.epoch, sessionId: 'sess-1', stopsVersion: null, stops: new Map(), chains: new Map(), integrityHolds: new Set() };
+  const holding: SlotHolding = { slot: 0, epoch: got.epoch, sessionId: 'sess-1', stopsVersion: null, stops: new Map(), chains: new Map(), integrityHolds: new Map() };
   const calls: PendingCall[] = [{ call: { partition: utf8('p1'), entries: [{ kind: 1, schemaV: 1, identity: utf8('i1'), audit: AUDIT, payload: { a: 1 } }] }, opts: {} }];
   return { store, log, holding, calls, begun: () => begun };
 }

@@ -4,7 +4,7 @@
  * This package is neutral: it imports only `@share/owner-runtime` types and `node:test`.
  */
 export { isPending, pendingProvider, type Closable, type Pending, type SubjectFactory } from './support.ts';
-export { C01_SUITE_DECLARATION, runC01ProviderSuite, type C01LogRow, type C01Subject } from './c01.ts';
+export { C01_SUITE_DECLARATION, runC01ProviderSuite, c01MoveEvents, type C01LogRow, type C01Subject } from './c01.ts';
 export {
   C02_SUITE_CAPACITY, runC02ProviderSuite, type C02ConvertCmd, type C02ConvertReply, type C02HoldCmd, type C02HoldPort,
   type C02HoldReply, type C02ReleaseCmd, type C02ReleaseReply, type C02Subject, type C02SuiteOptions, type C02CounterOffer,

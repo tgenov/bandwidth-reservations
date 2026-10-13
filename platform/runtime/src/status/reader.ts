@@ -11,7 +11,8 @@ import type pg from 'pg';
 import type { HlcTs, MonotonicNs, PartitionKey, RowRef, SlotNo, StatusReaderRuntime } from '../api.ts';
 import { NotClosed } from '../api.ts';
 import { assertIdentifier } from '../declaration.ts';
-import { compareHlc, hlcParts } from '../hlc.ts';
+import { ceilMicrosLiteral, compareHlc } from '../hlc.ts';
+import { hex } from '../bytes.ts';
 import { keyObject } from '../rowref.ts';
 import { toPg } from '../store/pg.ts';
 import { PARAMS } from '../params.ts';
@@ -49,16 +50,7 @@ interface LeaseState {
 
 const ZERO = '0.0000000000' as HlcTs;
 
-/** ceil to a microsecond, as a TIMESTAMPTZ literal (with_min_timestamp takes a TIMESTAMPTZ). */
-export function ceilMicrosLiteral(t: HlcTs): string {
-  const { wallNs, logical } = hlcParts(t);
-  let us = wallNs / 1000n;
-  if (wallNs % 1000n !== 0n || logical > 0n) us += 1n;
-  const ms = Number(us / 1000n);
-  const frac = (us % 1_000_000n).toString().padStart(6, '0');
-  const iso = new Date(ms).toISOString().slice(0, 19).replace('T', ' ');
-  return `${iso}.${frac}+00:00`;
-}
+export { ceilMicrosLiteral };
 
 export class StatusReader implements StatusReaderRuntime {
   private readonly o: StatusReaderOptions;
@@ -68,6 +60,10 @@ export class StatusReader implements StatusReaderRuntime {
   private readonly slots = new Set<SlotNo>();
   private readonly attached = new Set<ReadLeaseHolder>();
   private readonly rule3Cache = new Map<SlotNo, number>();
+  /** C01 §3.3: partitions whose `moved` this reader applied (hex → the old slot); answered by rule 4. */
+  private readonly movedOut = new Map<string, SlotNo>();
+  /** C01 §3.3, R47-17: the `adopt` ts of each partition adopted in a slot this reader serves. */
+  private readonly adoptTs = new Map<string, HlcTs>();
   private timer: NodeJS.Timeout | undefined;
 
   constructor(o: StatusReaderOptions) {
@@ -98,6 +94,8 @@ export class StatusReader implements StatusReaderRuntime {
         if (cur === undefined || compareHlc(through, cur) > 0) this.applied.set(slot, through);
         return this.applied.get(slot) as HlcTs;
       },
+      movedOut: (slot, partition) => { this.movedOut.set(hex(partition), slot); this.adoptTs.delete(hex(partition)); },
+      adopted: (_slot, partition, ts) => { this.movedOut.delete(hex(partition)); this.adoptTs.set(hex(partition), ts); },
     };
   }
 
@@ -126,10 +124,12 @@ export class StatusReader implements StatusReaderRuntime {
 
   /** Point reads at with_min_timestamp(ceil_µs(P_grant)); NotClosed ⇒ the caller answers by rule 4. */
   async leasedRead(partition: PartitionKey, points: RowRef[]): Promise<Array<unknown | undefined>> {
+    if (this.isMovedOut(partition)) throw new NotClosed('the partition moved out of this slot: rule 4');
     const l = this.readLease(this.o.slotOf(partition));
     if (!l.valid) throw new NotClosed('no valid read lease for the slot');
-    // TODO(I3, C01 §3.4 R47-17): max(pGrant, adoptTs(partition)) for an adopted partition.
-    const pGrant = l.pGrant;
+    // R47-17: each point read at with_min_timestamp(ceil_µs(max(pGrant, adoptTs(partition)))).
+    const adopt = this.adoptTs.get(hex(partition));
+    const pGrant = adopt !== undefined && compareHlc(adopt, l.pGrant) > 0 ? adopt : l.pGrant;
     const lit = ceilMicrosLiteral(pGrant);
     const out: Array<unknown | undefined> = [];
     for (const ref of points) {
@@ -148,9 +148,9 @@ export class StatusReader implements StatusReaderRuntime {
     return out;
   }
 
-  /** Moves are I3: a reader never applied `moved` in I1. */
-  isMovedOut(_partition: PartitionKey): boolean {
-    return false;
+  /** True when this reader applied `moved` of the partition (pushed by the old slot's holder) and no later `adopt` here. */
+  isMovedOut(partition: PartitionKey): boolean {
+    return this.movedOut.has(hex(partition));
   }
 
   /** Rule 3: a present-time consistent read of the holder's session and the request's rows. */
