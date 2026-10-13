@@ -184,9 +184,10 @@ test('P3-S48 150,000 bytes on r1 and 150,000 bytes on r2 in 12:05 give two lines
   assert.deepEqual(lines.map((l) => [l.route, l.weightsVersion, l.reasonDetails]),
     [['r1', 'w-r1', { priceVersion: 'pv-r1-10000' }], ['r2', 'w-r2', { priceVersion: 'pv-r2-13000' }]]);
   const entries = w.ledger.movements.flatMap((m) => m.lines.map((l) => l.entries));
+  // The Webster split of RFC-004 §B3.2 (review 73 TR-4): split(1) by 7 : 3 and by 3 : 1 gives the one unit to the supplier.
   assert.deepEqual(entries, [
-    [{ ledgerAccount: 'B:a1', amount: '-1' }, { ledgerAccount: 'SH:commission', amount: '1' }],
-    [{ ledgerAccount: 'B:a1', amount: '-1' }, { ledgerAccount: 'SH:commission', amount: '1' }],
+    [{ ledgerAccount: 'B:a1', amount: '-1' }, { ledgerAccount: 'S:s1:earn', amount: '1' }],
+    [{ ledgerAccount: 'B:a1', amount: '-1' }, { ledgerAccount: 'S:s2:earn', amount: '1' }],
   ]);
   assert.deepEqual(w.settlement.requests.flatMap((r) => r.lines.map((l) => [l.split?.route, l.split?.weightsVersion])), [['r1', 'w-r1'], ['r2', 'w-r2']]);
 });

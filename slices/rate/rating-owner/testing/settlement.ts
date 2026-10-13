@@ -6,10 +6,10 @@
  * It implements the parts that rating's output reaches and the reservation-batch suite: the mapping
  * rows "reservation, seq 0, original → M4", "usage, seq 0, original → M5" and "usage, seq > 0,
  * late_traffic, amount > 0 → M6"; whole usage batches (D1) and per-line exclusion in reservation
- * batches; dedup of each line by its canonical SourceRef (M2); `priorTotal` and sequence checks;
- * `lineCount`; the movement limit (V63-3); the M4 template by the Webster split of RFC-004 §B3.2; and
- * the posted acknowledgement with the ledger position. Fault injection: refuse a batch whole, or
- * exclude a line.
+ * batches; dedup of each line by its canonical SourceRef (M2); `priorTotal`, sequence and "weights of the
+ * original" checks (C06 §8 check 2, D4); `lineCount`; the movement limit (V63-3); the M4, M5 and M6 templates
+ * by the Webster split of RFC-004 §B3.2; and the posted acknowledgement with the ledger position. Fault
+ * injection: refuse a batch whole, or exclude a line.
  */
 import { hlc } from '@share/owner-runtime';
 import {
@@ -78,17 +78,34 @@ function parties(w: SplitWeights): Array<{ ledgerAccount: string; weight: bigint
 
 /** The M4 entries of a reservation line of `a` micro-USD: `B −a`, then each party's Webster share that is not 0. */
 export function m4Entries(account: string, a: bigint, w: SplitWeights): Array<{ ledgerAccount: string; amount: string }> {
-  const ps = parties(w);
-  const shares = websterSplit(a, ps.map((p) => p.weight));
-  return [{ ledgerAccount: `B:${account}`, amount: (-a).toString() },
-    ...ps.flatMap((p, i) => (shares[i] === 0n ? [] : [{ ledgerAccount: p.ledgerAccount, amount: (shares[i] as bigint).toString() }]))];
+  return splitEntries(account, 0n, a, w);
 }
+
+/**
+ * The normal-mode template of a line from total `p` to total `n` (RFC-004 §B2 M4, M5 with `p = 0`, M6): `B −(n − p)`,
+ * then each party's `split(n) − split(p)` that is not 0, by the Webster split.
+ */
+export function splitEntries(account: string, p: bigint, n: bigint, w: SplitWeights): Array<{ ledgerAccount: string; amount: string }> {
+  const ps = parties(w);
+  const before = websterSplit(p, ps.map((x) => x.weight));
+  const after = websterSplit(n, ps.map((x) => x.weight));
+  return [{ ledgerAccount: `B:${account}`, amount: (p - n).toString() },
+    ...ps.flatMap((x, i) => {
+      const d = (after[i] as bigint) - (before[i] as bigint);
+      return d === 0n ? [] : [{ ledgerAccount: x.ledgerAccount, amount: d.toString() }];
+    })];
+}
+
+/** Entries compared as a set of (ledger account, amount), as the ledger stores them. */
+const entriesKey = (es: Array<{ ledgerAccount: string; amount: string }>): string =>
+  JSON.stringify(es.map((e) => [e.ledgerAccount, e.amount]).sort((a, b) => (a[0] as string).localeCompare(b[0] as string)));
 
 /** The ledger: one partition for each buyer home (here `L:<account>`), insert-only movements. */
 export class LedgerDouble {
   readonly movements: MovementRecord[] = [];
   private readonly bySourceRef = new Map<string, PostedLine>();
-  private readonly lineTotals = new Map<string, { total: bigint; lastSeq: number; position: LedgerPosition; movementId: string }>();
+  private readonly lineTotals = new Map<string, { total: bigint; lastSeq: number; position: LedgerPosition; movementId: string;
+    weightsVersion: string | undefined }>();
   private readonly answers = new Map<string, { digest: string; answer: PostMovementResponse }>();
   private readonly seqs = new Map<string, bigint>();
   private readonly listeners: Array<(m: MovementRecord) => void> = [];
@@ -97,7 +114,7 @@ export class LedgerDouble {
   private readonly clock: () => number;
   private readonly weightsOf: ((version: string) => SplitWeights | undefined) | undefined;
 
-  /** `weightsOf` lets the ledger check M4 entries against the template of the line's weights (C06 §8 check 2). */
+  /** `weightsOf` lets the ledger check M4, M5 and M6 entries against the template of the line's weights (C06 §8 check 2). */
   constructor(clock: () => number, weightsOf?: (version: string) => SplitWeights | undefined) {
     this.clock = clock;
     this.weightsOf = weightsOf;
@@ -153,7 +170,10 @@ export class LedgerDouble {
           ...(lt ? { of: lt.movementId, ledgerPosition: lt.position } : {}) });
       } else if (seq !== (lt ? lt.lastSeq + 1 : 0)) {
         problems.set(i, { lineRef: ref, problem: 'out_of_sequence' });
-      } else if (l.kind === 'M4' && this.weightsOf && !this.followsM4Template(l, account)) {
+      } else if (lt && l.split?.weightsVersion !== lt.weightsVersion) {
+        // C06 §8 check 2, D4: an amendment has the weights version that its original was posted with.
+        problems.set(i, { lineRef: ref, problem: 'invalid' });
+      } else if ((l.kind === 'M4' || l.kind === 'M5' || l.kind === 'M6') && this.weightsOf && !this.followsTemplate(l, account)) {
         problems.set(i, { lineRef: ref, problem: 'invalid' });
       }
       outcomes.push(problems.has(i) ? 'excluded' : 'posted');
@@ -178,7 +198,7 @@ export class LedgerDouble {
       const d = sourceRefDigest(ref);
       const total = BigInt(l.newTotal ?? '0');
       this.bySourceRef.set(d, { digest: d, content: contentOf(l), total, seq: 'seq' in ref ? ref.seq : 0, position, movementId });
-      this.lineTotals.set(lineKeyOf(ref), { total, lastSeq: 'seq' in ref ? ref.seq : 0, position, movementId });
+      this.lineTotals.set(lineKeyOf(ref), { total, lastSeq: 'seq' in ref ? ref.seq : 0, position, movementId, weightsVersion: l.split?.weightsVersion });
       lines.push({ lineRef: ref, kind: l.kind, amount: l.entries.find((e) => e.ledgerAccount.startsWith('B:'))?.amount ?? '0',
         postedTotal: total.toString(), ...(l.reason ? { reason: l.reason } : {}), ...(l.triggerRef ? { triggerRef: l.triggerRef } : {}),
         entries: l.entries });
@@ -210,10 +230,10 @@ export class LedgerDouble {
     return answer;
   }
 
-  private followsM4Template(l: PostMovementRequest['lines'][number], account: string): boolean {
+  private followsTemplate(l: PostMovementRequest['lines'][number], account: string): boolean {
     const w = l.split ? this.weightsOf?.(l.split.weightsVersion) : undefined;
     if (!w) return false;
-    return JSON.stringify(l.entries) === JSON.stringify(m4Entries(account, BigInt(l.newTotal ?? '0'), w));
+    return entriesKey(l.entries) === entriesKey(splitEntries(account, BigInt(l.priorTotal ?? '0'), BigInt(l.newTotal ?? '0'), w));
   }
 
   postedTotal(ref: SourceRef): bigint | undefined {
@@ -262,28 +282,14 @@ export class SettlementDouble {
     return 'invalid';
   }
 
-  /** split(amount) by the weights of the version (floor for each supplier, the remainder to commission). */
-  private split(amount: bigint, weightsVersion: string): Map<string, bigint> {
-    const w = this.catalogue.weightsVersion(weightsVersion);
-    const out = new Map<string, bigint>();
-    if (!w) return out;
-    const total = BigInt(w.legs.reduce((n, x) => n + x.weight, 0) + w.commissionWeight);
-    for (const x of w.legs) out.set(`S:${x.supplier}:earn`, (out.get(`S:${x.supplier}:earn`) ?? 0n) + (amount * BigInt(x.weight)) / total);
-    out.set('SH:commission', amount - [...out.values()].reduce((n, s) => n + s, 0n));
-    return out;
-  }
-
-  /** The entries of a line by its movement kind: M4 by the Webster template; M5 `split(amount)`; M6 `split(newTotal) − split(priorTotal)`. */
+  /**
+   * The entries of a line by its movement kind, all by the Webster split of the line's weights (RFC-004 §B2, §B3.2):
+   * M4 and M5 `split(amount)`; M6 `split(newTotal) − split(priorTotal)`.
+   */
   private entries(l: ChargeLine, kind: MovementKind): Array<{ ledgerAccount: string; amount: string }> {
-    const buyer = { ledgerAccount: `B:${l.account}`, amount: (-BigInt(l.amount)).toString() };
-    if (kind === 'M4') {
-      const w = this.catalogue.weightsVersion(l.weightsVersion ?? '');
-      return w ? m4Entries(l.account, BigInt(l.amount), w) : [buyer];
-    }
-    const now = this.split(BigInt(kind === 'M6' ? l.newTotal : l.amount), l.weightsVersion ?? '');
-    const before = kind === 'M6' ? this.split(BigInt(l.priorTotal), l.weightsVersion ?? '') : new Map<string, bigint>();
-    return [buyer, ...[...now].map(([a, v]) => ({ ledgerAccount: a, amount: v - (before.get(a) ?? 0n) }))
-      .filter((e) => e.amount !== 0n).map((e) => ({ ledgerAccount: e.ledgerAccount, amount: e.amount.toString() }))];
+    const w = this.catalogue.weightsVersion(l.weightsVersion ?? '');
+    if (!w) return [{ ledgerAccount: `B:${l.account}`, amount: (-BigInt(l.amount)).toString() }];
+    return kind === 'M6' ? splitEntries(l.account, BigInt(l.priorTotal), BigInt(l.newTotal), w) : splitEntries(l.account, 0n, BigInt(l.amount), w);
   }
 
   private async onBatch(b: ChargeLineBatch): Promise<void> {

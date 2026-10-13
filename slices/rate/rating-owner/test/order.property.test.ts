@@ -100,12 +100,17 @@ const RECORDS = 24;
 const FIRST = at('12:16:00');
 const END = at('12:42:00');
 
-/** Records active in [12:16, 12:23), at most flow_active_timeout long, some with e = s; bytes up to 2^32. */
+/**
+ * Records active in [12:16, 12:23), at most flow_active_timeout long, some with e = s; bytes up to 2^32. One record in
+ * four has bytes in [1, 200,000), charged below 2 micro-USD: lines closed at 0, their late originals, and late records
+ * that do not change the floor of a line (review 73 TR-10).
+ */
 function records(rng: Rng): Rec[] {
   return Array.from({ length: RECORDS }, (_, id) => {
     const s = FIRST + rng.int(6 * 60_000);
     const len = rng.int(8) === 0 ? 0 : 1 + rng.int(60_000);
-    return { id, s, e: s + len, bytes: 1n + (rng.next() & 0xFFFFFFFFn) };
+    const bytes = rng.int(4) === 0 ? 1n + BigInt(rng.int(199_999)) : 1n + (rng.next() & 0xFFFFFFFFn);
+    return { id, s, e: s + len, bytes };
   });
 }
 

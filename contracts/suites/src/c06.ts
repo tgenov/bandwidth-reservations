@@ -5,8 +5,9 @@
  *
  * `runC06ProviderSuite` (usage batches) runs against the settlement double of the rate slice and against the
  * real ledger and settlement (S-MONEY MONEY-I3). `runC06ReservationSuite` (reservation batches: CT-L1
- * reservation rows, CT-L3, CT-L4 (1), CT-L5, CT-L6) runs against the real ledger and settlement (MONEY-I2) and
- * against the settlement double of the rate slice (S-RATE-I4).
+ * reservation rows, CT-L3, CT-L4 (1), CT-L5, CT-L6; and usage lines on the same multi-party weights: the M5 and
+ * M6 templates by the Webster split, the weights of the original) runs against the real ledger and settlement
+ * (MONEY-I2) and against the settlement double of the rate slice (S-RATE-I4).
  *
  * The types are copied from C06 "Schema" (the subset that the tests use).
  */
@@ -301,16 +302,54 @@ function resBatch(account: string, lines: C06ChargeLine[], minute = MINUTE): C06
  * shares come from the one-unit-at-a-time Webster rule (RFC-004 §B3.2), not from a provider's code.
  */
 export function suiteM4Entries(account: string, a: bigint): Array<{ ledgerAccount: string; amount: string }> {
-  const parties = [...C06_SUITE_WEIGHTS.legs.map((l) => ({ name: `S:${l.supplier}:earn`, w: BigInt(l.weight) })),
-    { name: 'SH:commission', w: BigInt(C06_SUITE_WEIGHTS.commissionWeight) }];
-  const s = parties.map(() => 0n);
+  return suiteSplitEntries(account, 0n, a);
+}
+
+const SUITE_PARTIES = [...C06_SUITE_WEIGHTS.legs.map((l) => ({ name: `S:${l.supplier}:earn`, w: BigInt(l.weight) })),
+  { name: 'SH:commission', w: BigInt(C06_SUITE_WEIGHTS.commissionWeight) }];
+
+/** The Webster shares of `a` for C06_SUITE_WEIGHTS, one unit at a time (RFC-004 §B3.2). */
+function suiteSplit(a: bigint): bigint[] {
+  const s = SUITE_PARTIES.map(() => 0n);
   for (let u = 0n; u < a; u++) {
     let best = 0;
-    for (let i = 1; i < parties.length; i++) if (parties[i]!.w * (2n * s[best]! + 1n) > parties[best]!.w * (2n * s[i]! + 1n)) best = i;
+    for (let i = 1; i < SUITE_PARTIES.length; i++) if (SUITE_PARTIES[i]!.w * (2n * s[best]! + 1n) > SUITE_PARTIES[best]!.w * (2n * s[i]! + 1n)) best = i;
     s[best] = s[best]! + 1n;
   }
-  return [{ ledgerAccount: `B:${account}`, amount: (-a).toString() },
-    ...parties.flatMap((p, i) => (s[i] === 0n ? [] : [{ ledgerAccount: p.name, amount: s[i]!.toString() }]))];
+  return s;
+}
+
+/** `B −(n − p)`, then each party's `split(n) − split(p)` that is not 0 (M4, M5: p = 0; M6). */
+function suiteSplitEntries(account: string, p: bigint, n: bigint): Array<{ ledgerAccount: string; amount: string }> {
+  const before = suiteSplit(p);
+  const after = suiteSplit(n);
+  return [{ ledgerAccount: `B:${account}`, amount: (p - n).toString() },
+    ...SUITE_PARTIES.flatMap((x, i) => (after[i]! === before[i]! ? [] : [{ ledgerAccount: x.name, amount: (after[i]! - before[i]!).toString() }]))];
+}
+
+const SUITE_PRODUCT = 'best-effort';
+
+function suiteUsageRef(account: string, seq: number, minute = MINUTE): UsageRef {
+  return { kind: 'usage', account, product: SUITE_PRODUCT, route: C06_SUITE_WEIGHTS.route, minute, seq };
+}
+
+/** A usage charge line on C06_SUITE_WEIGHTS: the original (seq 0) or a late-traffic amendment. */
+function suiteUsageLine(account: string, seq: number, priorTotal: bigint, newTotal: bigint, weightsVersion: string = C06_SUITE_WEIGHTS.weightsVersion): C06ChargeLine {
+  return {
+    sourceRef: suiteUsageRef(account, seq), lineKind: 'usage', account, product: SUITE_PRODUCT, route: C06_SUITE_WEIGHTS.route,
+    weightsVersion, minute: MINUTE, payer: 'account', amount: (newTotal - priorTotal).toString(), newTotal: newTotal.toString(),
+    priorTotal: priorTotal.toString(), reason: seq === 0 ? 'original' : 'late_traffic', priceCatalogue: { resolvedTs: '0.0000000000' },
+  };
+}
+
+/** A posting-port usage line on C06_SUITE_WEIGHTS (M5 for seq 0, M6 above) with the given entries. */
+function suiteUsagePost(account: string, seq: number, priorTotal: bigint, newTotal: bigint,
+  entries: Array<{ ledgerAccount: string; amount: string }>, weightsVersion: string = C06_SUITE_WEIGHTS.weightsVersion): C06PostLine {
+  return {
+    kind: seq === 0 ? 'M5' : 'M6', lineRef: suiteUsageRef(account, seq), lineKind: 'usage', payer: 'account',
+    reason: seq === 0 ? 'original' : 'late_traffic', amendmentSeq: seq, priorTotal: priorTotal.toString(), newTotal: newTotal.toString(),
+    split: { route: C06_SUITE_WEIGHTS.route, weightsVersion, mode: 'normal' }, entries,
+  };
 }
 
 function m4Req(id: string, account: string, lines: Array<[string, bigint]>): C06PostMovementRequest {
@@ -403,5 +442,61 @@ export function runC06ReservationSuite(name: string, make: SubjectFactory<C06Res
     const a = await s.post(req, 'b1');
     assert.equal(a.result, 'committed');
     if (a.result === 'committed') assert.deepEqual(a.lines.map((l) => [l.outcome, l.problem]), [['excluded', 'invalid'], ['posted', undefined]]);
+  });
+
+  // Usage lines on the multi-party weights 3000/3333/2167/1500 (RFC-004 §B2 M5, M6; §B3.2 the Webster split; C06 §8 check 2).
+  // split(1,500) = 450 / 500 / 325 / 225 (P4-S117); split(4,285) = 1,285 / 1,428 / 929 / 643. A floor split with the
+  // remainder to the commission gives 450 / 499 / 325 / 226 and, for the amendment, 835 / 929 / 603 / 418.
+  const M5_1500 = [{ ledgerAccount: 'B:b1', amount: '-1500' }, { ledgerAccount: 'S:sup-a:earn', amount: '450' },
+    { ledgerAccount: 'S:sup-b:earn', amount: '500' }, { ledgerAccount: 'S:sup-c:earn', amount: '325' }, { ledgerAccount: 'SH:commission', amount: '225' }];
+  const M6_1500_4285 = [{ ledgerAccount: 'B:b1', amount: '-2785' }, { ledgerAccount: 'S:sup-a:earn', amount: '835' },
+    { ledgerAccount: 'S:sup-b:earn', amount: '928' }, { ledgerAccount: 'S:sup-c:earn', amount: '604' }, { ledgerAccount: 'SH:commission', amount: '418' }];
+
+  t('CT-L1', 'mapping M5 and M6 on weights 3000/3333/2167/1500: the template of a usage original of 1,500 and of its late-traffic amendment to 4,285 is the Webster split', async (s) => {
+    assert.deepEqual(suiteSplitEntries('b1', 0n, 1500n), M5_1500, 'the suite table is the one-unit-at-a-time rule');
+    assert.deepEqual(suiteSplitEntries('b1', 1500n, 4285n), M6_1500_4285);
+    const o = await s.post(postReq('m-u5', [suiteUsagePost('b1', 0, 0n, 1500n, M5_1500)]), 'b1');
+    assert.equal(o.result, 'committed', JSON.stringify(o));
+    if (o.result === 'committed') assert.deepEqual(o.lines.map((l) => l.outcome), ['posted']);
+    const a = await s.post(postReq('m-u6', [suiteUsagePost('b1', 1, 1500n, 4285n, M6_1500_4285)]), 'b1');
+    assert.equal(a.result, 'committed', JSON.stringify(a));
+    if (a.result === 'committed') assert.deepEqual(a.lines.map((l) => l.outcome), ['posted']);
+  });
+
+  t('CT-L1', 'settlement maps a usage original of 1,500 to M5 and its late-traffic amendment to 4,285 to M6 on the line\'s weights, and both post', async (s) => {
+    const b1 = usageBatch('b1', [suiteUsageLine('b1', 0, 0n, 1500n)]);
+    const p1 = posted(byLine(b1, await s.settle(b1)).get(key(suiteUsageRef('b1', 0))));
+    assert.deepEqual([p1.duplicate, p1.postedAmount, p1.postedTotal], [false, '1500', '1500']);
+    const b2 = usageBatch('b1', [suiteUsageLine('b1', 1, 1500n, 4285n)]);
+    const p2 = posted(byLine(b2, await s.settle(b2)).get(key(suiteUsageRef('b1', 1))));
+    assert.deepEqual([p2.duplicate, p2.postedAmount, p2.postedTotal], [false, '2785', '4285']);
+  });
+
+  t('CT-L6', 'an M5 or M6 line whose entries are not the Webster template of its weights is invalid and refuses the usage batch', async (s) => {
+    const floorM5 = [{ ledgerAccount: 'B:b1', amount: '-1500' }, { ledgerAccount: 'S:sup-a:earn', amount: '450' },
+      { ledgerAccount: 'S:sup-b:earn', amount: '499' }, { ledgerAccount: 'S:sup-c:earn', amount: '325' }, { ledgerAccount: 'SH:commission', amount: '226' }];
+    const r5 = await s.post(postReq('m-u5-floor', [suiteUsagePost('b1', 0, 0n, 1500n, floorM5)]), 'b1');
+    assert.equal(r5.result, 'refused_batch', JSON.stringify(r5));
+    if (r5.result === 'refused_batch') assert.deepEqual(r5.lines.map((l) => l.problem), ['invalid']);
+    const o = await s.post(postReq('m-u5-ok', [suiteUsagePost('b1', 0, 0n, 1500n, M5_1500)]), 'b1');
+    assert.equal(o.result, 'committed', 'the refusal posted nothing');
+    const floorM6 = [{ ledgerAccount: 'B:b1', amount: '-2785' }, { ledgerAccount: 'S:sup-a:earn', amount: '835' },
+      { ledgerAccount: 'S:sup-b:earn', amount: '929' }, { ledgerAccount: 'S:sup-c:earn', amount: '603' }, { ledgerAccount: 'SH:commission', amount: '418' }];
+    const r6 = await s.post(postReq('m-u6-floor', [suiteUsagePost('b1', 1, 1500n, 4285n, floorM6)]), 'b1');
+    assert.equal(r6.result, 'refused_batch', JSON.stringify(r6));
+    if (r6.result === 'refused_batch') assert.deepEqual(r6.lines.map((l) => l.problem), ['invalid']);
+    const a = await s.post(postReq('m-u6-ok', [suiteUsagePost('b1', 1, 1500n, 4285n, M6_1500_4285)]), 'b1');
+    assert.equal(a.result, 'committed', 'the refusal posted nothing');
+  });
+
+  t('CT-L6', 'an amendment whose weightsVersion is not the one its original was posted with is invalid and refuses the usage batch', async (s) => {
+    const o = await s.post(postReq('m-u5-w', [suiteUsagePost('b1', 0, 0n, 1500n, M5_1500)]), 'b1');
+    assert.equal(o.result, 'committed');
+    // Entries of the original's weights; only the weights version differs (ISSUES.md CS-11: the subject knows one version).
+    const r = await s.post(postReq('m-u6-w', [suiteUsagePost('b1', 1, 1500n, 4285n, M6_1500_4285, 'w-other')]), 'b1');
+    assert.equal(r.result, 'refused_batch', JSON.stringify(r));
+    if (r.result === 'refused_batch') assert.deepEqual(r.lines.map((l) => l.problem), ['invalid']);
+    const a = await s.post(postReq('m-u6-w2', [suiteUsagePost('b1', 1, 1500n, 4285n, M6_1500_4285)]), 'b1');
+    assert.equal(a.result, 'committed', 'the refusal posted nothing');
   });
 }

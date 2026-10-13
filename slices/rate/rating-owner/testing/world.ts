@@ -99,7 +99,8 @@ export function buildWorld(opts: WorldOptions) {
   if (relay === 'only') { bus.directOff.add(TOPIC_HANDOFF); bus.directOff.add(TOPIC_PARTS); }
   const settlementCatalogue = new CatalogueReplica();
   bus.on('catalogue.v1', (_ev, fe) => settlementCatalogue.applyFeedEvent(fe));
-  const ledger = new LedgerDouble(() => bus.nowMs);
+  // The ledger checks each M4, M5 and M6 line against the template of its weights (C06 §8 check 2).
+  const ledger = new LedgerDouble(() => bus.nowMs, (v) => settlementCatalogue.weightsVersion(v));
   const settlement = new SettlementDouble(bus, settlementCatalogue, ledger);
   const accountOwner = new AccountOwnerDouble(bus, ledger);
   const provisioning = new ProvisioningProducer(bus);

@@ -53,8 +53,11 @@ export interface UsageLine {
   seq: number;
   /** The line as the usage batch in flight holds it, until its acknowledgement. */
   pending?: PendingLine;
-  /** The late records applied to the closed line since its last amendment was formed. */
-  late?: { sinceMs: number; records: string[] };
+  /**
+   * The late records applied to the closed line since its last amendment was formed. `held`: a late original waits for the
+   * price or the weights of its minute, until the next late record of the line; `alerted`: NO_PRICE_OR_WEIGHTS was raised.
+   */
+  late?: { sinceMs: number; records: string[]; held?: true; alerted?: true };
 }
 
 /** A line in a usage batch. Sequence 0 is the original or the late original; a sequence above 0 is a late-traffic amendment. */
@@ -249,7 +252,7 @@ export class RatingOwner implements OwnerHooks, RatingSink {
       const at = now < base + RATE_PARAMS.usageCloseMarginMs ? base + RATE_PARAMS.usageCloseMarginMs : base + RATE_PARAMS.usageCloseBoundMs;
       this.rt.timer(partition, 'close', hlcFromWallMs(Math.max(at, now)));
     }
-    const amendAt = Object.values(s.lines).filter((l) => l.late && !l.pending).map((l) => (l.late as { sinceMs: number }).sinceMs + RATE_PARAMS.amendmentIntervalMs);
+    const amendAt = Object.values(s.lines).filter((l) => l.late && !l.late.held && !l.pending).map((l) => (l.late as { sinceMs: number }).sinceMs + RATE_PARAMS.amendmentIntervalMs);
     if (amendAt.length > 0) this.rt.timer(partition, 'amend', hlcFromWallMs(Math.max(Math.min(...amendAt), now)));
   }
 
@@ -330,7 +333,9 @@ export class RatingOwner implements OwnerHooks, RatingSink {
             // RFC-003 §5.6: a part applied after the closing entry goes into an amendment (P3-S17).
             const records = line.late?.records ?? [];
             const id = JSON.stringify(p.recordIdentity);
-            line.late = { sinceMs: line.late?.sinceMs ?? nowMs, records: records.includes(id) ? records : [...records, id] };
+            // A new late record lets a held late original try again; its alert is not raised again.
+            line.late = { sinceMs: line.late?.sinceMs ?? nowMs, records: records.includes(id) ? records : [...records, id],
+              ...(line.late?.alerted ? { alerted: true as const } : {}) };
             late += 1;
           } else if (!next.dueMinutes.includes(p.minuteMs)) next.dueMinutes.push(p.minuteMs);
           next.lines[k] = line;
@@ -440,7 +445,7 @@ export class RatingOwner implements OwnerHooks, RatingSink {
 
   /** True when a closed line has late records whose amendment_interval has passed and its last sequence is posted. */
   private amendmentDue(l: UsageLine, nowMs: number): boolean {
-    return l.closed && !l.pending && l.late !== undefined && l.emitted !== null && BigInt(l.posted) === BigInt(l.emitted)
+    return l.closed && !l.pending && l.late !== undefined && !l.late.held && l.emitted !== null && BigInt(l.posted) === BigInt(l.emitted)
       && nowMs >= l.late.sinceMs + RATE_PARAMS.amendmentIntervalMs;
   }
 
@@ -466,8 +471,9 @@ export class RatingOwner implements OwnerHooks, RatingSink {
    * with `C = ⌊V_new / 10^6⌋` (RFC-003 §5.7). Only upward: a lower `C` is alerted and not emitted.
    */
   private formBatch(s: AccountState, account: string, pos: { generation: number; seq: string }, nowMs: number, amendments: boolean):
-    { batchId: BatchId | null; lines: Array<Record<string, unknown>>; unchanged: string[]; downward: string[] } {
-    const formed = { batchId: null as BatchId | null, lines: [] as Array<Record<string, unknown>>, unchanged: [] as string[], downward: [] as string[] };
+    { batchId: BatchId | null; lines: Array<Record<string, unknown>>; unchanged: string[]; downward: string[]; held: string[] } {
+    const formed = { batchId: null as BatchId | null, lines: [] as Array<Record<string, unknown>>, unchanged: [] as string[], downward: [] as string[],
+      held: [] as string[] };
     if (s.inFlight) return formed;
     const byMinute = ([, a]: [string, UsageLine], [, b]: [string, UsageLine]): number =>
       a.minuteMs - b.minuteMs || a.product.localeCompare(b.product) || a.route.localeCompare(b.route);
@@ -481,7 +487,7 @@ export class RatingOwner implements OwnerHooks, RatingSink {
     if (amendments) {
       for (const [k, l] of Object.entries(s.lines).filter(([, l]) => this.amendmentDue(l, nowMs)).sort(byMinute)) {
         if (keys.length >= MOVEMENT_LIMIT) break;
-        const late = l.late as { sinceMs: number; records: string[] };
+        const late = l.late as NonNullable<UsageLine['late']>;
         const c = this.chargeOf(l);
         const e = BigInt(l.emitted as string);
         if (c === e) { delete l.late; formed.unchanged.push(k); continue; }
@@ -496,7 +502,13 @@ export class RatingOwner implements OwnerHooks, RatingSink {
           // A late original takes the price and the weights of its own minute.
           const price = this.opts.catalogue.usagePriceAt(l.product, l.route, l.minuteMs);
           const weights = this.opts.catalogue.weightsAt(l.route, l.minuteMs);
-          if (!price || !weights) { this.opts.alerts?.raise({ owner: 'rating', kind: 'NO_PRICE_OR_WEIGHTS', detail: k }); continue; }
+          if (!price || !weights) {
+            // Held, not tried on each timer tick: one alert for the line (review 73 TR-6).
+            if (!late.alerted) this.opts.alerts?.raise({ owner: 'rating', kind: 'NO_PRICE_OR_WEIGHTS', detail: k });
+            l.late = { ...late, held: true, alerted: true };
+            formed.held.push(k);
+            continue;
+          }
           l.priceVersion = price.priceVersion;
           l.weightsVersion = weights.weightsVersion;
           l.priceCatalogue = this.opts.catalogue.position().resolvedTs;
