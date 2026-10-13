@@ -1,7 +1,8 @@
 /**
  * Attribution stage A (RFC-003 §4.1, §4.2; C11 Part II and Part III consumer, Part IV producer).
  *
- * I1 scope: accepted records of `batch` hand-off events; spread over minutes (POL-13); bind
+ * I1 and I3 scope: accepted records of `batch` hand-off events; spread over minutes (POL-13), with
+ * an alert for a record longer than `flow_active_timeout` + 60 s; bind
  * only at a covered binding position (C11 F57-01); classes attachment and best-effort (a
  * reservation binding gives class reservation, which rating holds in I1). A part with no
  * binding, or with an uncovered bind time, waits in memory (the pending-binding hold). The
@@ -14,7 +15,7 @@ import type {
 import { decodeJson, hlcToWallMs, slotOfPartition, utf8 } from '@share/owner-runtime';
 import {
   FeedCursor, SerialQueue, TOPIC_BINDINGS, TOPIC_HANDOFF, appendWithPolicy, eventDigest, floorMin, identityOf,
-  lastMinuteEnd, MINUTE_MS, observationPointEqual, serviceAudit, serviceTagEqual,
+  lastMinuteEnd, MINUTE_MS, observationPointEqual, RATE_PARAMS, serviceAudit, serviceTagEqual,
   type AcceptedRecord, type AlertSink, type BindingFact, type ExactBytes, type ForwardedBinding, type HandoffEvent,
   type ObservationPoint, type ObservationPointFact, type Part, type PartBatch, type ProvisioningEvent,
 } from '@share/rate-common';
@@ -40,6 +41,15 @@ export function spread(startMs: number, endMs: number, bytes: bigint): SpreadPar
     out.push({ minuteMs: m, bytes: { num: (bytes * BigInt(t)).toString(), den: d.toString() }, bindTimeMs: Math.max(startMs, m) });
   }
   return out;
+}
+
+/**
+ * True when the active interval of a record is longer than `flow_active_timeout` + 60 s
+ * (RFC-003 §4.2 step 2). Stage A still spreads such a record, and alerts its exporter
+ * because the exporter breaks the export rule of POL-13.
+ */
+export function flowTooLong(startMs: number, endMs: number): boolean {
+  return endMs - startMs > RATE_PARAMS.flowActiveTimeoutMs + MINUTE_MS;
 }
 
 interface FactRecord { seq: bigint; fact: BindingFact | ObservationPointFact }
@@ -155,9 +165,18 @@ export class StageAOwner implements OwnerHooks {
         candidates.push({ record: rec, acceptedAtMs: ev.acceptedAtMs, part, why: 'coverage' });
       }
     }
-    return this.processEntry(ev.exporterId, st, candidates, [], {
+    const ok = await this.processEntry(ev.exporterId, st, candidates, [], {
       handoffSeq: ev.handoffSeq, ingestLogSeq: ev.logSeq, applied: { key: `handoff|${ev.exporterId}`, seq: ev.handoffSeq, digest },
     }, identityOf('attr_a.processed', ev.exporterId, ev.handoffSeq));
+    // Alert only after the entry commits, so a retried step does not alert twice.
+    if (ok) {
+      for (const rec of ev.body.accepted) {
+        if (!flowTooLong(rec.fields.flowStartMs, rec.fields.flowEndMs)) continue;
+        this.opts.alerts?.raise({ owner: 'attr_a', kind: 'FLOW_TOO_LONG',
+          detail: `${ev.exporterId} ${JSON.stringify(rec.identity)} ${rec.fields.flowEndMs - rec.fields.flowStartMs} ms` });
+      }
+    }
+    return ok;
   }
 
   private onHandoffResolved(dest: number, R: HlcTs): void {

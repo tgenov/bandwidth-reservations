@@ -18,7 +18,7 @@ import { decodeJson, hlcFromWallMs, hlcToWallMs, utf8 } from '@share/owner-runti
 import {
   MOVEMENT_LIMIT, RATE_PARAMS, SerialQueue, addFraction, appendWithPolicy, elaToJson, emptyEla, identityOf, minuteIso,
   serviceAudit, sourceRefDigest, usageCharge,
-  type AlertSink, type BatchId, type ChargeLine, type ChargeLineBatch, type Ela, type LedgerPosition, type PostingAck,
+  type AlertSink, type BatchId, type ExactBytes, type ChargeLine, type ChargeLineBatch, type Ela, type LedgerPosition, type PostingAck,
   type RatingPosition, type SourceRef, type UnpostedUsageFigure, type UsageApplied,
 } from '@share/rate-common';
 import type { CatalogueReplica } from '../catalogue/replica.ts';
@@ -268,6 +268,13 @@ export class RatingOwner implements OwnerHooks, RatingSink {
 
   applyParts(input: StageBInput): Promise<void> {
     return this.queue.run(async () => {
+      // C11 Part IV: bytes are { num, den } with num a signed integer and den > 0. A batch with
+      // another value is not applied, so the account's input stops and an operator is alerted.
+      const bad = input.parts.find((p) => !exactBytesValid(p.bytes));
+      if (bad) {
+        this.opts.alerts?.raise({ owner: 'rating', kind: 'INVALID_PART', detail: `attr_b ${input.attrBSeq}: bytes ${bad.bytes.num}/${bad.bytes.den}` });
+        return;
+      }
       const ok = await this.step(input.account, RATING_ENTRY.inputs, `inputs:attr_b:${input.attrBSeq}`, (next) => {
         if (BigInt(input.attrBSeq) <= BigInt(next.attrBSeq)) return null; // applied before
         next.attrBSeq = input.attrBSeq;
@@ -448,6 +455,11 @@ export class RatingOwner implements OwnerHooks, RatingSink {
     });
     await this.maybeEmit(ack.account);
   }
+}
+
+/** True when the exact bytes of a part are a signed integer over a positive integer (C11 Part IV). */
+export function exactBytesValid(b: ExactBytes): boolean {
+  return /^-?\d+$/.test(b.num) && /^\d+$/.test(b.den) && BigInt(b.den) > 0n;
 }
 
 function elaFlat(e: Ela): Record<string, string> {

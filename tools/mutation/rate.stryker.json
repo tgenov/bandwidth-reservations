@@ -9,7 +9,10 @@
   "disableTypeChecks": false,
   "mutate": [
     "slices/rate/common/src/ela.ts",
-    "slices/rate/common/src/time.ts"
+    "slices/rate/common/src/time.ts",
+    "slices/rate/rating-owner/src/attribution/stage-a.ts",
+    "slices/rate/rating-owner/src/catalogue/replica.ts",
+    "slices/rate/rating-owner/src/rating/owner.ts"
   ],
   "concurrency": 6,
   "timeoutMS": 15000,

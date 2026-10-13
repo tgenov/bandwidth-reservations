@@ -1,8 +1,10 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { RESULTS, RuntimeDouble, feedEvent } from '@share/owner-runtime/testing';
-import { decodeJson, encodeJson, utf8, validateDeclaration } from '@share/owner-runtime';
-import { MemoryAlerts, sourceRefDigest, type ChargeLineBatch, type PartBatch, type PostingAck } from '@share/rate-common';
+import { decodeJson, encodeJson, hlc, utf8, validateDeclaration } from '@share/owner-runtime';
+import {
+  MemoryAlerts, sourceRefDigest, type CatalogueEntity, type CatalogueEvent, type ChargeLineBatch, type Part, type PartBatch, type PostingAck,
+} from '@share/rate-common';
 import { ingestDeclaration } from '@share/ingestion';
 import {
   CatalogueOwner, CatalogueReplica, RatingOwner, StageBOwner, attrADeclaration, attrBDeclaration, catalogueDeclaration,
@@ -199,4 +201,88 @@ test('should raise no alert when the walking skeleton runs', async () => {
   await exp.send(w.session('e1', 's1'), exp.batch([exp.exportItem([FLOW_1GB], 1_760_270_000)]));
   await runPastClosure(w);
   assert.deepEqual((w.alerts as MemoryAlerts).alerts, []);
+});
+
+const at = (hms: string): number => Date.parse(`2026-10-12T${hms}Z`);
+
+test('should bind each part at the later of the record start and the minute start when a record crosses minutes', () => {
+  assert.deepEqual(spread(at('12:05:30'), at('12:07:00'), 3_000_000_000n).map((p) => p.bindTimeMs), [at('12:05:30'), at('12:06:00')]);
+});
+
+function priceEvent(seq: number, body: Omit<Extract<CatalogueEntity, { entityType: 'price_version' }>, 'entityType' | 'announcedAt'>): CatalogueEvent {
+  return { type: 'CatalogueEvent', schemaVersion: 1,
+    eventId: { partition: `price:${seq}`, stream: 'catalogue', streamSeq: '1', generation: 0, epoch: 1 },
+    entityVersion: '1', committedAt: '1.0000000000', principal: 'deploy',
+    body: { entityType: 'price_version', announcedAt: '1.0000000000', ...body } };
+}
+
+test('should give the usage_price of the asked product and kind when the route has other products and a reservation_price', () => {
+  const r = new CatalogueReplica();
+  r.applyEvent(priceEvent(1, { product: 'be', route: 'r1', priceKind: 'usage_price', priceVersion: 'pv-r1-10000', price: '10000000000', effectiveFrom: '2026-10-02T00:00:00Z' }));
+  r.applyEvent(priceEvent(2, { product: 'be2', route: 'r1', priceKind: 'usage_price', priceVersion: 'pv-be2-r1-13000', price: '13000000000', effectiveFrom: '2026-10-05T00:00:00Z' }));
+  r.applyEvent(priceEvent(3, { product: 'be', route: 'r1', priceKind: 'reservation_price', priceVersion: 'rp-r1', price: '1500000', effectiveFrom: '2026-10-08T00:00:00Z' }));
+  assert.deepEqual(r.usagePriceAt('be', 'r1', at('12:05:00')), { price: 10_000_000_000n, priceVersion: 'pv-r1-10000' });
+  assert.deepEqual(r.usagePriceAt('be2', 'r1', at('12:05:00')), { price: 13_000_000_000n, priceVersion: 'pv-be2-r1-13000' });
+  assert.equal(r.usagePriceAt('be', 'r2', at('12:05:00')), undefined);
+  assert.equal(r.usagePriceAt('be2', 'r1', Date.parse('2026-10-04T23:59:00Z')), undefined);
+});
+
+test('should alert and apply nothing when a part batch holds a part whose bytes are not an integer over a positive integer', async () => {
+  for (const [num, den] of [['1', '0'], ['1', '-7'], ['1.5', '2'], ['x1', '2'], ['1', '2x'], ['1x', '2'], ['1', 'x2']]) {
+    const rrt = new RuntimeDouble({ declaration: ratingDeclaration, startMs: DEPLOY_AT });
+    const alerts = new MemoryAlerts();
+    const rating = new RatingOwner(rrt, { catalogue: new CatalogueReplica(), homeLedgerPartition: LedgerDouble.home, alerts, sleep: noSleep });
+    const part: Part = { recordIdentity: { kind: 'record', id: { format: 'ipfix', exporterId: 'e1', observationDomain: 7, epoch: 0, extSeq: '1' } },
+      bindingPosition: '1', acceptedAtMs: at('12:06:00'), lastMinuteEndMs: at('12:06:00'), minuteMs: at('12:05:00'),
+      bytes: { num: num as string, den: den as string }, class: 'best-effort', accountId: 'a1', productId: 'be', routeId: 'r1', reservationId: null,
+      op: { exporterId: 'e1', observationDomain: 7, ifIndex: 3, direction: 'egress' }, linkId: 'L1' };
+    await rating.applyParts({ account: 'a1', attrBSeq: '1', parts: [part], bindingFacts: [] });
+    assert.deepEqual(alerts.alerts.map((a) => [a.owner, a.kind, a.detail]), [['rating', 'INVALID_PART', `attr_b 1: bytes ${num}/${den}`]], `${num}/${den}`);
+    assert.equal(rating.stateOf('a1')?.attrBSeq ?? '0', '0');
+    assert.deepEqual(rating.stateOf('a1')?.lines ?? {}, {});
+    assert.equal(rrt.log(utf8('a1')).length, 0);
+  }
+});
+
+function weightsEvent(seq: number, route: string, weightsVersion: string, effectiveFrom: string): CatalogueEvent {
+  return { type: 'CatalogueEvent', schemaVersion: 1,
+    eventId: { partition: `weights:${seq}`, stream: 'catalogue', streamSeq: '1', generation: 0, epoch: 1 },
+    entityVersion: '1', committedAt: '1.0000000000', principal: 'deploy',
+    body: { entityType: 'split_weights', route, weightsVersion, effectiveFrom, announcedAt: '1.0000000000',
+      legs: [{ link: 'L1', supplier: 's1', weight: 1 }], commissionWeight: 1 } };
+}
+
+test('should take the latest effectiveFrom at or before the minute when price and weight versions arrive out of order', () => {
+  const r = new CatalogueReplica();
+  r.applyEvent(priceEvent(1, { product: 'be', route: 'r1', priceKind: 'usage_price', priceVersion: 'pv-late', price: '13000000000', effectiveFrom: '2026-10-12T12:20:00Z' }));
+  r.applyEvent(priceEvent(2, { product: 'be', route: 'r1', priceKind: 'usage_price', priceVersion: 'pv-early', price: '10000000000', effectiveFrom: '2026-10-02T00:00:00Z' }));
+  r.applyEvent(priceEvent(3, { product: 'be', route: 'r1', priceKind: 'usage_price', priceVersion: 'pv-mid', price: '11000000000', effectiveFrom: '2026-10-05T00:00:00Z' }));
+  assert.equal(r.usagePriceAt('be', 'r1', at('12:19:00'))?.priceVersion, 'pv-mid');
+  assert.equal(r.usagePriceAt('be', 'r1', at('12:20:00'))?.priceVersion, 'pv-late');
+  r.applyEvent(weightsEvent(4, 'r1', 'w-late', '2026-10-12T12:20:00Z'));
+  r.applyEvent(weightsEvent(5, 'r1', 'w-early', '2026-10-02T00:00:00Z'));
+  r.applyEvent(weightsEvent(6, 'r1', 'w-mid', '2026-10-05T00:00:00Z'));
+  r.applyEvent(weightsEvent(7, 'r2', 'w-r2', '2026-10-01T00:00:00Z'));
+  assert.equal(r.weightsAt('r1', at('12:19:00'))?.weightsVersion, 'w-mid');
+  assert.equal(r.weightsAt('r1', at('12:20:00'))?.weightsVersion, 'w-late');
+  assert.equal(r.weightsAt('r1', Date.parse('2026-10-01T23:59:00Z')), undefined);
+  assert.equal(r.weightsAt('r2', at('12:19:00'))?.weightsVersion, 'w-r2');
+  assert.equal(r.weightsVersion('w-r2')?.route, 'r2');
+  assert.equal(r.weightsVersion('w-none'), undefined);
+});
+
+test('should keep the latest resolved timestamp and the product kinds when the replica applies the feed', () => {
+  const r = new CatalogueReplica();
+  assert.deepEqual(r.position(), { resolvedTs: '0.0000000000' });
+  r.onResolved(hlc('2000.0000000000'));
+  r.onResolved(hlc('1000.0000000000'));
+  assert.deepEqual(r.position(), { resolvedTs: '2000.0000000000' });
+  r.onResolved(hlc('3000.0000000000'));
+  assert.deepEqual(r.position(), { resolvedTs: '3000.0000000000' });
+  assert.equal(r.productKind('be'), undefined);
+  r.applyEvent({ type: 'CatalogueEvent', schemaVersion: 1,
+    eventId: { partition: 'product:be', stream: 'catalogue', streamSeq: '1', generation: 0, epoch: 1 },
+    entityVersion: '1', committedAt: '1.0000000000', principal: 'deploy',
+    body: { entityType: 'product', productId: 'be', kind: 'best_effort', permitsBurst: false } });
+  assert.equal(r.productKind('be'), 'best_effort');
 });
