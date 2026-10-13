@@ -3,9 +3,14 @@ import type { BatchTxn, OwnerStore } from '../store/types.ts';
 import { TierTimeout } from '../store/tiers.ts';
 import { runAttempt, type AttemptEnv, type AttemptPlan, type PendingCall } from './attempt.ts';
 
+/**
+ * `committedMs`: BEGIN to the COMMIT answer of the attempt that committed (RFC-006 §4.7 rule 5b sample), absent when
+ * nothing was committed. `tierRetried`: an attempt met a per-tier timeout (rule 4), so the batch is not a 5b sample.
+ */
 export type BatchOutcome =
-  | { kind: 'answered'; plan: AttemptPlan }
-  | { kind: 'retry'; restarts: number; freshAttempts: number }
+  | { kind: 'answered'; plan: AttemptPlan; committedMs?: number; tierRetried: boolean }
+  | { kind: 'retry'; restarts: number; freshAttempts: number; abandoned: boolean; tierRetried: boolean }
+  | { kind: 'abandoned'; restarts: number }
   | { kind: 'staleEpoch' }
   | { kind: 'ambiguous'; plan: AttemptPlan; reason: string }
   | { kind: 'failed'; error: Error };
@@ -14,6 +19,15 @@ export interface ExecuteOptions {
   batchRetries: number;
   abandonBeforeCommitMs: number;
   commitBackstopMs: number;
+  /** The monotonic clock of the abandon budget, in ms (default `performance.now`; engineering.md §5: a test steps it). */
+  nowMs?: () => number;
+  /**
+   * RFC-006 §4.7 rule 5c: an abandon before the fresh attempt returns `abandoned` to the caller, which sizes the fresh
+   * attempt itself. Without it the fresh attempt carries the whole batch.
+   */
+  abandonToCaller?: boolean;
+  /** This call is the batch's one fresh attempt (C01 §3.2): no restart and no further fresh attempt. */
+  freshAttempt?: boolean;
 }
 
 async function quietly(p: Promise<void>): Promise<void> {
@@ -41,8 +55,10 @@ async function commitWithBackstop(tx: BatchTxn, backstopMs: number): Promise<voi
  */
 export async function executeBatch(store: OwnerStore, env: AttemptEnv, calls: PendingCall[], o: ExecuteOptions): Promise<BatchOutcome> {
   const abandonMs = Math.min(o.abandonBeforeCommitMs, ...calls.map((c) => c.opts.abandonBeforeCommitMs ?? o.abandonBeforeCommitMs));
+  const nowMs = o.nowMs ?? (() => performance.now());
   let restarts = 0;
-  let freshAttempts = 0;
+  let freshAttempts = o.freshAttempt === true ? 1 : 0;
+  let tierRetried = false;
   let tx: BatchTxn;
   try {
     tx = await store.beginBatch();
@@ -50,17 +66,17 @@ export async function executeBatch(store: OwnerStore, env: AttemptEnv, calls: Pe
     return { kind: 'failed', error: e instanceof Error ? e : new Error(String(e)) };
   }
   for (;;) {
-    const started = performance.now();
+    const started = nowMs();
     let plan: AttemptPlan | undefined;
     try {
       plan = await runAttempt(tx, env, calls);
       if (!plan.anyCommit) {
         await quietly(tx.rollback());
         tx.close(false);
-        return { kind: 'answered', plan };
+        return { kind: 'answered', plan, tierRetried };
       }
       await tx.write(env.decl.kind, plan.writes);
-      if (performance.now() - started > abandonMs) throw new AbandonSignal();
+      if (nowMs() - started > abandonMs) throw new AbandonSignal();
       try {
         await commitWithBackstop(tx, o.commitBackstopMs);
       } catch (e) {
@@ -69,13 +85,14 @@ export async function executeBatch(store: OwnerStore, env: AttemptEnv, calls: Pe
         return { kind: 'ambiguous', plan, reason: e instanceof Error ? e.message : String(e) };
       }
       tx.close(false);
-      return { kind: 'answered', plan };
+      return { kind: 'answered', plan, committedMs: nowMs() - started, tierRetried };
     } catch (e) {
       if (e instanceof TierTimeout) {
         // RFC-006 §4.7: the tier did not answer the epoch read in time; the batch is abandoned and starts again
         // on the next tier. The connection may hang, so it is discarded without a ROLLBACK.
         tx.close(true);
-        if (freshAttempts >= 1) return { kind: 'retry', restarts, freshAttempts };
+        tierRetried = true;
+        if (freshAttempts >= 1) return { kind: 'retry', restarts, freshAttempts, abandoned: false, tierRetried };
         freshAttempts += 1;
         try {
           tx = await store.beginBatch();
@@ -109,7 +126,8 @@ export async function executeBatch(store: OwnerStore, env: AttemptEnv, calls: Pe
       }
       await quietly(tx.rollback());
       tx.close(false);
-      if (freshAttempts >= 1) return { kind: 'retry', restarts, freshAttempts };
+      if (freshAttempts >= 1) return { kind: 'retry', restarts, freshAttempts, abandoned: abandon, tierRetried };
+      if (abandon && o.abandonToCaller === true) return { kind: 'abandoned', restarts };
       freshAttempts += 1;
       try {
         tx = await store.beginBatch();
