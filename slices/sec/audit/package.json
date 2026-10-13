@@ -1,0 +1,17 @@
+{
+  "name": "@share/audit",
+  "version": "0.1.0-i1",
+  "description": "S-SEC audit append log: audit_append with caller allowlist and idempotency, chain verification (I1)",
+  "private": true,
+  "type": "module",
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "scripts": {
+    "test": "node --test --test-concurrency=1 'test/*.test.ts'"
+  },
+  "dependencies": {
+    "@share/iam-lib": "0.1.0-i1",
+    "@share/owner-runtime": "1.0.0-alpha.1"
+  }
+}

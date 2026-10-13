@@ -1,0 +1,22 @@
+{
+  "name": "@share/identity-owner",
+  "version": "0.1.0-i1",
+  "description": "S-SEC identity and access owner kind: key records, identity status push, edge stream (I1)",
+  "private": true,
+  "type": "module",
+  "exports": {
+    ".": "./src/index.ts",
+    "./testing": "./src/testing.ts"
+  },
+  "scripts": {
+    "test": "node --test --test-concurrency=1 'test/*.test.ts'"
+  },
+  "dependencies": {
+    "@share/iam-lib": "0.1.0-i1",
+    "@share/key-service": "0.1.0-i1",
+    "@share/owner-runtime": "1.0.0-alpha.1"
+  },
+  "devDependencies": {
+    "@share/owner-migrate": "1.0.0-alpha.1"
+  }
+}

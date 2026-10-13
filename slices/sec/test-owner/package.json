@@ -1,0 +1,19 @@
+{
+  "name": "@share/sec-test-owner",
+  "version": "0.1.0-i1",
+  "description": "S-SEC I1 test owner: reference consumer of C08 contexts and the identity status push. Not a production component",
+  "private": true,
+  "type": "module",
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "scripts": {
+    "test": "node --test --test-concurrency=1 'test/*.test.ts'"
+  },
+  "dependencies": {
+    "@share/audit": "0.1.0-i1",
+    "@share/edge-auth": "0.1.0-i1",
+    "@share/iam-lib": "0.1.0-i1",
+    "@share/owner-runtime": "1.0.0-alpha.1"
+  }
+}

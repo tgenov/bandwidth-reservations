@@ -6,7 +6,13 @@
     "platform/runtime",
     "platform/migrate",
     "platform/examples/canary",
-    "slices/link"
+    "slices/link",
+    "slices/sec/iam-lib",
+    "slices/sec/key-service",
+    "slices/sec/identity-owner",
+    "slices/sec/edge-auth",
+    "slices/sec/audit",
+    "slices/sec/test-owner"
   ],
   "scripts": {
     "test": "node --test --test-concurrency=1 test/*.test.ts",
@@ -17,7 +23,9 @@
     "test:link": "node --test --test-concurrency=1 'slices/link/test/*.test.ts'",
     "test:link:integration": "node --test --test-concurrency=1 'slices/link/test/integration/*.test.ts'",
     "dev:up": "docker compose -f platform/dev/docker-compose.yml up -d --wait",
-    "dev:down": "docker compose -f platform/dev/docker-compose.yml down -v"
+    "dev:down": "docker compose -f platform/dev/docker-compose.yml down -v",
+    "typecheck:sec": "tsc --noEmit -p slices/sec",
+    "test:sec": "node --test --test-concurrency=1 'slices/sec/*/test/*.test.ts' 'slices/sec/test/*.test.ts'"
   },
   "dependencies": {
     "pg": "^8.13.1"
