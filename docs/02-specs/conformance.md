@@ -211,7 +211,7 @@ plan, not in the scenario.
 | P2-S70 | Concurrent bookings by one account are funded as if their funds checks were made one at a time, in the order received | TBD | — | not assessed |
 | P2-S112 | Two concurrent requests may both be refused where checking one after the other's outcome would have confirmed one | TBD | `test:link` › "P2-S112 link part: IN_FLIGHT is decided at the link in the hold entry, with no waiter"<br>`test:unit` › "P2-S112 link part: IN_FLIGHT is decided at the link in the hold entry, with no waiter" | partly met |
 | P2-S71 | Concurrent bookings by one agent key never together exceed its limits | TBD | — | not assessed |
-| P2-S92 | A request holds no capacity until its funds hold is taken | TBD | `test:link` › "P2-S92 link part: a hold counts only from its own entry"<br>`test:account` › "P2-S92: a request holds no capacity until its funds hold is taken; the other buyer is decided without waiting"<br>`test:unit` › "P2-S92 link part: a hold counts only from its own entry"<br>`test:unit` › "P2-S92: a request holds no capacity until its funds hold is taken; the other buyer is decided without waiting" | met |
+| P2-S92 | A request holds no capacity until its funds hold is taken | TBD | `test:account` › "P2-S92: a request holds no capacity until its funds hold is taken; the other buyer is decided without waiting"<br>`test:link` › "P2-S92 link part: a hold counts only from its own entry"<br>`test:unit` › "P2-S92 link part: a hold counts only from its own entry"<br>`test:unit` › "P2-S92: a request holds no capacity until its funds hold is taken; the other buyer is decided without waiting" | met |
 | P2-S72 | Revoking an agent key fails its pending requests and leaves its reservations with the account | TBD | — | not assessed |
 | P2-S103 | An event after a request's decision does not change its outcome, even while its status still reads pending | TBD | — | not assessed |
 | P2-S73 | A route counter-offer fits every leg, not only the blocking one | TBD | — | not assessed |
@@ -524,7 +524,7 @@ plan, not in the scenario.
 
 ## Implementation summary
 
-Measured by `tools/conformance.py` on `integration` at `75baa1e`.
+Measured by `tools/conformance.py` on `integration` at `46e2613`.
 
 | Prefix | Met | Partly met | Not met | No test | Total |
 |---|---|---|---|---|---|

@@ -10,7 +10,9 @@ it reads the "| Dependencies | ... |" row and the "| Goal | ... |" row:
   taken as written;
 - cross-slice edges that the plans state as contract parts are read from
   docs/04-delivery/plan/cross-deps.tsv (provider, consumer, part, source).
---done marks increments as delivered. --write writes docs/04-delivery/plan/graph.md.
+Delivered increments are read from docs/04-delivery/plan/done.txt (one ID per line;
+--done ID,ID overrides it). --write writes docs/04-delivery/plan/graph.md. Without
+--write it prints a progress summary: done per slice, waves left and the critical path.
 """
 import pathlib
 import re
@@ -208,17 +210,29 @@ def render(incs, edges, done, parts):
 
 def main():
     done = set()
+    done_file = PLAN / "done.txt"
     if "--done" in sys.argv:
         done = set(sys.argv[sys.argv.index("--done") + 1].split(","))
+    elif done_file.exists():
+        done = {l.strip() for l in done_file.read_text().splitlines()
+                if l.strip() and not l.startswith("#")}
     incs, edges, parts = parse()
+    unknown = sorted(done - set(incs))
+    if unknown:
+        raise SystemExit(f"done.txt names unknown increments: {', '.join(unknown)}")
     md = render(incs, edges, done, parts)
+    wave, preds = waves(incs, edges, done)
+    crit = critical_path(wave, preds)
     print(f"increments: {len(incs)}, edges: {len(edges)}, "
           f"cross-slice: {sum(1 for a, b in edges if slice_of(a) != slice_of(b))}")
+    for s in ["S-PLAT", "S-SEC", "S-LINK", "S-ACCT+MONEY", "S-RATE"]:
+        mine = [i for i in incs if slice_of(i) == s]
+        nxt = sorted(i for i in mine if wave[i] == 1)
+        print(f"  {s:13} {sum(1 for i in mine if i in done):>2} / {len(mine):>2} done; ready now: {', '.join(nxt) or '-'}")
+    print(f"waves left: {max(wave.values())}; critical path: {' -> '.join(crit)}")
     if "--write" in sys.argv:
         (PLAN / "graph.md").write_text(md)
         print(f"wrote {PLAN / 'graph.md'}")
-    else:
-        print(md)
 
 
 if __name__ == "__main__":
