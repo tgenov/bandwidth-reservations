@@ -1,3 +1,53 @@
+```text
+$ scc --exclude-dir .claude,node_modules   # scc 4.1.0, main at c186423, 2026-10-14
+───────────────────────────────────────────────────────────────────────────────
+Language            Files       Lines    Blanks  Comments       Code Complexity
+───────────────────────────────────────────────────────────────────────────────
+TypeScript            349      62,496     5,516     6,044     50,936     11,846
+Markdown              146      58,158     7,038         0     51,120          0
+JSON                   43       1,854         0         0      1,854          0
+SQL                     7         378        47        55        276          0
+Gherkin Specif…         6       4,673       751        70      3,852      1,105
+Python                  6       1,451       119       140      1,192        502
+JavaScript              2         220        18        20        182        101
+Plain Text              2          49         0         0         49          0
+YAML                    2         120         5        16         99          0
+BASH                    1          52         3         6         43         18
+Shell                   1          25         3         4         18          2
+───────────────────────────────────────────────────────────────────────────────
+Total                 565     129,476    13,500     6,355    109,621     13,574
+───────────────────────────────────────────────────────────────────────────────
+Estimated Cost to Develop (organic) $3,745,674
+Estimated Schedule Effort (organic) 22.72 months
+Estimated People Required (organic) 14.65
+───────────────────────────────────────────────────────────────────────────────
+Processed 10,555,913 bytes, 10.556 megabytes (SI)
+───────────────────────────────────────────────────────────────────────────────
+```
+
+**What this table shows.** [scc](https://github.com/boyter/scc) counts the lines in the
+repository, by language. "Code" is the lines that are not blank and not comments.
+"Complexity" counts the branches and loops in the code, which is a rough measure of how much
+logic it holds.
+
+- **The code is about 51,000 lines of TypeScript.** About 55 % is production code (the platform
+  runtime, the slices, the contracts and the tools) and about 45 % is tests.
+- **The design is almost as large as the code.** The Markdown is about 51,000 lines: the
+  requirements, the RFCs, the frozen contracts, the delivery plans and the reviews. This repository
+  is design first: the design is the authority and the code conforms to it.
+- **The requirements are executable specifications.** The Gherkin files hold the scenarios
+  (about 3,900 lines). Each scenario test name starts with its scenario ID.
+- **The rest is small.** Python is the design-pipeline tools and the overload model, SQL is the
+  bench and database schemas, and JSON is mostly package and tool configuration.
+- **The cost lines are a model, not a measurement.** scc uses the basic COCOMO model
+  ("organic" mode) to estimate what a conventional team would need to write this many lines:
+  about $3.7 M, 23 months and 15 people. COCOMO counts every code line, so the Markdown design
+  documents count as code. It does not show the real time or cost of this repository.
+
+The first line of the table records the command, the scc version and the commit. It excludes `node_modules` and the agent
+worktrees in `.claude/`. The numbers change as the code changes: run the command again to
+update them.
+
 # bandwidth-reservations
 
 A design and a partial build of a bandwidth marketplace: customers reserve
