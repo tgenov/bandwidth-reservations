@@ -28,8 +28,10 @@ slice's code only to show a forbidden import.
 ## Start with the tools
 1. `npm run -s test:<slice>`: the suite must pass. A red or flaky test is a Blocker.
 2. `python3 tools/conformance.py`: the increment's scenarios with no passing test.
-3. If `tools/mutation/<slice>.stryker.json` exists and its `mutate` list touches the
-   package, run `npm run -s mutation:<slice>`. Read `reports/mutation/<slice>.json`.
+3. Do not run Stryker (`mutation:*`), integration tests or the full harness: the local dev
+   loop is contract and double based only. Only if the user asks for a mutation run, and
+   `tools/mutation/<slice>.stryker.json` touches the package, run `npm run -s mutation:<slice>`.
+   Otherwise read `reports/mutation/<slice>.json` if it exists, and grade mutation adequacy by reading.
    Each surviving mutant in important logic is a finding candidate. Decide if it is an
    equivalent mutant (no behaviour change); if so, say why in one line and drop it.
    Stryker runs in place: never stop it before it ends, because it restores the files at

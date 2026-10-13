@@ -17,16 +17,20 @@ Rules that are easy to miss:
   A contract test name starts with its contract test ID (for example `C01 CP-2a …`).
 - A slice never imports another slice's `src/`. Use a double that follows the frozen contract.
 - Integration tests always close their resources and have a timeout.
-- Run tests through the npm scripts (`npm run check`, `npm run test:<slice>`), not the runner directly.
+- Run tests through the npm scripts (`npm run test:<slice>`, `npm run test:contracts`), not the runner directly.
+- **Local dev loop: contract and double based tests only.** An agent runs only `test:<slice>` and
+  `typecheck:<slice>` for the slice it changes, and `test:contracts` when it changes a contract or the platform.
+  An agent never runs `npm run check`, `npm run ci`, `test:integration`, `dev:up`, `bench:bus` or `mutation:*`
+  unless the user asks. Parallel agents running the full harness exhausted the machine's memory.
 
 ## Commands
 
 | Command | What it does |
 |---|---|
-| `npm run check` | Boundaries, lint, all type checks, all unit tests, all contract suites. Run before every commit (the pre-commit hook runs it for the staged workspaces). |
-| `npm run ci` | The local CI: `check`, spec check, dev cell up if needed, integration tests with `REQUIRE_DEV_CELL=1`, conformance. No hosted CI. |
+| `npm run check` | Boundaries, lint, all type checks, all unit tests, all contract suites. The full harness: the user runs it by hand, not in the dev loop. The pre-commit hook runs the staged workspace's checks, or the type checks and `test:contracts` for a platform or contract change. |
+| `npm run ci` | The local CI: `check`, spec check, conformance. No dev cell and no integration tests. No hosted CI. The user runs it by hand. |
 | `npm run test:<slice>` / `typecheck:<slice>` | One slice: `platform`, `link`, `sec`, `account`, `rate`, `contracts`. |
-| `npm run test:integration` | Integration tests on the dev cell (`npm run dev:up` / `dev:down`). |
+| `npm run test:integration` | Integration tests on the dev cell (`npm run dev:up` / `dev:down`). Manual only: no hook, script or agent starts it. |
 | `npm run measure` | Wall-clock measurements (opt-in, machine-dependent). |
 | `npm run bench:bus` | FeedBus client bench on the dev cell (E-001 §10). `BUS_CLIENT=platformatic\|kafkajs`, `BUS_MODE=idle` for idle CPU. |
 | `npm run mutation:<link\|rate\|account>` | Stryker mutation testing on the money and capacity modules (slow). |

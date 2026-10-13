@@ -22,8 +22,14 @@ authority. Code conforms to them (see [pipeline.md](pipeline.md)).
 | Unit | One module's behaviour, including every error path | In-memory store, runtime double, injected clock. No network, no database | `<pkg>/test/*.test.ts` | `test:<slice>` |
 | Property | An invariant over thousands of random inputs, against a simple oracle | As for unit, with a seeded generator | `<pkg>/test/*property*.test.ts` | `test:<slice>` |
 | Contract | One side of a frozen contract: provider tests (for example C01 CP-n, C06 CT-L-n) and consumer tests (CC-n, CT-C-n) | Unit substrate. The other side is a contract double | `<pkg>/test/*contract*.test.ts` or named by test ID | `test:<slice>` |
-| Integration | The code on the real substrate: CockroachDB, Kafka, changefeeds | The dev cell (`npm run dev:up`) | `<pkg>/test/integration/*.test.ts` | `test:<slice>:integration` |
-| End to end | A whole journey across slices (for example book → hold → convert → rate → post) | The dev cell with every owner kind | `e2e/` (when slices meet) | `test:e2e` |
+| Integration (manual) | The code on the real substrate: CockroachDB, Kafka, changefeeds | The dev cell (`npm run dev:up`) | `<pkg>/test/integration/*.test.ts` | `test:<slice>:integration` |
+| End to end (manual) | A whole journey across slices (for example book → hold → convert → rate → post) | The dev cell with every owner kind | `e2e/` (when slices meet) | `test:e2e` |
+
+**The local dev loop is contract and double based only** (unit, property and contract levels).
+No hook, no `npm run ci` step and no agent runs the integration or end-to-end level, starts the
+dev cell, or runs Stryker. A person runs them by hand. An agent runs only the tests of the slice it
+changes (`test:<slice>`), and `test:contracts` for a contract or platform change. It does not run
+the full harness (`npm run check`, `npm run ci`) unless the user asks.
 
 Rules:
 
@@ -72,7 +78,7 @@ Rules:
 - **Mutation question.** For each test, ask: "If the code broke, would this test fail?"
   Examples of a break are a flipped condition, a removed guard, an off-by-one in a minute
   boundary, or a wrong rounding direction. If the answer is no, make the test stronger.
-  When the suite is large enough, run Stryker on the money and capacity modules.
+  When the suite is large enough, a person runs Stryker on the money and capacity modules by hand.
 
 ## 5. Time, randomness and concurrency
 
@@ -95,9 +101,9 @@ Rules:
 - Each test run uses its own database (a unique name: prefix and time). The test creates
   it, migrates it, and drops it at the end. Old databases with the prefix that are more
   than 1 hour old are dropped at start.
-- On a laptop, an integration test skips with a clear message when the dev cell is not
-  reachable. In CI, `REQUIRE_DEV_CELL=1` makes an unreachable dev cell a failure, so a run
-  that tested nothing cannot pass.
+- Integration tests run only by hand (`npm run test:integration`). An integration test skips
+  with a clear message when the dev cell is not reachable. `REQUIRE_DEV_CELL=1` makes an
+  unreachable dev cell a failure, so a run that tested nothing cannot pass.
 - To run one test, give its exact name (`--test-name-pattern '^<name>$'`).
 
 ## 7. Names and structure
@@ -122,8 +128,9 @@ Rules:
   its ID passes in its owning slice.
 - A failing test is fixed at once. Do not skip it, do not mark it as known, and do not
   merge with it. A flaky test is a bug and is fixed the same day.
-- Before a commit, run `npm run check`: the boundary check, ESLint (`eslint.config.js`), type checks and unit tests for every package. Run
-  the integration tests before a merge to `integration`.
+- Before a commit, the pre-commit hook runs the boundary check, ESLint, and the type check and
+  tests of each staged slice (type checks and `test:contracts` for a platform or contract
+  change). A person runs `npm run ci` by hand before a merge to `integration`.
 
 ## 9. Code
 
