@@ -13,6 +13,7 @@
     "test:integration": "node --test --test-concurrency=1 'test/integration/*.test.ts'"
   },
   "dependencies": {
+    "@grpc/grpc-js": "1.14.5",
     "@platformatic/kafka": "2.14.0",
     "pg": "^8.13.1"
   },

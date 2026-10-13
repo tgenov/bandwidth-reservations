@@ -1,6 +1,6 @@
 /**
  * Checkpoint store (RFC-006 §12.11; C01 putCheckpoint/getCheckpoint, §3.12 last line, §5 row putCheckpoint).
- * The same object-store suite runs against MemoryObjectStore and FileObjectStore.
+ * The same object-store suite runs against MemoryObjectStore, FileObjectStore and S3ObjectStore (on an S3 double).
  */
 import { after, describe, test } from 'node:test';
 import assert from 'node:assert/strict';
@@ -13,6 +13,8 @@ import { fromHex, utf8 } from '../src/bytes.ts';
 import {
   CHECKPOINT, CheckpointError, CheckpointStore, FileObjectStore, MemoryObjectStore, type ObjectStore,
 } from '../src/checkpoint/store.ts';
+import { S3ObjectStore } from '../src/checkpoint/s3.ts';
+import { S3Double } from './support.ts';
 
 const T0 = 1_760_000_000_000;
 const HOUR = 3_600_000;
@@ -70,6 +72,7 @@ const STORES: Array<[string, MakeObjects]> = [
     dirs.push(dir);
     return new FileObjectStore({ dir, wallMs: clock });
   }],
+  ['S3ObjectStore', async (clock) => S3ObjectStore.open({ client: new S3Double({ bucket: 'ckpt-r1', location: 'R1', clock, maxKeys: 2 }), bucket: 'ckpt-r1', region: 'R1' })],
 ];
 
 for (const [name, make] of STORES) {

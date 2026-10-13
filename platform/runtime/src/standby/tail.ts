@@ -31,7 +31,7 @@ export interface StandbyPush {
   rows: LogRowWrite[];
 }
 
-/** The holder → standby push channel (gRPC in production; in process here, see STATUS-I2.md). */
+/** The holder → standby push channel: `GrpcStandbyChannel` between processes (`grpc.ts`), or the standby's own channel in process. */
 export interface StandbyChannel {
   push(p: StandbyPush): void;
 }

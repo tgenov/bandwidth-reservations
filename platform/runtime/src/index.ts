@@ -49,6 +49,7 @@ export {
   CheckpointStore, CheckpointError, MemoryObjectStore, FileObjectStore, CHECKPOINT,
   type ObjectStore, type CheckpointErrorCode, type CheckpointAlert, type CheckpointStoreOptions,
 } from './checkpoint/store.ts';
+export { S3ObjectStore, S3ObjectStoreError, type S3Api, type S3ObjectStoreOptions, type S3ObjectStoreErrorCode } from './checkpoint/s3.ts';
 
 export {
   TIMING, tauFor, writeTimingVersion, readTimingVersion, TimingVersionRefused, TimingAlarms, TimingProbe, toOperationalAlert,
@@ -59,6 +60,11 @@ export { TimingController, busAlertSink, type TimingControllerOptions } from './
 export { OffsetMonitor, OFFSET, type OffsetLevel, type OffsetSample, type OffsetMonitorOptions } from './offset.ts';
 export { GatewayTiers, TierTimeout, withTierTimeout, type GatewayTiersOptions } from './store/tiers.ts';
 export { StandbyTail, STANDBY_BUFFER_MAX, type StandbyPush, type StandbyChannel, type StandbyStats, type TailRow } from './standby/tail.ts';
+export {
+  GrpcStandbyChannel, GrpcStandbyServer, StandbyCodecError, encodeStandbyPush, decodeStandbyPush, STANDBY_PUSH_PATH,
+  STANDBY_PUSH_QUEUE_MAX, type GrpcStandbyChannelOptions, type GrpcStandbyChannelStats, type GrpcStandbyServerOptions,
+  type StandbyCodecErrorCode,
+} from './standby/grpc.ts';
 
 // TODO(S-PLAT-I1 item 15, C01 §3.1–§3.6): TLA+ model of sessions, revocation, resume, re-home, epochs, slot batches,
 //   handoff, read leases, report position, marker chain, relay progress and closure; TLC in CI.
