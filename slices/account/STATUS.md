@@ -58,3 +58,10 @@ Each property test was shown once to fail when the code is broken on purpose (se
 ## Open design issues
 
 D-1 … D-12 in [money/STATUS-MONEY-I2.md](money/STATUS-MONEY-I2.md) go to the RFC and contract owners.
+
+## MONEY-I2 delivery decision (2026-10-13)
+
+MONEY-I2 is delivered with exit criteria 1 to 5 met by unit, property and contract tests.
+Exit criterion 6 (X2-S13: a 300-line movement commits within 2 s at the SP4 rate) is a
+**manual proof owed**. Local testing is contract and double based only, so no agent runs it.
+A person runs the integration measurement on a quiet dev cell and records the result here.
