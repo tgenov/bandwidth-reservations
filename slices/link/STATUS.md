@@ -13,6 +13,7 @@ Run: `npm run typecheck:link`, `npm run test:link`, `REQUIRE_DEV_CELL=1 npm run 
 | S-LINK-I2 Counter-offers, request records and the availability query | Built, not committed | P1-S12, S15, S16, S17, S38, S39, S70, S73 |
 | S-LINK-I3 Waiting, grants and the waiting port | Built, not committed; manual proofs owed (see S-LINK-I3) | P1-S07, S11, S34 |
 | S-LINK-I4 Validity and the rolling horizon | Built, not committed (one manual proof owed) | P1-S18, S19, S20, S21, S22, S23, S74 |
+| S-LINK-I5 Yields, claims and waiting marks | Built, not committed | None of P1 (plan §7). Link parts of P2-S15, S19, S58, S59, S60, S87, S88, S97, S118 (plan §8) |
 
 ## S-LINK-I2
 
@@ -292,3 +293,76 @@ measurements); `npm run -s test:contracts` 84 tests, 80 pass, 0 fail, 4 todo (PE
 | DI-18 | RFC-001 §2, §4.1 | The `UNAVAILABLE` for an unapplied version has no place in the order of the checks | After check (3) (`D_c` needs no policy), before check (4). RFC-001 erratum |
 | DI-19 | RFC-001 §7.3 | A version deployed after a newer one is not described | Kept for the holds that carry it; it does not become the current policy. RFC-001 erratum |
 | DI-20 | C02 link availability query | `AvailabilityQuery` has no policy version (as DI-1 has no `m0`) | The link uses its current policy for H. Part of the C02 minor version of DI-1 |
+
+## S-LINK-I5
+
+### What it adds
+
+| Part | Where |
+|---|---|
+| C02 types: `ClaimSeq`, `MarkWaitingCmd`/`MarkWaitingReply`, `YieldAnswerCmd`/`AcceptReply`, the `YIELD_REQUEST` notification, `QueryState.openYieldClaims`; the commands `mark_waiting` and `yield` in `LinkCommand` | `src/c02.ts` |
+| `mark_waiting`: applied only above the last applied position of the request (`IGNORED_OLDER`, no entry, otherwise). The mark is in the request record. A mark that is set checks again, in its entry, each older waiter that the holder attempt blocks and that has no open request on it (P2-S118). A cleared mark ends no claim | `src/state.ts` (`markWaiting`) |
+| `request_yields(w)` (RFC-001 §4.3): the candidates are the younger holders with the mark that overlap a conflict range of w. The link asks them only if their capacity and the free capacity let w fit (`yieldsSuffice`: the window is cut where the sum of the holders changes; no change to `occ_all`). One claim for each raising entry, identified by its sequence (`ClaimSeq`), over the conflict ranges of w at that time; one request on a holder attempt for each entry (DI-21). It runs at `hold` check (8), in the scan for a waiter that is still blocked (before its waiting notice), on a mark, and on a refusal with the mark set. Not for a waiter at or after its `D_c` (DI-26) | `src/state.ts` (`requestYields`) |
+| The claim check of the scan: a waiter younger than an older waiter with a live claim whose ranges overlap its window is not granted (after the no-fit check, before the grant). A claim reserves nothing against new holds (POL-05) | `src/state.ts` (`insideOlderClaim`, `examine`) |
+| `yield_accept`: removes the pulse, registers the holder as a waiter at attempt + 1 with the same command (same age and window, P2-S97), ends every other claim on the old attempt, and scans the freed range. The accepted claim stays live until its waiter ends (DI-23). Reply `ACCEPTED(newWaiterAttempt)` | `src/state.ts` (`yieldAnswer`) |
+| `yield_refuse`: ends only its claim (all its requests); a new claim at once if the holder's mark is set and the older waiter is still blocked by that attempt (C02 review 54 M3). Reply `REFUSED_RECORDED` | `src/state.ts` |
+| Each answer is recorded in the request record by (attempt, claim, kind): a repeat gets the recorded reply and its link sequence. An attempt or a claim that is not open gets `STALE_ATTEMPT` and writes nothing | `src/state.ts` |
+| The end of claims: a waiter that is granted, refused or released ends its claims; `convert` and `release` of a holder end every claim with a request on that attempt (the whole claim, DI-24) | `src/state.ts` |
+| `query` shows `openYieldClaims` (claim, older request) of the present hold attempt, by claim | `src/state.ts` |
+| Owner: `markWaiting`, `yieldAnswer` (entries `MarkWaiting`, `YieldAccept`, `YieldRefuse`; identities `mark:<request>:<position>`, `<answer>:<request>:<attempt>:<claim>`). A `YIELD_REQUEST` is a notice (outbox row and push); its C01 subject has the claim. Re-send of each open request with the same claim and content, every `yieldResendMs` (1 s), from a C01 timer of the link (`onTimer`, `YIELD_RESEND_TIMER`); armed after each committed batch and after a rebuild (C02 `onAdopt`), cancelled when no request is open and in `onMovedOut` (DI-25) | `src/owner.ts` |
+| Contract suite: `runC02ProviderSuite(…, { i5: true })` adds provider test 4 (yield parts) and provider test 5. The account link double has a PENDING entry (`contracts/suites/ISSUES.md`, CS-10, CS-11 and "Known double gaps") | `contracts/suites/src/c02.ts` |
+| Oracle: `YieldOracle` (per minute, written apart from the link's code) extends `MinuteOracle` through hooks (`other`, `registered`, `claimBlocks`, `blocked`, `waiterEnded`, `holderEnded`) | `test/oracle.yields.ts`, `test/support.ts` |
+
+### Exit criteria
+
+| # | Criterion | State | Proving tests |
+|---|---|---|---|
+| 1 | T-08 passes | Met (runtime double; the property run also on the C01 runtime core with the memory store). The link part of "`retry_after` across several blockers and legs" is the latest blocker on this link (I1, I3: P1-S70, P2-S61); the other legs are the account owner's | `test/yields.test.ts`: crossings (`P2-S19 joint trace …`, `P2-S118 link part …`), three-cycles (`P2-S87 joint trace …`, `P2-S88 link part …`), no mark (`P2-S58 link part …`, `P2-S59 link part …`), commit fence (`T-08 commit fence …`, `T-08 a waiter one millisecond before its D_c …`), review 17's loop (`T-08 review 17 loop: O needs 6, Y holds 3 and 1 is free …`, `T-08 review 17 loop: with yields sufficient, a yielder is not granted again inside the live claim …`, `T-08 a younger waiter outside the claimed ranges is granted …`, `T-08 a claim reserves nothing against arrivals …`), attempts (`P2-S97 link part …`, `P2-S60 link part …`), claims (`T-08 claims: two older waiters have open claims on one holder attempt; a refusal ends only its claim`, `C02 provider test 5 / T-08 mark, then refusal …`, `C02 provider test 5 / T-08 refusal, then mark …`, `C02 provider test 4 the end of a hold attempt …`, `T-08 a waiter that is granted ends its claim …`), `P2-S15 link part …`; property: `T-08 the P1-N1 properties, the waiting oracle and the yield oracle hold when 50 clients send 6 seeds × 1,500 commands with marks and yield answers; a replay gives the same outcomes and notices`, `should keep the P1-N1 properties and the yield oracle on the real C01 runtime core …`; replay: `should replay marks, claims and yield answers … after a takeover, and re-arm the open yield requests` |
+| 2 | C02 provider tests 4 (`yield_accept` replies with attempt + 1; stale attempt or claim gets `STALE_ATTEMPT`; end of an attempt closes its claims and stops their re-sends) and 5 (both orders) | Met | Suite `runC02ProviderSuite(…, { i2: true, i3: true, i4: true, i5: true })`: `C02 4 [real link owner] attempts: yield_accept replies ACCEPTED(attempt + 1) …`, `C02 4 … the end of a hold attempt (convert) closes every claim on it`, `C02 5 … refusal then mark …`, `C02 5 … mark then refusal …`, `C02 5 … yield_refuse(c1) ends only c1`. At the owner: `C02 provider test 4 yield_accept replies with attempt + 1 …`, `C02 provider test 4 the end of a hold attempt (convert) closes every claim on it, and its re-sends stop`, `… (release) …`, `C02 provider test 4 the release of one holder ends the whole claim …`, `C02 provider test 4 yield_accept ends every other claim on the old attempt`, `C02 provider test 5 / T-08 …` (2) |
+| 3 | C02 joint traces P2-S19 and P2-S87, orders "refuse, then mark" and "mark, then refuse", against the stub | Met (recorded account-owner stub on two and three links of one owner; the run with the real account owner is at C6, plan §1 rule 4) | `P2-S19 joint trace (mark, then refusal) …`, `P2-S19 joint trace (refusal, then mark) …`, `P2-S87 joint trace (mark, then refusal) …`, `P2-S87 joint trace (refusal, then mark) …` |
+
+No exit criterion of I5 needs the dev cell, so I5 adds no integration test.
+
+The property run (`waitShare` 0.5, `yieldShare` 0.25, windows in the first 600 minutes) compares every outcome and every notice, in order, with `YieldOracle`, and checks from the log rows alone: P1-N1 after each entry (an accepted yield moves the pulse out of `occ_all`); each `YIELD_REQUEST` goes to a holder with the mark, for an older request that waits, with the claim of its entry (P2-S58); a mark entry is `APPLIED`. Over 6 seeds it has about 90 yield requests, with accepts, refusals, stale answers, applied and ignored marks. After each seed a new owner rebuilds the link by replay with no alert (invariant I5) and the same open requests. The I1 … I4 runs are unchanged: every new generator branch is guarded by `yieldShare` > 0, so their random sequences are the same.
+
+Deliberate breaks (each shown once by hand, then reverted; `state.ts` is the same as before): no mark check (42 tests fail, the I1 … I4 property runs too); no claim check in the scan; no sufficiency rule; the accepted yield keeps its pulse; the attempt not incremented; `convert` keeps the claims; no new claim after a refusal with the mark set; `position <` in place of `≤`; `yield_accept` ends no other claim; `release` keeps the holder's claims; a grant keeps the waiter's claims; one request per holder attempt per entry not enforced; no `D_c` check in `request_yields`. Each makes a unit test or the property run fail (the three claim-end breaks first failed only the property run, so their unit tests were made stronger). `comparePriority(h, b) ≥ 0` in place of `> 0` is an equivalent mutant: two different requests never compare equal.
+
+### Changes to earlier code and tests (no assertion removed)
+
+- `src/state.ts`: `ActiveHold.cmd` (the hold command; an accepted yield registers it again). `comparePriority` takes any object with `requestAge` and `request`. Small hooks in `hold` check (8), `examine`, `grant`, `refuseWaiter`, `convert`, `release`, `query`.
+- `src/owner.ts`: the entry kind table `ENTRY_OF`; the `YIELD_REQUEST` subject; the re-send timer after commit and rebuild.
+- `test/support.ts`: `harness` gives the runtime double `owner.onTimer`. `MinuteOracle`: some members `protected`; `apply(cmd, ts, seq?)`; the attempt of each request (was always 1); the I5 hooks (no effect in `MinuteOracle`); `noticeForm` and `OracleNotice` have `claim` and `olderRequest`.
+- `test/property.ts`: `yieldShare`, `yieldRequests`, `spread`; the yield steps; the log checks for `mark_waiting`, `yield` and `YIELD_REQUEST`. With `yieldShare` 0 the run is as before.
+- `test/contract.c02.test.ts`: the real link owner registers `{ i5: true }`.
+- `tools/mutation/link.stryker.json`: the ranges at the new lines (`state.ts:262-932`, `963-1028`; `owner.ts` ranges moved, and `352-385` (re-send timer) and `673-703` (entry identities, `ENTRY_OF`) added); the command also runs `yields.test.ts` and `property.yields.test.ts`. Stryker not run.
+
+### Gates (2026-10-13, agent run, contract and double based only)
+
+`npm run -s typecheck:link` clean; `npm run -s typecheck:contracts` clean; `npx eslint slices/link contracts` clean;
+`npm run -s test:link` 239 tests, 236 pass, 0 fail, 3 skipped (the measurements, `LINK_MEASURE` not set);
+`npm run -s test:contracts` 97 tests, 94 pass, 0 fail, 3 todo (PENDING entries). Not run by the agent: the integration
+tests, `npm run measure`, `npm run check`, Stryker. A person runs them before the merge.
+
+Environment: this worktree had no `@grpc/grpc-js` (added by S-PLAT I2 to `platform/runtime`), so every test failed at
+load and `typecheck:link` reported errors in `platform/runtime/src/standby/grpc.ts`. The agent linked
+`node_modules/@grpc` to the installed copy of another worktree (untracked; not a code change). A person runs
+`npm ci` in each checkout.
+
+### Design issues found
+
+| Id | Where | Conflict | Proposed resolution |
+|---|---|---|---|
+| DI-21 | C02 `ClaimSeq`, `YIELD_REQUEST` identity (CS-11) | A claim is the sequence of the entry that raised it. One entry (a scan, a mark that checks several older waiters) can raise claims for more than one waiter. Two requests on one holder attempt from one entry would have the same identity (link, request, attempt, kind, claim) | One entry raises at most one request on a holder attempt, for the first waiter that it checks (priority order). The link keys a claim by (sequence, waiter). C02 note, or a claim identity of (sequence, index) |
+| DI-22 | C02 `mark_waiting` (CS-10) | No reply is stated for a mark of a request that has no hold and no waiter at the link (not seen, or final) | `IGNORED_OLDER`, no entry; alert `MARK_WITHOUT_REQUEST` for a request not seen. C02 note |
+| DI-23 | RFC-001 §4.3; C02 `yield_accept` | `yield_accept` ends every *other* claim on the attempt, so the accepted claim stays. If its waiter still does not fit (a new hold took the free capacity: a claim reserves nothing), the claim stays live with no open request and keeps younger waiters in its ranges from a grant until its waiter ends | Accept (bounded by the waiter's D), or RFC-001: a claim with no open request ends at the scan of the entry that answered it |
+| DI-24 | C02 port invariants "ends every yield claim on that attempt"; RFC-001 §4.3 | For a claim with requests on more than one holder, it is not clear if the end of one holder attempt (`convert`, `release`) ends the requests on the other holders | The whole claim ends (RFC-001: "the claim ends when … the holder's attempt ends"); the scan of the same entry checks the waiter again from the start and can raise a new claim. C02 note |
+| DI-25 | C02 "YIELD_REQUEST" re-send; C01 §2.4 hooks | No interval is stated for the re-send of an unanswered request. The C01 timer fires through the runtime option `onTimer`, which `OwnerHooks` does not list | 1 s (est., as the other C02 re-sends), as a push of the same identity and content (not a new outbox row). C02 parameter; C01 note: `onTimer` in `OwnerHooks` (as CS-2) |
+| DI-26 | RFC-001 §4.3 `request_yields` | The scan skips a waiter at or after its `D_c`, but `request_yields` from a mark or a refusal has no such rule, so a holder could yield for a request that cannot commit | No yield request for a waiter at or after its `D_c`. RFC-001 erratum |
+| DI-27 | RFC-001 §4.3; C02 `AcceptReply` | `ACCEPTED` has no `aheadDeadline`. The yielder's waiting notice comes from the scan, but the scan skips it while it is inside a live claim, so its `aheadDeadline` (and `query`) can be 0 until a later scan | Accept (the 5 s `query` reconcile and the next scan correct it; the blocker is older), or the accept entry sends the yielder's `WAITING_NOTICE` after its scan |
+
+### Left for later increments
+
+- `DISPLACED` and `displacement_accept` (I11), which share the attempt rule and the end of claims.
+- Scans and yields after capacity rises (leg changes I6, I12 … I15): they use the same `scan`.
+- The account link double has no I5 part (account slice; `contracts/suites/ISSUES.md`).
+- The gRPC push transport: `onNotify` is the hook; the re-send uses it.

@@ -15,12 +15,21 @@
  * also gives the waiting-port notices (grants, waiter refusals, waiting notices), and the run checks that the
  * notices in the log are the oracle's, in order, and that each grant keeps occ_all ≤ C_ref.
  * Some holds then reuse the request_age of the client's last hold, so equal ages tie by request sequence.
+ *
+ * With `yieldShare` > 0 (S-LINK I5), that share of the steps sends `mark_waiting` (positions in order, some stale) or
+ * answers an open `YIELD_REQUEST` (accept or refuse, some with a stale attempt), and 30 % of the holds get an older
+ * request_age, so younger holders block older waiters. The oracle is then `YieldOracle`. The run also checks from the
+ * log rows alone that each yield request goes to a holder that carries the mark, for an older request that waits,
+ * with the claim of its entry, and that an accepted yield moves the pulse out of occ_all (P1-N1, P2-S58).
  */
 import assert from 'node:assert/strict';
-import { encodeJson, hex } from '@share/owner-runtime';
-import type { DecidedRecord, HoldCmd, LinkCommand, LinkPolicy, LoggedEntry, LoggedPayload, Outcome, WaitingNotice } from '../src/index.ts';
+import { encodeJson, hex, hlcToWallMs, type HlcTs } from '@share/owner-runtime';
+import type {
+  DecidedRecord, HoldCmd, LinkCommand, LinkPolicy, LoggedEntry, LoggedPayload, MarkWaitingCmd, Outcome, RequestId, WaitingNotice, YieldAnswerCmd,
+} from '../src/index.ts';
 import { DEFAULT_POLICY, requestKey } from '../src/index.ts';
-import { AccountStub, int, MinuteOracle, noticeForm, oracleHorizon, resultOf, rng } from './support.ts';
+import { YieldOracle } from './oracle.yields.ts';
+import { AccountStub, int, MinuteOracle, noticeForm, oraclePriority, oracleHorizon, resultOf, rng } from './support.ts';
 
 export interface PropertyTarget {
   stub: AccountStub;
@@ -35,6 +44,12 @@ export interface PropertyTarget {
   policy?: LinkPolicy;
   /** The share of the holds with `wait = true` (I3). Default 0: every hold has `wait = false`. */
   waitShare?: number;
+  /** The share of the steps that send `mark_waiting` or a yield answer (I5). Default 0: none. */
+  yieldShare?: number;
+  /** The minutes after `base` in which the windows start (I5: a small spread gives more contention). Default 2,680. */
+  spread?: number;
+  /** The YIELD_REQUESTs that the link sent so far (I5; needed when `yieldShare` > 0). */
+  yieldRequests?: () => Array<{ request: RequestId; attempt: number; claim: bigint }>;
 }
 
 export interface PropertyResult { counts: Record<string, number>; entries: number }
@@ -63,27 +78,68 @@ function breakRule(cmd: HoldCmd, kind: number, r: () => number): void {
 export async function propertyRun(t: PropertyTarget, seed: number, commands: number, clients: number): Promise<PropertyResult> {
   let sent = 0;
   const counts: Record<string, number> = {};
+  /** I5: the yield requests answered so far (by the stub's position in the list); most answers go to new ones. */
+  const answered = new Set<number>();
   const runClient = async (c: number): Promise<void> => {
     const r = rng(seed * 7919 + c);
     const account = `acct-${c}`;
     const mine: HoldCmd[] = [];
     const pick = (): HoldCmd | undefined => mine.length === 0 ? undefined : mine[int(r, 0, mine.length - 1)];
+    const ys = t.yieldShare ?? 0;
+    const positions = new Map<string, bigint>();
+    /** I5: the holds that this client got HELD; most marks go to them. */
+    const holding: HoldCmd[] = [];
+    /** I5: a mark of one of this client's requests, or an answer to an open yield request. */
+    const yieldStep = async (): Promise<unknown> => {
+      const open = t.yieldRequests?.() ?? [];
+      const link = t.stub.link;
+      if (r() < 0.6 || open.length === 0) {
+        const h = (holding.length > 0 && r() < 0.8 ? holding[int(r, 0, holding.length - 1)] : pick())
+          ?? t.stub.holdCmd({ rate: 1, window: { start: t.base, end: t.base + 1 }, account });
+        const k = requestKey(h.request);
+        const last = positions.get(k) ?? 0n;
+        const position = r() < 0.1 ? last : last + 1n;
+        positions.set(k, position > last ? position : last);
+        const m: MarkWaitingCmd = { link, receiverPartition: link, request: h.request, waiting: r() < 0.9, position };
+        return t.stub.owner.markWaiting(t.stub.envelope(h.account), m);
+      }
+      const fresh = open.map((_, i) => i).filter((i) => !answered.has(i));
+      const i = fresh.length > 0 && r() < 0.85 ? fresh[int(r, 0, fresh.length - 1)] as number : int(r, 0, open.length - 1);
+      answered.add(i);
+      const n = open[i] as { request: RequestId; attempt: number; claim: bigint };
+      const y: YieldAnswerCmd = {
+        link, receiverPartition: link, request: n.request, attempt: r() < 0.05 ? n.attempt + 1 : n.attempt, claim: n.claim,
+        answer: r() < 0.6 ? 'yield_accept' : 'yield_refuse',
+      };
+      return t.stub.owner.yieldAnswer(t.stub.envelope(n.request.partition), y);
+    };
     while (sent < commands) {
       sent += 1;
+      if (ys > 0 && r() < ys) {
+        const k = resultOf(await yieldStep());
+        counts[k] = (counts[k] ?? 0) + 1;
+        continue;
+      }
       const p = r();
       let reply: unknown;
       if (p < 0.42 || mine.length === 0) {
-        const start = t.base + int(r, 0, DOMAIN - 200);
+        const start = t.base + int(r, 0, t.spread ?? DOMAIN - 200);
         const end = r() < 0.08 ? null : start + int(r, 1, 180);
         const wait = (t.waitShare ?? 0) > 0 && r() < (t.waitShare ?? 0);
         let cmd = t.stub.holdCmd({ rate: int(r, 1, 6), window: { start, end }, account, deadlineInMs: int(r, 300, 30_000), wait });
         // I3: some holds take the request_age of the client's last hold, so the request-sequence tie of the order occurs.
         const last = mine.at(-1);
         if ((t.waitShare ?? 0) > 0 && last && r() < 0.3) cmd = { ...cmd, requestAge: last.requestAge };
+        // I5: an older request_age, so a younger holder can block an older waiter.
+        if (ys > 0 && r() < 0.5) {
+          const older = hlcToWallMs(t.stub.rt.now().ts) - int(r, 1, 5_000);
+          cmd = { ...cmd, requestAge: `${BigInt(older) * 1_000_000n}.0000000000` as HlcTs };
+        }
         // I4: 10 % of the holds break a rule (with wait = true too: they must be refused INVALID, not wait).
         if (r() < 0.1) breakRule(cmd, int(r, 0, 7), r);
         mine.push(cmd);
         reply = await t.stub.hold(cmd);
+        if (ys > 0 && resultOf(reply) === 'HELD') holding.push(cmd);
       } else if (p < 0.58) {
         const h = pick() as HoldCmd;
         reply = await t.stub.convert(t.stub.convertCmd(h, r() < 0.05 ? 2 : 1));
@@ -112,10 +168,10 @@ export async function propertyRun(t: PropertyTarget, seed: number, commands: num
   await Promise.all(Array.from({ length: clients }, (_, c) => runClient(c)));
 
   // (1) Every decision equals the per-minute oracle, in the order of decision (T-01, T-03).
-  const oracle = new MinuteOracle(t.base, DOMAIN, t.capacity, t.policy);
+  const oracle = (t.yieldShare ?? 0) > 0 ? new YieldOracle(t.base, DOMAIN, t.capacity, t.policy) : new MinuteOracle(t.base, DOMAIN, t.capacity, t.policy);
   const cmds = t.decided.filter((d) => 'op' in d.command);
   for (const [i, d] of cmds.entries()) {
-    const want = oracle.apply(d.command as LinkCommand, d.ts);
+    const want = oracle.apply(d.command as LinkCommand, d.ts, d.seq);
     assert.equal(hex(encodeJson(d.outcome)), hex(encodeJson(want)),
       `seed ${seed}, decision ${i} (${(d.command as LinkCommand).op}): link ${JSON.stringify(d.outcome)} oracle ${JSON.stringify(want)}`);
   }
@@ -142,6 +198,9 @@ export async function propertyRun(t: PropertyTarget, seed: number, commands: num
   const waiting = new Map<string, { s: number; e: number; b: number }>();
   const holdEntries = new Set<string>();
   const convertEntries = new Set<string>();
+  /** I5: the hold command and the applied waiting mark of each request, from the log rows. */
+  const holdCmds = new Map<string, HoldCmd>();
+  const marked = new Map<string, boolean>();
   const hold = (span: { s: number; e: number; b: number }, seq: bigint): void => {
     for (let m = span.s; m < span.e; m++) {
       all[m] = (all[m] as number) + span.b;
@@ -161,6 +220,7 @@ export async function propertyRun(t: PropertyTarget, seed: number, commands: num
       if (p.op === 'hold') {
         assert.ok(!holdEntries.has(key), `seed ${seed}: two hold entries for ${key}`);
         holdEntries.add(key);
+        holdCmds.set(key, p.body as HoldCmd);
         const result = (p.outcome as { result?: string }).result;
         const b = p.body as HoldCmd;
         const span = { s: b.window.start - t.base, e: (b.window.end ?? t.base + DOMAIN) - t.base, b: b.rateMbps };
@@ -174,6 +234,18 @@ export async function propertyRun(t: PropertyTarget, seed: number, commands: num
         assert.ok(!convertEntries.has(key), `seed ${seed}: two convert entries for ${key}`);
         convertEntries.add(key);
         held.delete(key);
+      } else if (p.op === 'mark_waiting') {
+        assert.equal((p.outcome as { result?: string }).result, 'APPLIED', `seed ${seed}: a mark entry is APPLIED`);
+        marked.set(key, (p.body as MarkWaitingCmd).waiting);
+      } else if (p.op === 'yield') {
+        // An accepted yield moves the holder's pulse out of occ_all; it waits again (RFC-001 §4.3).
+        if ((p.outcome as { result?: string }).result === 'ACCEPTED') {
+          const span = held.get(key);
+          assert.ok(span, `seed ${seed}: an accepted yield of ${key}, which holds nothing (seq ${e.seq})`);
+          for (let m = span.s; m < span.e; m++) all[m] = (all[m] as number) - span.b;
+          held.delete(key);
+          waiting.set(key, span);
+        }
       } else {
         const span = held.get(key);
         if (span) {
@@ -186,6 +258,15 @@ export async function propertyRun(t: PropertyTarget, seed: number, commands: num
     // A grant moves a waiter's pulse into occ_all in the entry that frees the capacity.
     for (const n of p.notices ?? []) {
       const key = requestKey(n.request);
+      if (n.kind === 'YIELD_REQUEST') {
+        // P2-S58: only a holder with the mark is asked, for an older request that waits, with the claim of this entry.
+        const older = requestKey(n.olderRequest);
+        assert.ok(held.has(key) && marked.get(key) === true, `seed ${seed}: a yield request to ${key}, which does not hold with the mark (seq ${e.seq})`);
+        assert.ok(waiting.has(older), `seed ${seed}: a yield request for ${older}, which does not wait (seq ${e.seq})`);
+        assert.ok(oraclePriority(holdCmds.get(older) as HoldCmd, holdCmds.get(key) as HoldCmd) < 0, `seed ${seed}: the holder ${key} is not younger (seq ${e.seq})`);
+        assert.equal(n.claim, e.seq, `seed ${seed}: the claim is the sequence of its entry`);
+        continue;
+      }
       const span = waiting.get(key);
       assert.ok(span, `seed ${seed}: a notice ${n.kind} for ${key}, which does not wait (seq ${e.seq})`);
       if (n.kind === 'GRANTED') {

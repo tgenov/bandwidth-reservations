@@ -1,5 +1,5 @@
 /**
- * The link schedule owner on the C01 runtime (RFC-001 §7.2, §8), parts I1 … I4.
+ * The link schedule owner on the C01 runtime (RFC-001 §7.2, §8), parts I1 … I5.
  *
  * - The C02 link hold port: `hold`, `convert`, `release`, `query`. Each command comes with its C01
  *   `CommandEnvelope`. The owner checks the routing, calls `admitCommand`, and queues the command for
@@ -14,6 +14,9 @@
  *   continues in `Tick` entries, in the same batch, before the next command (RFC-001 §4.3).
  * - Before a batch, the owner reads the `link_request` row of each command whose request record has gone
  *   from memory, so the repeat gets the recorded answer (C02 provider test 3).
+ * - Yields (I5): `markWaiting` and `yieldAnswer` are commands as `hold`. A `YIELD_REQUEST` is a notice as above. The
+ *   owner sends each open yield request again with the same claim, every `yieldResendMs`, from a C01 timer of the
+ *   link, until an entry ends it (C02 "YIELD_REQUEST"). A rebuild arms the timer again (C02 `onAdopt`).
  * - The deployment command `deployPolicy` writes a `Policy(version, parameters)` entry (RFC-001 §7.3).
  * - Hooks: `onAcquire` and `onAdopt` rebuild the link by replay of its log. The replay compares each
  *   recorded outcome (RFC-001 §7.4). The first batch after a new epoch writes `Takeover(epoch)`.
@@ -22,10 +25,10 @@ import type {
   AppendResult, AuditFields, CommandEnvelope, Epoch, EntryInput, Generation, HlcTs, InboundNotification, NotificationOut,
   OwnerHooks, OwnerRuntime, PartitionKey, ProjectionWrite, RoutingRefusal, Seq, SlotNo, WriterFence,
 } from '@share/owner-runtime';
-import { encodeJson, hex, hlcToWallMs, slotOfPartition, utf8 } from '@share/owner-runtime';
+import { encodeJson, hex, hlcAddMs, hlcToWallMs, slotOfPartition, utf8 } from '@share/owner-runtime';
 import type {
   AvailabilityQuery, AvailabilityReply, BodyOf, ConvertCmd, Fence, FitRangesQuery, FitRangesReply, HoldCmd, LinkCommand, LinkId,
-  LinkOp, LinkStamp, QueryCmd, QueryReply, ReleaseCmd, ReplyOf, RequestId, WaitingNotification,
+  LinkOp, LinkStamp, MarkWaitingCmd, QueryCmd, QueryReply, ReleaseCmd, ReplyOf, RequestId, WaitingNotification, YieldAnswerCmd,
 } from './c02.ts';
 import { requestKey } from './c02.ts';
 import { declaration, ENTRY, LINK_KIND } from './declaration.ts';
@@ -63,6 +66,9 @@ export const LINK_REQUEST_TABLE = 'link_request';
  */
 const RECALL_MARGIN_MS = 60_000;
 
+/** The C01 timer key of the re-send of the open yield requests of a link. */
+export const YIELD_RESEND_TIMER = 'yield-resend';
+
 export interface SenderRef { kind: string; partition: PartitionKey; generation: Generation; epoch: Epoch }
 
 export interface LinkAlert { kind: string; link: LinkId; request?: string; detail?: string }
@@ -87,6 +93,11 @@ export interface LinkOwnerOptions {
    * owner). The transport is not in I3. The relay of the outbox row is the guaranteed path (C02 "Delivery").
    */
   onNotify?: (n: NotificationOut) => void;
+  /**
+   * The interval of the re-send of an unanswered yield request, with the same claim (C02 "YIELD_REQUEST"; est. 1 s,
+   * as the other C02 re-sends). The runtime calls `onTimer` when it is due.
+   */
+  yieldResendMs?: number;
 }
 
 /** One decision as the owner made it: the command, its outcome, the batch ts and the entry sequence. */
@@ -124,12 +135,12 @@ export class LinkOwner implements OwnerHooks {
   /** The number of request records read from `link_request` (a repeat after the record left memory). */
   recalledRecords = 0;
   private readonly rt: OwnerRuntime;
-  private readonly o: Required<Pick<LinkOwnerOptions, 'maxBatch' | 'retries'>> & LinkOwnerOptions;
+  private readonly o: Required<Pick<LinkOwnerOptions, 'maxBatch' | 'retries' | 'yieldResendMs'>> & LinkOwnerOptions;
   private readonly links = new Map<string, LinkMemory>();
 
   constructor(rt: OwnerRuntime, opts: LinkOwnerOptions) {
     this.rt = rt;
-    this.o = { maxBatch: 1_000, retries: 3, ...opts };
+    this.o = { maxBatch: 1_000, retries: 3, yieldResendMs: 1_000, ...opts };
   }
 
   // ---------------- C02 link hold port ----------------
@@ -144,6 +155,16 @@ export class LinkOwner implements OwnerHooks {
 
   release(env: CommandEnvelope, body: ReleaseCmd): Promise<ReplyOf['release']> {
     return this.command('release', env, body);
+  }
+
+  /** C02 `mark_waiting` (link waiting port). */
+  markWaiting(env: CommandEnvelope, body: MarkWaitingCmd): Promise<ReplyOf['mark_waiting']> {
+    return this.command('mark_waiting', env, body);
+  }
+
+  /** C02 `yield_accept` and `yield_refuse` (outcome and expiry port). */
+  yieldAnswer(env: CommandEnvelope, body: YieldAnswerCmd): Promise<ReplyOf['yield']> {
+    return this.command('yield', env, body);
   }
 
   /**
@@ -331,6 +352,35 @@ export class LinkOwner implements OwnerHooks {
   onMovedOut(partition: PartitionKey): void {
     const mem = this.links.get(Buffer.from(partition).toString('utf8'));
     if (mem) mem.rebuild = 'full';
+    this.rt.cancelTimer(partition, YIELD_RESEND_TIMER);
+  }
+
+  /**
+   * A C01 timer of a link partition is due (the runtime's `onTimer`). For `YIELD_RESEND_TIMER`: send each open yield
+   * request of the link again, with the same claim and content, after `leaseValid` (C01 CC-7), and arm the timer again.
+   */
+  async onTimer(partition: PartitionKey, key: string): Promise<void> {
+    const mem = this.links.get(Buffer.from(partition).toString('utf8'));
+    if (key !== YIELD_RESEND_TIMER || !mem) return;
+    await this.serialise(mem, async () => {
+      if (mem.rebuild !== 'none' || mem.stopped || !this.rt.leaseValid(mem.slot).valid) return;
+      const fence = { generation: this.rt.generation(mem.partition), epoch: this.rt.epoch(mem.slot) };
+      for (const y of mem.state.openYieldRequests()) {
+        this.o.onNotify?.(this.notification(mem.link, {
+          request: y.request, account: y.account, attempt: y.attempt, kind: 'YIELD_REQUEST', claim: y.claim, olderRequest: y.olderRequest,
+        }, y.claim, fence));
+      }
+      this.armYieldResend(mem);
+    });
+  }
+
+  /** Arm the re-send timer of a link if it has an open yield request; else cancel it. */
+  private armYieldResend(mem: LinkMemory): void {
+    if (mem.state.openYieldRequests().length > 0) {
+      this.rt.timer(mem.partition, YIELD_RESEND_TIMER, hlcAddMs(this.rt.now().ts, this.o.yieldResendMs));
+    } else {
+      this.rt.cancelTimer(mem.partition, YIELD_RESEND_TIMER);
+    }
   }
 
   async onAdopt(partition: PartitionKey, _g: Generation): Promise<void> {
@@ -470,6 +520,7 @@ export class LinkOwner implements OwnerHooks {
           if (entries.length > 0) mem.lastEntryEpoch = epoch;
           this.answer(mem, batch, decisions, seqs, decidedAt as HlcTs);
           this.push(mem, notifications);
+          this.armYieldResend(mem);
           return;
         case 'ConditionFailed':
           if (result.which === 'decide' && entries.length === 0) {
@@ -550,11 +601,13 @@ export class LinkOwner implements OwnerHooks {
    * A waiting-port notice as a C01 notification row (RFC-001 §7.1 `link_outbox`; C02 `WaitingNotification`). The
    * C02 identity (link, request, attempt, kind) is in the body. The C01 id is the same for the push and the relay.
    * A `WAITING_NOTICE` is sent again with new content under the same C02 identity, so its C01 subject also has the
-   * log sequence: else the outbox keeps only the first copy (S-LINK I3 design issue DI-10).
+   * log sequence: else the outbox keeps only the first copy (S-LINK I3 design issue DI-10). The C02 identity of a
+   * `YIELD_REQUEST` also has the claim, so its C01 subject has the claim too.
    */
   private notification(link: LinkId, n: WaitingNotice, seq: Seq, fence: Fence): NotificationOut {
     const { account, ...content } = n;
-    const subject = `${link}|${requestKey(n.request)}${n.kind === 'WAITING_NOTICE' ? `|${seq}` : ''}`;
+    const extra = n.kind === 'WAITING_NOTICE' ? `|${seq}` : n.kind === 'YIELD_REQUEST' ? `|claim:${n.claim}` : '';
+    const subject = `${link}|${requestKey(n.request)}${extra}`;
     const body: WaitingNotification = { linkFence: fence, linkSeq: seq, link, ...content };
     return { to: { kind: ACCOUNT_KIND, partition: account }, id: { subject: utf8(subject), attempt: n.attempt, kind: n.kind }, body };
   }
@@ -583,6 +636,8 @@ export class LinkOwner implements OwnerHooks {
     }
     mem.state.commit();
     mem.rebuild = 'none';
+    // C02 `onAdopt`: the new holder re-arms the open yield requests, with their claims.
+    if (!mem.stopped) this.armYieldResend(mem);
   }
 
   /** Apply one logged entry again and compare the outcome with the recorded one. */
@@ -617,9 +672,12 @@ export class LinkOwner implements OwnerHooks {
 
   private commandEntry(cmd: LinkCommand, sender: SenderRef, d: Decision): EntryInput {
     const key = requestKey(cmd.body.request);
-    const kind = cmd.op === 'hold' ? ENTRY.Hold : cmd.op === 'convert' ? ENTRY.Convert : ENTRY.Release;
-    // A release can write a second entry only to extend its tombstone, so its identity has D.
-    const identity = cmd.op === 'release' ? `release:${key}:${cmd.body.deadline}` : `${cmd.op}:${key}`;
+    const kind = ENTRY_OF[cmd.op](cmd);
+    // A release can write a second entry only to extend its tombstone, so its identity has D. A request has one
+    // mark entry for each position, and one answer entry for each (attempt, claim, kind).
+    const identity = cmd.op === 'release' ? `release:${key}:${cmd.body.deadline}`
+      : cmd.op === 'mark_waiting' ? `mark:${key}:${cmd.body.position}`
+        : cmd.op === 'yield' ? `${cmd.body.answer}:${key}:${cmd.body.attempt}:${cmd.body.claim}` : `${cmd.op}:${key}`;
     const e = this.entry(kind, identity, {
       v: 1, op: cmd.op, body: cmd.body, outcome: d.outcome, sender, ...(d.final ? { record: d.final } : {}),
       ...(d.notices ? { notices: d.notices } : {}), ...(d.finals ? { records: d.finals } : {}),
@@ -634,6 +692,15 @@ export class LinkOwner implements OwnerHooks {
     this.o.onAlert?.(a);
   }
 }
+
+/** The entry kind of each command (RFC-001 §7.3). */
+const ENTRY_OF: { [O in LinkOp]: (cmd: Extract<LinkCommand, { op: O }>) => number } & Record<LinkOp, (cmd: LinkCommand) => number> = {
+  hold: () => ENTRY.Hold,
+  convert: () => ENTRY.Convert,
+  release: () => ENTRY.Release,
+  mark_waiting: () => ENTRY.MarkWaiting,
+  yield: (cmd) => (cmd.op === 'yield' && cmd.body.answer === 'yield_accept' ? ENTRY.YieldAccept : ENTRY.YieldRefuse),
+};
 
 /**
  * The `link_request` row of a final request record (RFC-001 §7.1): keyed by (link, request), it names the

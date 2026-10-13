@@ -1,5 +1,5 @@
 /**
- * The apply state machine of one link (RFC-001 §2, §3.3, §4.1 … §4.4, §7.3, §7.4), parts I1 … I4.
+ * The apply state machine of one link (RFC-001 §2, §3.3, §4.1 … §4.4, §7.3, §7.4), parts I1 … I5.
  *
  * `beginBatch(ts)` starts a batch at its commit timestamp `ts`. `decide(command, ts)` then applies one
  * command. It returns the outcome and tells if the command writes a log entry. A command that writes no
@@ -17,6 +17,12 @@
  * updates the waiting notice. If the budget binds, the scan is pending, and `tick` continues it: the owner writes
  * `Tick` entries before the next command. Each change for a waiter is a notice (`Decision.notices`).
  *
+ * Yields (§4.3, I5). A `mark_waiting` sets or clears the waiting mark of a request, in the order of its position. A
+ * waiter asks the younger holders that carry the mark to yield, only if their capacity and the free capacity let it
+ * fit. It then takes a yield claim (identified by the sequence of the entry that raised it) over its conflict
+ * ranges. While the claim is live, the scan grants no younger waiter inside those ranges. `yield_accept` makes the
+ * holder a waiter at attempt + 1; `yield_refuse` ends only its claim. The end of a hold attempt ends every claim on it.
+ *
  * Policy versions (§2, §7.3, I4). `Init` and each `Policy(version, parameters)` entry add a version. The link keeps
  * every version, so it can judge each hold by the rules (V1 … V6, `rate_min`, `selling_horizon`) of the version
  * that the hold carries. The newest version gives the other parameters of the link from its entry on.
@@ -29,12 +35,12 @@
 import { createHash } from 'node:crypto';
 import { compareHlc, encodeJson, type HlcTs, type WriterFence } from '@share/owner-runtime';
 import type {
-  ConvertCmd, ConvertOutcome, CounterOffer, FitRanges, HoldCmd, HoldOutcome, LinkCommand, LinkId, Minute, QueryState,
-  ReleaseCmd, ReleaseOutcome, RequestId, WaitingContent, Window,
+  AcceptOutcome, ConvertCmd, ConvertOutcome, CounterOffer, FitRanges, HoldCmd, HoldOutcome, LinkCommand, LinkId, MarkWaitingCmd,
+  MarkWaitingOutcome, Minute, QueryState, ReleaseCmd, ReleaseOutcome, RequestId, WaitingContent, Window, YieldAnswerCmd,
 } from './c02.ts';
 import { requestKey } from './c02.ts';
 import { CounterOfferBatch, earliest, fitRanges, horizonMinute, largestRate } from './counteroffer.ts';
-import { OccupancyTree } from './occupancy.ts';
+import { OccupancyTree, type MinuteRange } from './occupancy.ts';
 
 /** The policy parameters of one policy version (RFC-001 §7.3 `Init` and `Policy(version, parameters)`). */
 export interface LinkPolicy {
@@ -69,7 +75,7 @@ export interface PolicyCmd { link: LinkId; policy: LinkPolicy }
 
 /** The outcome of one command, without the link stamp. */
 export type Outcome =
-  | HoldOutcome | ConvertOutcome | ReleaseOutcome
+  | HoldOutcome | ConvertOutcome | ReleaseOutcome | MarkWaitingOutcome | AcceptOutcome
   | { code: 'UNKNOWN_LINK' } | { code: 'UNAVAILABLE' }
   | { result: 'INITIALISED' } | { result: 'TAKEOVER' } | { result: 'TICK' }
   | { result: 'POLICY_APPLIED'; version: string } | { code: 'INVALID_POLICY' };
@@ -114,6 +120,21 @@ export interface ActiveHold {
   rateMbps: number; window: Window;
   deadline: number; commitFence: number; requestAge: HlcTs;
   attempt: number;
+  /** The hold command. An accepted yield registers it again as a waiter (same age and window, RFC-001 §4.3). */
+  cmd: HoldCmd;
+}
+
+/** A yield claim (RFC-001 §4.3): raised for the waiter `waiter` by the entry `seq`, over its conflict ranges then. */
+interface Claim { seq: bigint; waiter: string; ranges: MinuteRange[] }
+
+/** An open yield request of a claim on one holder attempt (C02 `YIELD_REQUEST`). */
+export interface YieldRequest {
+  /** The claim: the sequence of the entry that raised it. */
+  claim: bigint;
+  /** The key of the older waiter of the claim, and its request. */
+  waiter: string; olderRequest: RequestId;
+  /** The key of the holder, its request, its account partition and its hold attempt. */
+  holder: string; request: RequestId; account: Uint8Array; attempt: number;
 }
 
 /** A confirmed leg part in `occ_firm` (RFC-001 §3.3 "Leg parts"). */
@@ -138,6 +159,10 @@ export interface RequestRecord {
   convertAttempt?: number;
   convertOutcome?: ConvertOutcome;
   tombstoneUntil?: number;
+  /** The waiting mark of the request and the account-log position of the `mark_waiting` that set it (I5). */
+  mark?: { waiting: boolean; position: bigint };
+  /** The recorded replies to `yield_accept` and `yield_refuse`, by (attempt, claim, kind) (C02 "Idempotency"). */
+  answers?: Array<{ attempt: number; claim: bigint; answer: YieldAnswerCmd['answer']; outcome: AcceptOutcome; seq: bigint }>;
   /** The largest D (ms) of the commands that made the record. */
   deadline: number;
   /** D + request_record_ttl, in ms. After it, a final record is gone (from memory and from `link_request`). */
@@ -166,6 +191,9 @@ export class LinkState {
   private readonly waiters = new Map<string, Waiter>();
   /** The waiter keys in priority order: `request_age`, ties by request identity (RFC-001 §4.3). */
   private readonly waitOrder: string[] = [];
+  /** The yield claims by `claimKey(seq, waiter)`, and the open yield requests by `yieldKey(holder, attempt, claim)` (I5). */
+  private readonly claims = new Map<string, Claim>();
+  private readonly yieldReqs = new Map<string, YieldRequest>();
   /** The notices and the final records of other requests of the entry being decided. */
   private notices: WaitingNotice[] = [];
   private finals: RequestRecord[] = [];
@@ -353,6 +381,8 @@ export class LinkState {
         case 'hold': return this.withEffects(this.hold(cmd.body, ts));
         case 'convert': return this.withEffects(this.convert(cmd.body, ts));
         case 'release': return this.withEffects(this.release(cmd.body, ts));
+        case 'mark_waiting': return this.withEffects(this.markWaiting(cmd.body, ts));
+        case 'yield': return this.withEffects(this.yieldAnswer(cmd.body, ts));
       }
     } finally {
       this.recalled = undefined;
@@ -387,7 +417,7 @@ export class LinkState {
   /** The sequence of the entry being decided. */
   private seq = 0n;
 
-  /** RFC-001 §4.1, C02 `hold` checks (1) … (8). Check (8) registers a waiter with no yields (yields are I5). */
+  /** RFC-001 §4.1, C02 `hold` checks (1) … (8). Check (8) registers a waiter and asks for yields (I5). */
   private hold(b: HoldCmd, ts: HlcTs): Decision {
     const key = requestKey(b.request);
     const rec = this.liveRecord(key, ts);
@@ -417,7 +447,7 @@ export class LinkState {
       this.occAll.add(start, end, b.rateMbps);
       this.setIn(this.holds, key, {
         request: b.request, account: b.account, leg: b.leg, rateMbps: b.rateMbps, window: b.window,
-        deadline: b.deadline, commitFence: b.commitFence, requestAge: b.requestAge, attempt: 1,
+        deadline: b.deadline, commitFence: b.commitFence, requestAge: b.requestAge, attempt: 1, cmd: b,
       });
       const outcome: HoldOutcome = { result: 'HELD', attempt: 1 };
       this.putRecord(key, {
@@ -437,11 +467,14 @@ export class LinkState {
     // nothing: a later hold is still checked against held capacity only (POL-05).
     const aheadDeadline = Math.max(this.latestBlockerDeadline(b.window, b.rateMbps), 0);
     const outcome: HoldOutcome = { result: 'WAITING', attempt: 1, aheadDeadline };
-    this.insertWaiter(key, { cmd: b, attempt: 1, aheadDeadline });
+    const waiter: Waiter = { cmd: b, attempt: 1, aheadDeadline };
+    this.insertWaiter(key, waiter);
     this.putRecord(key, {
       request: b.request, madeBy: 'hold', state: 'WAITING', holdDigest: digest(b), holdOutcome: outcome,
       deadline: b.deadline, expiresAt: b.deadline + this.policy.requestRecordTtlMs, seq: this.seq,
     });
+    // RFC-001 §4.1 check (8): "WAITING(1, aheadDeadline), and yield requests" (§4.3).
+    this.requestYields(key, waiter, ts);
     return { outcome, entry: true };
   }
 
@@ -554,12 +587,15 @@ export class LinkState {
       this.refuseWaiter(key, w);
       return;
     }
+    // Capacity that a younger waiter yielded for an older one is not granted to it again while the claim is live (§4.3).
+    if (this.insideOlderClaim(key, b)) return;
     // Fit beside every hold: the waiter becomes a hold at the same attempt (P1-S11, P2-S20, invariant I1).
     if (this.occAll.peak(start, end) + b.rateMbps <= this.cRef) {
       this.grant(key, w);
       return;
     }
-    // Still blocked: send the waiting notice again if its latest blocker changed (RFC-001 §4.3).
+    // Still blocked: ask for yields, then send the waiting notice again if its latest blocker changed (RFC-001 §4.3).
+    this.requestYields(key, w, ts);
     const aheadDeadline = Math.max(this.latestBlockerDeadline(b.window, b.rateMbps), 0);
     if (aheadDeadline === w.aheadDeadline) return;
     this.setIn(this.waiters, key, { ...w, aheadDeadline });
@@ -572,9 +608,10 @@ export class LinkState {
     const b = w.cmd;
     this.occAll.add(b.window.start, b.window.end, b.rateMbps);
     this.removeWaiter(key);
+    this.endClaimsOfWaiter(key);
     this.setIn(this.holds, key, {
       request: b.request, account: b.account, leg: b.leg, rateMbps: b.rateMbps, window: b.window,
-      deadline: b.deadline, commitFence: b.commitFence, requestAge: b.requestAge, attempt: w.attempt,
+      deadline: b.deadline, commitFence: b.commitFence, requestAge: b.requestAge, attempt: w.attempt, cmd: b,
     });
     const rec = this.records.get(key) as RequestRecord;
     this.putRecord(key, { ...rec, state: 'HELD', holdOutcome: { result: 'HELD', attempt: w.attempt }, seq: this.seq });
@@ -584,6 +621,7 @@ export class LinkState {
   private refuseWaiter(key: string, w: Waiter): void {
     const b = w.cmd;
     this.removeWaiter(key);
+    this.endClaimsOfWaiter(key);
     // The waiter's policy version was applied when it registered, and the link keeps every version (§2).
     const counterOffer = this.counterOffer(b, this.policyOf(b.policyVersion) as LinkPolicy);
     const rec = this.records.get(key) as RequestRecord;
@@ -613,6 +651,8 @@ export class LinkState {
     // The pulse goes to occ_firm. occ_all does not change, so the capacity is not counted twice (P1-S09).
     this.occFirm.add(h.window.start, h.window.end, h.rateMbps);
     this.deleteIn(this.holds, key);
+    // The entry that ends a hold attempt ends every yield claim on it (C02 port invariants, review 54 m1).
+    this.endClaimsOnAttempt(key, h.attempt);
     this.setIn(this.parts, partKey(b.reservation, b.leg, b.part), {
       reservation: b.reservation, leg: b.leg, part: b.part, request: key,
       rateMbps: h.rateMbps, window: h.window, age: b.decisionTime,
@@ -649,8 +689,10 @@ export class LinkState {
         // The capacity is free for others from this entry (P1-S08, P2-S14).
         this.occAll.add(h.window.start, h.window.end, -h.rateMbps);
         this.deleteIn(this.holds, key);
+        this.endClaimsOnAttempt(key, h.attempt);
       } else {
         this.removeWaiter(key);
+        this.endClaimsOfWaiter(key);
       }
       const next: RequestRecord = {
         ...rec, state: 'RELEASED', holdOutcome: { result: 'RELEASED' }, tombstoneUntil: newUntil,
@@ -681,6 +723,162 @@ export class LinkState {
     return !isLive(rec) && atOrAfterMs(ts, rec.expiresAt) ? undefined : rec;
   }
 
+  // ---------------- yields (RFC-001 §4.3, C02 "YIELD_REQUEST", I5) ----------------
+
+  /**
+   * C02 `mark_waiting`. The link applies it only if `position` is above the last position applied for the request;
+   * otherwise `IGNORED_OLDER` with no entry. A mark that is set makes the link check again, in this entry, every
+   * older waiter that the holder's attempt blocks (P2-S118). The mark is advisory: it ends no claim.
+   */
+  private markWaiting(b: MarkWaitingCmd, ts: HlcTs): Decision {
+    const key = requestKey(b.request);
+    const rec = this.liveRecord(key, ts);
+    // C02 states no reply for a request that the link has not seen (S-LINK I5 design issue DI-22).
+    if (!rec) return { outcome: { result: 'IGNORED_OLDER' }, entry: false, alert: 'MARK_WITHOUT_REQUEST' };
+    // A final request has no hold and no waiter here, so a mark can change nothing (DI-22).
+    if (!isLive(rec)) return { outcome: { result: 'IGNORED_OLDER' }, entry: false, recordedSeq: rec.seq };
+    if (rec.mark && b.position <= rec.mark.position) return { outcome: { result: 'IGNORED_OLDER' }, entry: false, recordedSeq: rec.seq };
+    this.putRecord(key, { ...rec, mark: { waiting: b.waiting, position: b.position } });
+    const h = this.holds.get(key);
+    if (b.waiting && h) {
+      for (const k of [...this.waitOrder]) {
+        const o = this.waiters.get(k);
+        if (!o || comparePriority(o.cmd, h) >= 0) continue;
+        if (this.openRequestsOn(key, h.attempt).some((y) => y.waiter === k)) continue;
+        this.requestYields(k, o, ts, key);
+      }
+    }
+    return { outcome: { result: 'APPLIED' }, entry: true };
+  }
+
+  /**
+   * C02 `yield_accept` and `yield_refuse`. A repeat gets the recorded reply. An attempt or a claim that is not open
+   * gets `STALE_ATTEMPT` and changes nothing. `yield_refuse` ends only its claim, and raises a new claim at once if
+   * the holder's mark is set and the older waiter is still blocked by that attempt. `yield_accept` removes the pulse,
+   * registers the holder as a waiter at attempt + 1 (same age and window), ends every other claim on the old attempt,
+   * and scans (RFC-001 §4.3).
+   */
+  private yieldAnswer(b: YieldAnswerCmd, ts: HlcTs): Decision {
+    const key = requestKey(b.request);
+    const rec = this.liveRecord(key, ts);
+    const done = rec?.answers?.find((a) => a.attempt === b.attempt && a.claim === b.claim && a.answer === b.answer);
+    if (done) return { outcome: done.outcome, entry: false, recordedSeq: done.seq };
+    const h = this.holds.get(key);
+    const y = this.yieldReqs.get(yieldKey(key, b.attempt, b.claim));
+    if (!rec || !h || h.attempt !== b.attempt || !y) return { outcome: { result: 'STALE_ATTEMPT' }, entry: false };
+    const answered = (outcome: AcceptOutcome): RequestRecord['answers'] =>
+      [...(rec.answers ?? []), { attempt: b.attempt, claim: b.claim, answer: b.answer, outcome, seq: this.seq }];
+    if (b.answer === 'yield_refuse') {
+      this.endClaim(claimKey(y.claim, y.waiter));
+      const outcome: AcceptOutcome = { result: 'REFUSED_RECORDED' };
+      this.putRecord(key, { ...rec, answers: answered(outcome) });
+      // C02 review 54 M3: the order "mark first, then refusal".
+      const o = this.waiters.get(y.waiter);
+      if (rec.mark?.waiting && o) this.requestYields(y.waiter, o, ts, key);
+      return { outcome, entry: true };
+    }
+    this.occAll.add(h.window.start, h.window.end, -h.rateMbps);
+    this.deleteIn(this.holds, key);
+    this.endClaimsOnAttempt(key, h.attempt, claimKey(y.claim, y.waiter));
+    this.deleteIn(this.yieldReqs, yieldKey(key, b.attempt, b.claim));
+    const attempt = h.attempt + 1;
+    const aheadDeadline = Math.max(this.latestBlockerDeadline(h.window, h.rateMbps), 0);
+    this.insertWaiter(key, { cmd: h.cmd, attempt, aheadDeadline });
+    const outcome: AcceptOutcome = { result: 'ACCEPTED', newWaiterAttempt: attempt };
+    this.putRecord(key, {
+      ...rec, state: 'WAITING', holdOutcome: { result: 'WAITING', attempt, aheadDeadline }, answers: answered(outcome), seq: this.seq,
+    });
+    this.scan(h.window.start, h.window.end, ts);
+    return { outcome, entry: true };
+  }
+
+  /**
+   * RFC-001 §4.3 `request_yields(w)`. The candidates are the holders that are younger than `w`, carry the waiting mark
+   * and overlap a conflict range of `w`. The link asks them only if their capacity and the free capacity together let
+   * `w` fit. It raises one yield request for each candidate that has no open request from `w` on its attempt, in a
+   * claim identified by this entry's sequence. One entry raises at most one request on a holder attempt (DI-21).
+   * With `mustInclude`, it raises nothing unless that holder is a candidate (a mark or a refusal of that holder).
+   */
+  private requestYields(key: string, w: Waiter, ts: HlcTs, mustInclude?: string): void {
+    const b = w.cmd;
+    // A waiter at or after its D_c cannot commit, so a yield for it is in vain (S-LINK I5 design issue DI-26).
+    if (atOrAfterMs(ts, b.commitFence)) return;
+    const ranges = this.occAll.conflicts(b.window.start, b.window.end, this.cRef - b.rateMbps);
+    const holders = [...this.holds.entries()]
+      .filter(([k, h]) => k !== key && comparePriority(h, b) > 0 && this.records.get(k)?.mark?.waiting === true
+        && ranges.some((r) => overlaps(h.window, r)))
+      .sort(([, x], [, y]) => comparePriority(x, y));
+    if (holders.length === 0 || (mustInclude !== undefined && !holders.some(([k]) => k === mustInclude))) return;
+    if (!this.yieldsSuffice(b, holders.map(([, h]) => h))) return;
+    let raised = false;
+    for (const [hk, h] of holders) {
+      if (this.openRequestsOn(hk, h.attempt).some((y) => y.waiter === key || y.claim === this.seq)) continue;
+      this.setIn(this.yieldReqs, yieldKey(hk, h.attempt, this.seq), {
+        claim: this.seq, waiter: key, olderRequest: b.request, holder: hk, request: h.request, account: h.account, attempt: h.attempt,
+      });
+      this.notices.push({ request: h.request, account: h.account, attempt: h.attempt, kind: 'YIELD_REQUEST', claim: this.seq, olderRequest: b.request });
+      raised = true;
+    }
+    if (raised) this.setIn(this.claims, claimKey(this.seq, key), { seq: this.seq, waiter: key, ranges });
+  }
+
+  /**
+   * The sufficiency rule of RFC-001 §4.3: `peak(occ_all − Σ h, w.W) + w.b ≤ C_ref`. The window is cut where the sum of
+   * the holders changes; on each piece the sum is constant. It reads `occ_all` and changes nothing.
+   */
+  private yieldsSuffice(b: HoldCmd, hs: ActiveHold[]): boolean {
+    const { start, end } = b.window;
+    const inside = (m: number | null): m is number => m !== null && m > start && (end === null || m < end);
+    const cuts = [...new Set([start, ...hs.flatMap((h) => [h.window.start, h.window.end].filter(inside))])].sort((x, y) => x - y);
+    for (const [i, s] of cuts.entries()) {
+      const e = cuts[i + 1] ?? end;
+      const freed = hs.reduce((n, h) => n + (overlaps(h.window, { start: s, end: s + 1 }) ? h.rateMbps : 0), 0);
+      if (this.occAll.peak(s, e) - freed + b.rateMbps > this.cRef) return false;
+    }
+    return true;
+  }
+
+  /** True if an older waiter has a live claim whose ranges overlap the window of `b` (RFC-001 §4.3). */
+  private insideOlderClaim(key: string, b: HoldCmd): boolean {
+    for (const c of this.claims.values()) {
+      if (c.waiter === key) continue;
+      const o = this.waiters.get(c.waiter);
+      if (o && comparePriority(o.cmd, b) < 0 && c.ranges.some((r) => overlaps(b.window, r))) return true;
+    }
+    return false;
+  }
+
+  /** The open yield requests on one holder attempt. */
+  private openRequestsOn(holder: string, attempt: number): YieldRequest[] {
+    return [...this.yieldReqs.values()].filter((y) => y.holder === holder && y.attempt === attempt);
+  }
+
+  /** End a claim: remove it and every open yield request of it (journaled). */
+  private endClaim(ck: string): void {
+    const c = this.claims.get(ck);
+    if (!c) return;
+    this.deleteIn(this.claims, ck);
+    for (const [k, y] of [...this.yieldReqs]) if (y.claim === c.seq && y.waiter === c.waiter) this.deleteIn(this.yieldReqs, k);
+  }
+
+  /** A waiter that is granted, refused or released ends every claim that it has. */
+  private endClaimsOfWaiter(key: string): void {
+    for (const [ck, c] of [...this.claims]) if (c.waiter === key) this.endClaim(ck);
+  }
+
+  /** The end of a hold attempt ends every claim with a request on it, except `keep` (the claim that `yield_accept` names). */
+  private endClaimsOnAttempt(holder: string, attempt: number, keep?: string): void {
+    for (const y of this.openRequestsOn(holder, attempt)) {
+      const ck = claimKey(y.claim, y.waiter);
+      if (ck !== keep) this.endClaim(ck);
+    }
+  }
+
+  /** The open yield requests, by claim, then by holder. The owner sends each again with the same claim. */
+  openYieldRequests(): YieldRequest[] {
+    return [...this.yieldReqs.values()].sort((a, b) => (a.claim < b.claim ? -1 : a.claim > b.claim ? 1 : a.holder < b.holder ? -1 : a.holder > b.holder ? 1 : 0));
+  }
+
   // ---------------- queries (not entries; RFC-001 §7.3) ----------------
 
   /** C02 `query`: the state of a request at `ts`, from memory or from its `link_request` record. */
@@ -692,7 +890,12 @@ export class LinkState {
     if (!rec) return { state: 'UNSEEN' };
     const tomb = rec.tombstoneUntil === undefined ? {} : { tombstoneUntil: rec.tombstoneUntil };
     if (rec.madeBy === 'release') return { state: 'RELEASED', ...tomb };
-    if (rec.state === 'HELD') return { state: 'HELD', attempt: (this.holds.get(key) as ActiveHold).attempt };
+    if (rec.state === 'HELD') {
+      const attempt = (this.holds.get(key) as ActiveHold).attempt;
+      const open = this.openRequestsOn(key, attempt).sort((a, b) => (a.claim < b.claim ? -1 : a.claim > b.claim ? 1 : 0))
+        .map((y) => ({ claim: y.claim, olderRequest: y.olderRequest }));
+      return { state: 'HELD', attempt, ...(open.length > 0 ? { openYieldClaims: open } : {}) };
+    }
     if (rec.state === 'WAITING') {
       const w = this.waiters.get(key) as Waiter;
       return { state: 'WAITING', attempt: w.attempt, aheadDeadline: w.aheadDeadline };
@@ -777,7 +980,7 @@ function isLive(r: RequestRecord): boolean {
  * The waiter priority order of RFC-001 §4.3 (`priority_rule` = `request_age`, POL-02): the older `request_age`
  * first, ties by request identity (account partition bytes, then sequence; RFC-000 §4.5).
  */
-export function comparePriority(a: HoldCmd, b: HoldCmd): number {
+export function comparePriority(a: Pick<HoldCmd, 'requestAge' | 'request'>, b: Pick<HoldCmd, 'requestAge' | 'request'>): number {
   const age = compareHlc(a.requestAge, b.requestAge);
   if (age !== 0) return age;
   const part = Buffer.compare(Buffer.from(a.request.partition), Buffer.from(b.request.partition));
@@ -826,6 +1029,14 @@ function wellFormedPolicy(p: LinkPolicy): boolean {
 
 function fenceBelow(a: WriterFence, b: WriterFence): boolean {
   return a.generation < b.generation || (a.generation === b.generation && a.epoch < b.epoch);
+}
+
+function claimKey(seq: bigint, waiter: string): string {
+  return `${seq}|${waiter}`;
+}
+
+function yieldKey(holder: string, attempt: number, claim: bigint): string {
+  return `${holder}|${attempt}|${claim}`;
 }
 
 function partKey(reservation: string, leg: string, part: string): string {

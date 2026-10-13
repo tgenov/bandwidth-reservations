@@ -2,7 +2,7 @@
   "$schema": "../../node_modules/@stryker-mutator/core/schema/stryker-schema.json",
   "testRunner": "command",
   "commandRunner": {
-    "command": "node --test --test-concurrency=1 slices/link/test/occupancy.test.ts slices/link/test/port.test.ts slices/link/test/property.test.ts slices/link/test/scenarios.test.ts slices/link/test/counteroffer.test.ts slices/link/test/property.counteroffer.test.ts slices/link/test/counteroffer.unit.test.ts slices/link/test/contract.c02.test.ts slices/link/test/waiting.test.ts slices/link/test/property.waiting.test.ts slices/link/test/validity.test.ts slices/link/test/horizon.test.ts slices/link/test/property.validity.test.ts"
+    "command": "node --test --test-concurrency=1 slices/link/test/occupancy.test.ts slices/link/test/port.test.ts slices/link/test/property.test.ts slices/link/test/scenarios.test.ts slices/link/test/counteroffer.test.ts slices/link/test/property.counteroffer.test.ts slices/link/test/counteroffer.unit.test.ts slices/link/test/contract.c02.test.ts slices/link/test/waiting.test.ts slices/link/test/property.waiting.test.ts slices/link/test/validity.test.ts slices/link/test/horizon.test.ts slices/link/test/property.validity.test.ts slices/link/test/yields.test.ts slices/link/test/property.yields.test.ts"
   },
   "coverageAnalysis": "off",
   "inPlace": true,
@@ -10,15 +10,17 @@
   "mutate": [
     "slices/link/src/occupancy.ts",
     "slices/link/src/counteroffer.ts",
-    "slices/link/src/state.ts:234-729",
-    "slices/link/src/state.ts:760-826",
-    "slices/link/src/owner.ts:153-236",
-    "slices/link/src/owner.ts:253-260",
-    "slices/link/src/owner.ts:388-395",
-    "slices/link/src/owner.ts:410-463",
-    "slices/link/src/owner.ts:543-560",
-    "slices/link/src/owner.ts:568-610",
-    "slices/link/src/owner.ts:642-656"
+    "slices/link/src/state.ts:262-932",
+    "slices/link/src/state.ts:963-1028",
+    "slices/link/src/owner.ts:174-256",
+    "slices/link/src/owner.ts:274-281",
+    "slices/link/src/owner.ts:352-385",
+    "slices/link/src/owner.ts:438-445",
+    "slices/link/src/owner.ts:460-513",
+    "slices/link/src/owner.ts:594-613",
+    "slices/link/src/owner.ts:621-665",
+    "slices/link/src/owner.ts:673-703",
+    "slices/link/src/owner.ts:709-723"
   ],
   "concurrency": 6,
   "timeoutMS": 15000,

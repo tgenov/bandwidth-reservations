@@ -11,6 +11,10 @@
  * The S-LINK I3 part (provider tests 1 `WAITING`, 4 "a grant keeps the attempt", 13 first two items) runs only
  * for a subject registered with `{ i2: true, i3: true }` that gives its notifications. Else a PENDING entry.
  *
+ * The S-LINK I5 part (provider tests 4 "yield_accept replies with attempt + 1", "a stale attempt or claim gets
+ * STALE_ATTEMPT", "the end of a hold attempt closes every claim on it", and 5 "yield claims") runs only for a subject
+ * registered with `{ i2: true, i3: true, i5: true }` that provides `markWaiting` and `yieldAnswer`. Else a PENDING entry.
+ *
  * The types are copied from C02 "Schema" (the subset that the tests use). They are structurally the same
  * as the types of each slice, so each slice can give its own port.
  */
@@ -65,7 +69,16 @@ export type C02QueryReply = (C02LinkStamp & {
   attempt?: number; aheadDeadline?: number;
   refusal?: { reason: C02RefusalReason; counterOffer?: C02CounterOffer; retryAfterMs?: number };
   tombstoneUntil?: number;
+  openYieldClaims?: { claim: Seq; olderRequest: C02RequestId }[];
 }) | RoutingRefusal | C02Error;
+export interface C02MarkWaitingCmd { link: string; receiverPartition: string; request: C02RequestId; waiting: boolean; position: Seq }
+export type C02MarkWaitingReply = (C02LinkStamp & { result: 'APPLIED' | 'IGNORED_OLDER' }) | RoutingRefusal | C02Error;
+export interface C02YieldAnswerCmd {
+  link: string; receiverPartition: string; request: C02RequestId; attempt: number; claim: Seq; answer: 'yield_accept' | 'yield_refuse';
+}
+export type C02AcceptReply = (C02LinkStamp & (
+  | { result: 'ACCEPTED'; newWaiterAttempt: number } | { result: 'REFUSED_RECORDED' } | { result: 'STALE_ATTEMPT' }
+)) | RoutingRefusal | C02Error;
 export interface C02AvailabilityQuery { link: string; receiverPartition: string; window: C02Window; rateMbps: number }
 export type C02AvailabilityReply = (C02LinkStamp & { asOfSeq: Seq; offer: C02CounterOffer }) | RoutingRefusal | C02Error;
 export interface C02FitRangesQuery { link: string; receiverPartition: string; rateMbps: number; from: number; until: number; k: number }
@@ -82,6 +95,10 @@ export interface C02HoldPort {
   /** C02 link availability query (S-LINK I2). */
   availability?(env: CommandEnvelope, q: C02AvailabilityQuery): Promise<C02AvailabilityReply>;
   fitRanges?(env: CommandEnvelope, q: C02FitRangesQuery): Promise<C02FitRangesReply>;
+  /** C02 `mark_waiting` (S-LINK I5). */
+  markWaiting?(env: CommandEnvelope, cmd: C02MarkWaitingCmd): Promise<C02MarkWaitingReply>;
+  /** C02 `yield_accept` and `yield_refuse` (S-LINK I5). */
+  yieldAnswer?(env: CommandEnvelope, cmd: C02YieldAnswerCmd): Promise<C02AcceptReply>;
 }
 
 /** Which parts beyond the I1 subset a subject provides. */
@@ -92,6 +109,8 @@ export interface C02SuiteOptions {
   i3?: boolean;
   /** `hold` check (4): V1 … V6 against the receipt minute m0, with the calendar cases of P1-S74 (S-LINK I4). */
   i4?: boolean;
+  /** `YIELD_REQUEST`, `mark_waiting`, `yield_accept` and `yield_refuse` (S-LINK I5). Needs `i3`. */
+  i5?: boolean;
 }
 
 /** The capacity (Mbps) of the one link that every C02 subject registers. */
@@ -139,14 +158,20 @@ export interface C02Subject extends Closable {
 export interface C02NotificationCopy {
   to: { kind: string; partition: PartitionKey };
   id: { subject: Uint8Array; attempt: number; kind: string };
-  body: C02LinkStamp & { link: string; request: C02RequestId; attempt: number; kind: string; aheadDeadline?: number };
+  body: C02LinkStamp & {
+    link: string; request: C02RequestId; attempt: number; kind: string; aheadDeadline?: number; claim?: Seq; olderRequest?: C02RequestId;
+  };
 }
 
 // ---------- builders ----------
 
 let requestSeq = 0n;
 
-interface HoldArgs { account?: string; request?: C02RequestId; rate: number; window?: C02Window; wait?: boolean; deadlineInMs?: number }
+interface HoldArgs {
+  account?: string; request?: C02RequestId; rate: number; window?: C02Window; wait?: boolean; deadlineInMs?: number;
+  /** The request_age as ms before the present time (S-LINK I5: it sets the priority order). Default 0. */
+  ageMsAgo?: number;
+}
 
 function holdCmd(s: C02Subject, a: HoldArgs): C02HoldCmd {
   const now = s.nowMs();
@@ -157,7 +182,7 @@ function holdCmd(s: C02Subject, a: HoldArgs): C02HoldCmd {
   return {
     link: s.link, receiverPartition: s.link, request: a.request ?? { partition: account, seq: requestSeq }, account, leg: 'leg-1',
     holdKind: { kind: 'booking' }, rateMbps: a.rate, window: a.window ?? { start: receiptMinute + 60, end: receiptMinute + 120 },
-    deadline, commitFence: deadline - TAU_MS, requestAge: tsAtMs(now) as HlcTs, wait: a.wait ?? false, receiptMinute, policyVersion: 1n,
+    deadline, commitFence: deadline - TAU_MS, requestAge: tsAtMs(now - (a.ageMsAgo ?? 0)) as HlcTs, wait: a.wait ?? false, receiptMinute, policyVersion: 1n,
   };
 }
 
@@ -469,5 +494,109 @@ export function runC02ProviderSuite(name: string, make: SubjectFactory<C02Subjec
     assert.ok(Buffer.from(g.to.partition).equals(Buffer.from(w.account)), 'the relay key is the waiter account partition');
     const push = pushed.filter((n) => n.body.kind === 'GRANTED' && sameRequest(n.body.request, w.request));
     assert.deepEqual(push, granted, 'the push and the relay have the same identity and content');
+  });
+
+  if (!opts.i5) {
+    test(`C02 [${name}] PENDING (S-LINK I5 part): YIELD_REQUEST, mark_waiting, yield_accept and yield_refuse`,
+      { todo: 'the subject does not provide the S-LINK I5 part (contracts/suites/ISSUES.md)' }, () => {});
+    return;
+  }
+
+  const yieldPort = (s: C02Subject): Required<Pick<C02HoldPort, 'markWaiting' | 'yieldAnswer'>> => {
+    assert.ok(s.port.markWaiting && s.port.yieldAnswer, 'the subject provides mark_waiting and the yield answers');
+    return { markWaiting: s.port.markWaiting.bind(s.port), yieldAnswer: s.port.yieldAnswer.bind(s.port) };
+  };
+  const mark = (s: C02Subject, r: C02RequestId, waiting: boolean, position: Seq): Promise<C02MarkWaitingReply> =>
+    yieldPort(s).markWaiting(env(s, r), { link: s.link, receiverPartition: s.link, request: r, waiting, position });
+  const answer = (s: C02Subject, r: C02RequestId, attempt: number, claim: Seq, a: C02YieldAnswerCmd['answer']): Promise<C02AcceptReply> =>
+    yieldPort(s).yieldAnswer(env(s, r), { link: s.link, receiverPartition: s.link, request: r, attempt, claim, answer: a });
+  const queryOf = async (s: C02Subject, r: C02RequestId): Promise<Record<string, unknown>> =>
+    outcome(await query(s)(env(s, r), { link: s.link, receiverPartition: s.link, request: r }));
+  /** The claims of the relayed YIELD_REQUESTs to `holder` for `older`, in order. */
+  const claims = (s: C02Subject, holder: C02RequestId, older: C02RequestId): Seq[] =>
+    notes(s).relayed.filter((n) => n.body.kind === 'YIELD_REQUEST' && sameRequest(n.body.request, holder)
+      && n.body.olderRequest !== undefined && sameRequest(n.body.olderRequest, older)).map((n) => n.body.claim as Seq);
+  /** Y (younger) holds 8 Mbps; O (older) waits for 8 Mbps on the same window. Y has no mark yet. */
+  const crossing = async (s: C02Subject): Promise<{ y: C02HoldCmd; o: C02HoldCmd }> => {
+    const y = holdCmd(s, { account: 'y', rate: 8, ageMsAgo: 1 });
+    const o = holdCmd(s, { account: 'o', rate: 8, wait: true, ageMsAgo: 5, deadlineInMs: 25_000 });
+    assert.deepEqual(outcome(await s.port.hold(env(s, y), y)), { result: 'HELD', attempt: 1 });
+    assert.deepEqual(outcome(await s.port.hold(env(s, o), o)), { result: 'WAITING', attempt: 1, aheadDeadline: y.deadline });
+    assert.deepEqual(claims(s, y.request, o.request), [], 'a holder without the mark is not asked (P2-S58)');
+    return { y, o };
+  };
+
+  t('4', 'attempts: yield_accept replies ACCEPTED(attempt + 1) and a repeat gets the recorded reply; a stale attempt or claim gets STALE_ATTEMPT and changes nothing', async (s) => {
+    const { y, o } = await crossing(s);
+    const m = await mark(s, y.request, true, 1n);
+    assert.deepEqual(outcome(m), { result: 'APPLIED' });
+    const [c] = claims(s, y.request, o.request);
+    assert.equal(c, stamp(m).linkSeq, 'the claim is the link-log sequence of the entry that raised it');
+    assert.deepEqual(await queryOf(s, y.request), { state: 'HELD', attempt: 1, openYieldClaims: [{ claim: c, olderRequest: o.request }] });
+    assert.deepEqual(outcome(await answer(s, y.request, 2, c as Seq, 'yield_accept')), { result: 'STALE_ATTEMPT' });
+    assert.deepEqual(outcome(await answer(s, y.request, 1, (c as Seq) + 1n, 'yield_accept')), { result: 'STALE_ATTEMPT' });
+    assert.deepEqual(await queryOf(s, o.request), { state: 'WAITING', attempt: 1, aheadDeadline: y.deadline }, 'a stale answer changes nothing');
+    const acc = await answer(s, y.request, 1, c as Seq, 'yield_accept');
+    assert.deepEqual(outcome(acc), { result: 'ACCEPTED', newWaiterAttempt: 2 });
+    const again = await answer(s, y.request, 1, c as Seq, 'yield_accept');
+    assert.deepEqual([outcome(again), stamp(again).linkSeq], [outcome(acc), stamp(acc).linkSeq], 'a repeat gets the recorded reply');
+    assert.deepEqual(await queryOf(s, o.request), { state: 'HELD', attempt: 1 }, 'the older waiter is granted in the entry of the yield');
+    assert.deepEqual(await queryOf(s, y.request), { state: 'WAITING', attempt: 2, aheadDeadline: o.deadline });
+    await s.port.release(env(s, o), releaseCmd(s, o.request, o.deadline));
+    assert.deepEqual(await queryOf(s, y.request), { state: 'HELD', attempt: 2 }, 'a grant keeps attempt 2');
+    assert.deepEqual(await s.port.convert(env(s, y), convertCmd(s, y, 1)), { code: 'MISMATCH' });
+    assert.deepEqual(outcome(await s.port.convert(env(s, y), convertCmd(s, y, 2))), { result: 'CONVERTED', part: 'p1' });
+  });
+
+  t('4', 'attempts: the end of a hold attempt (convert) closes every claim on it', async (s) => {
+    const { y, o } = await crossing(s);
+    await mark(s, y.request, true, 1n);
+    const [c] = claims(s, y.request, o.request);
+    assert.equal(outcome(await s.port.convert(env(s, y), convertCmd(s, y, 1)))['result'], 'CONVERTED');
+    assert.deepEqual(outcome(await answer(s, y.request, 1, c as Seq, 'yield_accept')), { result: 'STALE_ATTEMPT' });
+    assert.deepEqual(outcome(await answer(s, y.request, 1, c as Seq, 'yield_refuse')), { result: 'STALE_ATTEMPT' });
+  });
+
+  t('5', 'yield claims, refusal then mark: claim c1 is refused while the mark is clear, the mark is set, a new claim c2 is accepted, and the older waiter is granted', async (s) => {
+    const { y, o } = await crossing(s);
+    await mark(s, y.request, true, 1n);
+    await mark(s, y.request, false, 2n);
+    const [c1] = claims(s, y.request, o.request);
+    assert.deepEqual(outcome(await answer(s, y.request, 1, c1 as Seq, 'yield_refuse')), { result: 'REFUSED_RECORDED' });
+    assert.deepEqual(claims(s, y.request, o.request), [c1], 'no new claim while the mark is clear');
+    const m = await mark(s, y.request, true, 3n);
+    const c2 = claims(s, y.request, o.request)[1];
+    assert.equal(c2, stamp(m).linkSeq);
+    assert.deepEqual(outcome(await answer(s, y.request, 1, c2 as Seq, 'yield_accept')), { result: 'ACCEPTED', newWaiterAttempt: 2 });
+    assert.deepEqual(await queryOf(s, o.request), { state: 'HELD', attempt: 1 });
+  });
+
+  t('5', 'yield claims, mark then refusal: the mark arrives while c1 is open, yield_refuse(c1) arrives, the link raises c2 at once, c2 is accepted', async (s) => {
+    const { y, o } = await crossing(s);
+    await mark(s, y.request, true, 1n);
+    const [c1] = claims(s, y.request, o.request);
+    const ref = await answer(s, y.request, 1, c1 as Seq, 'yield_refuse');
+    assert.deepEqual(outcome(ref), { result: 'REFUSED_RECORDED' });
+    const c2 = claims(s, y.request, o.request)[1];
+    assert.equal(c2, stamp(ref).linkSeq, 'c2 is raised in the entry that records the refusal');
+    assert.deepEqual(outcome(await answer(s, y.request, 1, c2 as Seq, 'yield_accept')), { result: 'ACCEPTED', newWaiterAttempt: 2 });
+    assert.deepEqual(await queryOf(s, o.request), { state: 'HELD', attempt: 1 });
+  });
+
+  t('5', 'yield claims: yield_refuse(c1) ends only c1', async (s) => {
+    const y = holdCmd(s, { account: 'y', rate: 8, ageMsAgo: 1 });
+    assert.deepEqual(outcome(await s.port.hold(env(s, y), y)), { result: 'HELD', attempt: 1 });
+    await mark(s, y.request, true, 1n);
+    const o1 = holdCmd(s, { account: 'o1', rate: 8, wait: true, ageMsAgo: 9 });
+    const o2 = holdCmd(s, { account: 'o2', rate: 5, wait: true, ageMsAgo: 5 });
+    const h1 = await s.port.hold(env(s, o1), o1);
+    const h2 = await s.port.hold(env(s, o2), o2);
+    const [c1, c2] = [stamp(h1).linkSeq, stamp(h2).linkSeq];
+    assert.deepEqual(await queryOf(s, y.request), {
+      state: 'HELD', attempt: 1, openYieldClaims: [{ claim: c1, olderRequest: o1.request }, { claim: c2, olderRequest: o2.request }],
+    }, 'two older waiters have open claims on one holder attempt');
+    await mark(s, y.request, false, 2n);
+    assert.deepEqual(outcome(await answer(s, y.request, 1, c1, 'yield_refuse')), { result: 'REFUSED_RECORDED' });
+    assert.deepEqual(await queryOf(s, y.request), { state: 'HELD', attempt: 1, openYieldClaims: [{ claim: c2, olderRequest: o2.request }] });
   });
 }

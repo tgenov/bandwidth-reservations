@@ -3,8 +3,9 @@
  *
  * The names and the fields are copied from C02 "Schema". I1 provides `hold`, `convert` and `release`. I2 adds
  * the counter-offer, `query` and the availability query (`availability`, `fit_ranges`). I3 adds `hold` check (8)
- * `WAITING` and the link waiting port notifications `WAITING_NOTICE`, `GRANTED` and `WAITER_REFUSED`. The other
- * operations of C02 come in later increments (S-LINK plan §6).
+ * `WAITING` and the link waiting port notifications `WAITING_NOTICE`, `GRANTED` and `WAITER_REFUSED`. I5 adds
+ * `YIELD_REQUEST`, `mark_waiting`, `yield_accept` and `yield_refuse`. The other operations of C02 come in later
+ * increments (S-LINK plan §6).
  */
 import type { CommandEnvelope, Epoch, Generation, HlcTs, PartitionKey, RoutingRefusal, Seq } from '@share/owner-runtime';
 
@@ -28,6 +29,8 @@ export type ReservationId = string;
 export type LegId = string;
 export type PartId = string;
 export type Attempt = number;
+/** The link-log sequence of the entry that raised a yield request (C02 `ClaimSeq`). */
+export type ClaimSeq = Seq;
 
 /** Half-open window [start, end). `end: null` is open-ended. */
 export interface Window { start: Minute; end: Minute | null }
@@ -99,31 +102,59 @@ export type ReleaseOutcome = { result: 'RELEASED'; tombstoneUntil: EpochMs };
 export type ReleaseReply = (LinkStamp & ReleaseOutcome) | Refusal;
 
 export interface QueryCmd extends C02Body { request: RequestId }
-/** The decision part of a query reply. The reply adds the link stamp. I3 has no displacement and no yield claim. */
+/** The decision part of a query reply. The reply adds the link stamp. No displacement before I11. */
 export interface QueryState {
   state: 'UNSEEN' | 'HELD' | 'WAITING' | 'DISPLACED' | 'REFUSED' | 'RELEASED' | 'CONVERTED';
   attempt?: Attempt; aheadDeadline?: EpochMs;
   refusal?: { reason: RefusalReason; counterOffer?: CounterOffer; retryAfterMs?: DurationMs };
+  /** The open yield requests on the present hold attempt (I5). Absent when there is none. */
+  openYieldClaims?: { claim: ClaimSeq; olderRequest: RequestId }[];
   tombstoneUntil?: EpochMs;
 }
 export type QueryReply = (LinkStamp & QueryState) | Refusal;
 
 // ---------- Link waiting port (notifications, link → account owner) ----------
 
-/** The notification kinds of the link waiting port that I3 sends. `YIELD_REQUEST` is I5; `DISPLACED` is I11. */
-export type WaitingKind = 'WAITING_NOTICE' | 'GRANTED' | 'WAITER_REFUSED';
+/** The notification kinds of the link waiting port that I3 and I5 send. `DISPLACED` is I11. */
+export type WaitingKind = 'WAITING_NOTICE' | 'GRANTED' | 'WAITER_REFUSED' | 'YIELD_REQUEST';
 
 /** The content of a waiting-port notification after its identity (link, request, attempt, kind). */
 export type WaitingContent =
   | { kind: 'WAITING_NOTICE'; aheadDeadline: EpochMs }
   | { kind: 'GRANTED' }
-  | { kind: 'WAITER_REFUSED'; reason: 'NO_FIT'; counterOffer: CounterOffer };
+  | { kind: 'WAITER_REFUSED'; reason: 'NO_FIT'; counterOffer: CounterOffer }
+  | { kind: 'YIELD_REQUEST'; claim: ClaimSeq; olderRequest: RequestId };
 
 /**
- * C02 `WaitingNotification`: a point-to-point state message. Identity: (link, request, attempt, kind). It
- * carries the link's fence and the log sequence of the entry that it reflects.
+ * C02 `WaitingNotification`: a point-to-point state message. Identity: (link, request, attempt, kind), and the
+ * claim for `YIELD_REQUEST`. It carries the link's fence and the log sequence of the entry that it reflects.
  */
 export type WaitingNotification = LinkStamp & { link: LinkId; request: RequestId; attempt: Attempt } & WaitingContent;
+
+/** C02 `mark_waiting` (account owner → link): the waiting mark of a request, in the order of `position`. */
+export interface MarkWaitingCmd extends C02Body {
+  request: RequestId; waiting: boolean;
+  /** The account-log sequence of the E2 (or of the entry that leaves Waiting) that the mark reflects. */
+  position: Seq;
+}
+export type MarkWaitingOutcome = { result: 'APPLIED' | 'IGNORED_OLDER' };
+export type MarkWaitingReply = (LinkStamp & MarkWaitingOutcome) | Refusal;
+
+// ---------- Outcome and expiry port: yield answers ----------
+
+/** C02 `YieldAnswerCmd`: the answer of the account owner to one `YIELD_REQUEST`. */
+export interface YieldAnswerCmd extends C02Body {
+  /** The attempt that the YIELD_REQUEST named. */
+  request: RequestId; attempt: Attempt;
+  /** The claim that the YIELD_REQUEST named. */
+  claim: ClaimSeq;
+  answer: 'yield_accept' | 'yield_refuse';
+}
+export type AcceptOutcome =
+  | { result: 'ACCEPTED'; newWaiterAttempt: Attempt }
+  | { result: 'REFUSED_RECORDED' }
+  | { result: 'STALE_ATTEMPT' };
+export type AcceptReply = (LinkStamp & AcceptOutcome) | Refusal;
 
 // ---------- Link availability query ----------
 
@@ -144,12 +175,14 @@ export type FitRangesReply = (LinkStamp & { asOfSeq: Seq } & FitRanges) | Refusa
 export type LinkCommand =
   | { op: 'hold'; body: HoldCmd }
   | { op: 'convert'; body: ConvertCmd }
-  | { op: 'release'; body: ReleaseCmd };
+  | { op: 'release'; body: ReleaseCmd }
+  | { op: 'mark_waiting'; body: MarkWaitingCmd }
+  | { op: 'yield'; body: YieldAnswerCmd };
 
 export type LinkOp = LinkCommand['op'];
 
 /** A reply as the port sends it, for each operation. */
-export interface ReplyOf { hold: HoldReply; convert: ConvertReply; release: ReleaseReply }
+export interface ReplyOf { hold: HoldReply; convert: ConvertReply; release: ReleaseReply; mark_waiting: MarkWaitingReply; yield: AcceptReply }
 export type BodyOf<O extends LinkOp> = Extract<LinkCommand, { op: O }>['body'];
 
 /** The text key of a request identity (account partition in hex, then the sequence). */
