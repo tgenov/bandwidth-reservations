@@ -1,5 +1,6 @@
 import { AbandonSignal, AmbiguousCommitError, StaleEpochSignal, isRetryable } from '../errors.ts';
 import type { BatchTxn, OwnerStore } from '../store/types.ts';
+import { TierTimeout } from '../store/tiers.ts';
 import { runAttempt, type AttemptEnv, type AttemptPlan, type PendingCall } from './attempt.ts';
 
 export type BatchOutcome =
@@ -70,6 +71,19 @@ export async function executeBatch(store: OwnerStore, env: AttemptEnv, calls: Pe
       tx.close(false);
       return { kind: 'answered', plan };
     } catch (e) {
+      if (e instanceof TierTimeout) {
+        // RFC-006 §4.7: the tier did not answer the epoch read in time; the batch is abandoned and starts again
+        // on the next tier. The connection may hang, so it is discarded without a ROLLBACK.
+        tx.close(true);
+        if (freshAttempts >= 1) return { kind: 'retry', restarts, freshAttempts };
+        freshAttempts += 1;
+        try {
+          tx = await store.beginBatch();
+        } catch (be) {
+          return { kind: 'failed', error: be instanceof Error ? be : new Error(String(be)) };
+        }
+        continue;
+      }
       if (e instanceof StaleEpochSignal) {
         await quietly(tx.rollback());
         tx.close(false);

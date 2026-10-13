@@ -1,4 +1,4 @@
-import { createCipheriv, createDecipheriv, createHash, randomBytes } from 'node:crypto';
+import { createCipheriv, createDecipheriv, createHash, createHmac, randomBytes } from 'node:crypto';
 import { deflateRawSync, inflateRawSync } from 'node:zlib';
 import { stableStringify, toBuffer, utf8 } from './bytes.ts';
 
@@ -13,6 +13,12 @@ export interface Sealer {
   /** Compresses, then seals with fresh nonces (so every retry reseals, C01 §3.12). */
   seal(plain: Uint8Array, ctx: SealContext): Uint8Array;
   open(sealed: Uint8Array, ctx: SealContext): Uint8Array;
+  /**
+   * Seals with a nonce derived from the key, the context and the plain bytes (a synthetic IV), so the same
+   * input always gives the same bytes. For events that a self-outboxed kind's relay and gap fill derive
+   * from a log row: every copy of one event must be byte-identical (C01 §3.5 D3). Not in C13 (see STATUS-I2.md).
+   */
+  sealDerived?(plain: Uint8Array, ctx: SealContext): Uint8Array;
 }
 
 function aad(ctx: SealContext, keyId: Uint8Array): Buffer {
@@ -29,7 +35,13 @@ export class DevSealer implements Sealer {
     return utf8(`dev:${table}`);
   }
   seal(plain: Uint8Array, ctx: SealContext): Uint8Array {
-    const iv = randomBytes(12);
+    return this.sealWith(randomBytes(12), plain, ctx);
+  }
+  sealDerived(plain: Uint8Array, ctx: SealContext): Uint8Array {
+    const iv = createHmac('sha256', this.key).update(aad(ctx, this.keyId(ctx.table))).update(toBuffer(plain)).digest().subarray(0, 12);
+    return this.sealWith(iv, plain, ctx);
+  }
+  private sealWith(iv: Buffer, plain: Uint8Array, ctx: SealContext): Uint8Array {
     const c = createCipheriv('aes-256-gcm', this.key, iv);
     c.setAAD(aad(ctx, this.keyId(ctx.table)));
     const body = Buffer.concat([c.update(deflateRawSync(toBuffer(plain))), c.final()]);

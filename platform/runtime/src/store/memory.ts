@@ -3,7 +3,7 @@
  * validation at commit (fence row and head rows read must be unchanged), and it injects faults:
  * retry errors, ambiguous commits (committed or not), hanging commits, lock timeouts.
  */
-import type { HlcTs, ProjectionWrite, ReadTx, RowRef, SlotNo, TimingSnapshot } from '../api.ts';
+import type { HlcTs, ProjectionWrite, ReadTx, RowRef, SlotNo } from '../api.ts';
 import { hex } from '../bytes.ts';
 import { AmbiguousCommitError, retryableError } from '../errors.ts';
 import { compareHlc, hlc } from '../hlc.ts';
@@ -11,8 +11,8 @@ import { outcomeIdsOf } from './pg.ts';
 
 import { rowId } from '../rowref.ts';
 import type {
-  BatchTxn, BatchWrites, DisplacementCondition, FenceRow, LogRowWrite, OutboxRowWrite, OwnerStore, ResolutionRead,
-  SessionRow, SlotLeaseRow, StoredHead,
+  BatchTxn, BatchWrites, DisplacementCondition, FenceRow, GroupMember, LogRowWrite, OutboxRowWrite, OwnerStore, ResolutionRead,
+  SessionRow, SlotLeaseRow, StoredHead, TimingRow,
 } from './types.ts';
 import { systemClock, type WallClock } from '../clock.ts';
 
@@ -42,7 +42,7 @@ export class MemoryStore implements OwnerStore {
   readonly rows = new Map<string, unknown>();
   readonly stops = new Map<string, Uint8Array>();
   readonly displacement = new Map<string, unknown>();
-  timing: TimingSnapshot = { version: 1n, epsilonMs: 100, deltaXMs: 320, tauMs: 420 };
+  timing: TimingRow = { version: 1n, epsilonMs: 100, deltaXMs: 320, tauMs: 420 };
   commitCount = 0;
   readonly streamIndex: Array<{ kind: string; partition: Uint8Array; stream: string; streamSeq: bigint; seq: bigint }> = [];
   readonly slotPositions = new Map<string, bigint>();
@@ -136,13 +136,63 @@ export class MemoryStore implements OwnerStore {
     return out;
   }
 
-  async release(kind: string, held: Array<{ slot: SlotNo; epoch: bigint }>, sessionId: string): Promise<void> {
+  /** Fault injection for group acquisitions: throw after this many member updates (then nothing is applied). */
+  groupFailAfter: number | undefined;
+  /** slot_group column values (kind|slot → group). */
+  readonly slotGroups = new Map<string, string>();
+
+  async acquireGroup(members: GroupMember[], sessionId: string, group: string, old: { shard: number; sessionId: string } | null):
+    Promise<Array<GroupMember & { epoch: bigint }> | undefined> {
+    // One transaction: decide on a copy, apply only when every member is takeable.
+    if (old) {
+      const s = this.sessions.get(old.sessionId);
+      if (!s || !(s.revoked || s.expiresAt <= this.wallMs())) return undefined;
+    }
+    const out: Array<GroupMember & { epoch: bigint }> = [];
+    for (const [i, m] of members.entries()) {
+      if (this.groupFailAfter !== undefined && i >= this.groupFailAfter) { this.groupFailAfter = undefined; throw new Error('injected: group transaction failed'); }
+      const r = this.slots.get(`${m.kind}|${m.slot}`);
+      if (!r || r.sessionId !== (old ? old.sessionId : null)) return undefined;
+      out.push({ ...m, epoch: r.epoch + 1n });
+    }
+    if (old) { const s = this.sessions.get(old.sessionId); if (s) s.revoked = true; }
+    for (const m of out) {
+      const r = this.slots.get(`${m.kind}|${m.slot}`);
+      if (r) { r.sessionId = sessionId; r.epoch = m.epoch; }
+      this.slotGroups.set(`${m.kind}|${m.slot}`, group);
+    }
+    return out;
+  }
+
+  async rehomeGroup(held: Array<GroupMember & { epoch: bigint }>, oldSession: string, newSession: string):
+    Promise<Array<GroupMember & { epoch: bigint }> | undefined> {
+    for (const h of held) {
+      const r = this.slots.get(`${h.kind}|${h.slot}`);
+      if (!r || r.sessionId !== oldSession || r.epoch !== h.epoch) return undefined;
+    }
+    return held.map((h) => {
+      const r = this.slots.get(`${h.kind}|${h.slot}`) as SlotRow;
+      r.sessionId = newSession; r.epoch += 1n;
+      return { kind: h.kind, slot: h.slot, epoch: r.epoch };
+    });
+  }
+
+  async clusterTime(): Promise<HlcTs> {
+    return this.nowTs();
+  }
+
+  async revokeSession(_shard: number, sessionId: string): Promise<void> {
+    const s = this.sessions.get(sessionId);
+    if (s) s.revoked = true;
+  }
+
+  async release(kind: string, held: Array<{ slot: SlotNo; epoch: bigint }>, sessionId: string, keepSession = false): Promise<void> {
     for (const h of held) {
       const r = this.slots.get(`${kind}|${h.slot}`);
       if (r && r.sessionId === sessionId && r.epoch === h.epoch) r.sessionId = null;
     }
     const s = this.sessions.get(sessionId);
-    if (s) s.revoked = true;
+    if (s && !keepSession) s.revoked = true;
   }
 
   async resolutionRead(kind: string, _shard: number, sessionId: string, slots: SlotNo[], partitions: Uint8Array[]): Promise<ResolutionRead> {
@@ -158,13 +208,29 @@ export class MemoryStore implements OwnerStore {
     return out;
   }
 
-  async readTiming(): Promise<TimingSnapshot> {
+  async readTiming(): Promise<TimingRow> {
     return this.timing;
   }
 
   async readLogRows(kind: string, partition: Uint8Array, fromSeq: bigint): Promise<Array<LogRowWrite & { ts: HlcTs }>> {
     void kind;
     return this.log.filter((l) => hex(l.partition) === hex(partition) && l.seq >= fromSeq).sort((a, b) => (a.seq < b.seq ? -1 : 1));
+  }
+
+  /** Rows the follower-read tail does not see yet (the closed-timestamp lag): the newest `followerLagRows` rows. */
+  followerLagRows = 0;
+
+  async tailLog(kind: string, slots: SlotNo[], afterTs: HlcTs | null, at: 'follower' | 'present'):
+    Promise<{ rows: Array<LogRowWrite & { ts: HlcTs }>; through: HlcTs }> {
+    void kind;
+    const lag = at === 'follower' ? Math.min(this.followerLagRows, this.log.length) : 0;
+    const visible = this.log.slice(0, this.log.length - lag);
+    // The read is complete just below the first row it does not see (or at the present).
+    const hidden = this.log.slice(this.log.length - lag).map((l) => l.ts).sort(compareHlc)[0];
+    const through = hidden !== undefined ? hlcBefore(hidden) : this.nowTs();
+    const rows = visible.filter((l) => slots.includes(l.slot) && (afterTs === null || compareHlc(l.ts, afterTs) > 0))
+      .sort((a, b) => compareHlc(a.ts, b.ts) || (hex(a.partition) < hex(b.partition) ? -1 : hex(a.partition) > hex(b.partition) ? 1 : 0) || (a.seq < b.seq ? -1 : 1));
+    return { rows, through };
   }
 
   async listPartitions(kind: string, slot: SlotNo): Promise<Uint8Array[]> {
@@ -229,6 +295,13 @@ export class MemoryStore implements OwnerStore {
   }
 }
 
+/** The HLC timestamp just below `t` (one logical tick, or the wall time below). */
+function hlcBefore(t: HlcTs): HlcTs {
+  const [wall = '0', logical = '0'] = t.split('.');
+  const l = BigInt(logical);
+  return l > 0n ? hlc(`${wall}.${(l - 1n).toString().padStart(10, '0')}`) : hlc(`${BigInt(wall) - 1n}.9999999999`);
+}
+
 function applyProjection(rows: Map<string, unknown>, p: ProjectionWrite): void {
   const id = rowId({ table: p.table, key: p.key });
   if (p.op === 'delete') rows.delete(id);
@@ -266,7 +339,7 @@ class MemoryTxn implements BatchTxn {
     return { sessionId: r.sessionId, epoch: r.epoch, stopsVersion: r.stopsVersion, reportThrough: r.reportThrough, markerSeq: r.markerSeq };
   }
 
-  async readTiming(): Promise<TimingSnapshot> {
+  async readTiming(): Promise<TimingRow> {
     return this.store.timing;
   }
 

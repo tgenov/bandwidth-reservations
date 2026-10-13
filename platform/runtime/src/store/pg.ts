@@ -1,15 +1,16 @@
 /** OwnerStore on CockroachDB through `pg` (RFC-006 §4.2, §4.3; C01 §2.3, §3.1, §3.2, §7). */
 import pg from 'pg';
-import type { HlcTs, ProjectionWrite, ReadTx, RowRef, SlotNo, TimingSnapshot } from '../api.ts';
+import type { HlcTs, ProjectionWrite, ReadTx, RowRef, SlotNo } from '../api.ts';
 import { decodeJson, encodeJson, hex } from '../bytes.ts';
 import { assertIdentifier, tableNames } from '../declaration.ts';
 import { AmbiguousCommitError, isLockTimeout, isRetryable, sqlState } from '../errors.ts';
+import { GatewayTiers, TierTimeout, withTierTimeout, type GatewayTiersOptions } from './tiers.ts';
 import { hlc } from '../hlc.ts';
 import { homeKey } from '../home.ts';
 import { PARAMS } from '../params.ts';
 import { keyObject, rowId } from '../rowref.ts';
 import type {
-  LogRowWrite, BatchTxn, BatchWrites, DisplacementCondition, FenceRow, OwnerStore, ResolutionRead, SessionRow, SlotLeaseRow, StoredHead,
+  GroupMember, LogRowWrite, BatchTxn, BatchWrites, DisplacementCondition, FenceRow, OwnerStore, ResolutionRead, SessionRow, SlotLeaseRow, StoredHead, TimingRow,
 } from './types.ts';
 
 /** Maps a displacementRead condition to link_displacement's key columns (C02 §link_displacement). */
@@ -36,6 +37,17 @@ export interface PgStoreOptions {
   connectionString: string;
   poolSize?: number;
   displacement?: DisplacementBinding;
+  /**
+   * Gateway tiers in order (RFC-006 §4.7): own facility, the metro's other facility, the other Kenyan region.
+   * Default: `connectionString` alone.
+   */
+  tiers?: string[];
+  /** Per-tier timeout of the renewal, the epoch read and the session poll (C01 §7: 400 ms). */
+  tierTimeoutMs?: number;
+  /** Breaker options of the tiers. */
+  breaker?: GatewayTiersOptions;
+  /** One pool per tier in place of `tiers` (unit tests of the tier logic with pool doubles). */
+  pools?: pg.Pool[];
 }
 
 type Row = Record<string, unknown>;
@@ -126,14 +138,28 @@ function ambiguous(e: unknown): boolean {
 class PgBatchTxn implements BatchTxn {
   private readonly client: pg.PoolClient;
   private readonly displacement: DisplacementBinding;
+  private readonly tier: { index: number; timeoutMs: number; onTimeout: () => void };
 
-  constructor(client: pg.PoolClient, displacement: DisplacementBinding) {
+  constructor(client: pg.PoolClient, displacement: DisplacementBinding, tier: { index: number; timeoutMs: number; onTimeout: () => void }) {
     this.client = client;
     this.displacement = displacement;
+    this.tier = tier;
   }
 
-  private async q(sql: string, params: unknown[] = []): Promise<Row[]> {
-    return (await this.client.query(sql, params)).rows as Row[];
+  /**
+   * One statement. Every statement except COMMIT has a client-side limit just above the 2 s statement timeout
+   * (C01 §7), so a gateway that stops answering (RFC-006 §4.7) ends the attempt as a TierTimeout: the batch
+   * is abandoned and starts again on the next tier.
+   */
+  private async q(sql: string, params: unknown[] = [], limitMs: number | null = PARAMS.statementTimeoutMs + 500): Promise<Row[]> {
+    const p = this.client.query(sql, params).then((r) => r.rows as Row[]);
+    if (limitMs === null) return p;
+    try {
+      return await withTierTimeout(p, this.tier.index, limitMs);
+    } catch (e) {
+      if (e instanceof TierTimeout) this.tier.onTimeout();
+      throw e;
+    }
   }
 
   async firstStatement(writes: ProjectionWrite[]): Promise<HlcTs> {
@@ -150,9 +176,11 @@ class PgBatchTxn implements BatchTxn {
   }
 
   async readFence(kind: string, slot: SlotNo): Promise<FenceRow | undefined> {
+    // RFC-006 §4.7: the epoch read has the per-tier timeout; on a timeout the batch restarts on the next tier.
+    // One limit only, so a stalled read counts one timeout toward the breaker.
     const rows = await this.q(
       `SELECT session_id::STRING AS session_id, epoch, stops_version, report_through::STRING AS report_through, marker_seq
-         FROM owner_slot WHERE kind = $1 AND slot = $2`, [kind, slot]);
+         FROM owner_slot WHERE kind = $1 AND slot = $2`, [kind, slot], this.tier.timeoutMs);
     const r = rows[0];
     if (!r) return undefined;
     return {
@@ -162,7 +190,7 @@ class PgBatchTxn implements BatchTxn {
     };
   }
 
-  async readTiming(shard: number): Promise<TimingSnapshot> {
+  async readTiming(shard: number): Promise<TimingRow> {
     return readTiming((sql, p) => this.q(sql, p), shard);
   }
 
@@ -338,14 +366,14 @@ class PgBatchTxn implements BatchTxn {
     // COMMIT is exempt from the 2 s timeout; the 15 s backstop ends as Ambiguous (C01 §7, M1).
     await this.q(`SET LOCAL statement_timeout = '${Math.max(1, Math.floor(backstopMs))}ms'`);
     try {
-      await this.q('RELEASE SAVEPOINT cockroach_restart');
+      await this.q('RELEASE SAVEPOINT cockroach_restart', [], null);
     } catch (e) {
       if (isRetryable(e)) throw e;
       if (ambiguous(e)) throw new AmbiguousCommitError(`RELEASE: ${(e as Error).message}`, e);
       throw e;
     }
     try {
-      await this.q('COMMIT');
+      await this.q('COMMIT', [], null);
     } catch (e) {
       throw new AmbiguousCommitError(`COMMIT after RELEASE: ${(e as Error).message}`, e);
     }
@@ -360,77 +388,184 @@ class PgBatchTxn implements BatchTxn {
   }
 }
 
-async function readTiming(q: (sql: string, p: unknown[]) => Promise<Row[]>, shard: number): Promise<TimingSnapshot> {
-  const rows = await q('SELECT version, epsilon_ms, delta_x_ms, tau_ms FROM platform_timing WHERE shard = $1', [shard]);
+async function readTiming(q: (sql: string, p: unknown[]) => Promise<Row[]>, shard: number): Promise<TimingRow> {
+  const rows = await q('SELECT version, epsilon_ms, delta_x_ms, tau_ms, second_lane::STRING AS second_lane FROM platform_timing WHERE shard = $1', [shard]);
   const r = rows[0];
   if (!r) return { version: 0n, epsilonMs: PARAMS.epsilonMs, deltaXMs: 320, tauMs: 420 };
-  return { version: big(r['version']), epsilonMs: Number(r['epsilon_ms']), deltaXMs: Number(r['delta_x_ms']), tauMs: Number(r['tau_ms']) };
+  const lanes = JSON.parse(String(r['second_lane'] ?? '{}')) as unknown;
+  return { version: big(r['version']), epsilonMs: Number(r['epsilon_ms']), deltaXMs: Number(r['delta_x_ms']), tauMs: Number(r['tau_ms']),
+    ...(lanes !== null && typeof lanes === 'object' ? { secondLane: lanes as NonNullable<TimingRow['secondLane']> } : {}) };
 }
 
+/** Thrown inside a group transaction to roll it back when one member cannot be taken. */
+class GroupNotTaken extends Error {}
+
 export class PgStore implements OwnerStore {
-  readonly pool: pg.Pool;
+  /** One pool per gateway tier (RFC-006 §4.7). */
+  readonly pools: pg.Pool[];
+  readonly tiers: GatewayTiers;
+  private readonly tierTimeoutMs: number;
   private readonly displacement: DisplacementBinding;
 
   constructor(o: PgStoreOptions) {
     // C01 §7: statement timeout 2 s (COMMIT excepted per transaction); idle-in-transaction 1 s.
     // They go in the startup message, so they apply before the first query on each connection.
-    this.pool = new pg.Pool({
-      connectionString: o.connectionString, max: o.poolSize ?? 8,
-      options: `-c statement_timeout=${PARAMS.statementTimeoutMs} -c idle_in_transaction_session_timeout=${PARAMS.idleInTransactionMs}`,
+    const urls = o.tiers && o.tiers.length > 0 ? o.tiers : [o.connectionString];
+    this.pools = o.pools ?? urls.map((connectionString) => {
+      const p = new pg.Pool({
+        // Idle connections stay open on every tier, so a fallback needs no new connection (RFC-006 §4.7).
+        connectionString, max: o.poolSize ?? 8, idleTimeoutMillis: urls.length > 1 ? 0 : 10_000,
+        options: `-c statement_timeout=${PARAMS.statementTimeoutMs} -c idle_in_transaction_session_timeout=${PARAMS.idleInTransactionMs}`,
+      });
+      p.on('error', () => { /* an idle client died; the pool replaces it */ });
+      return p;
     });
+    this.tiers = new GatewayTiers(this.pools.length, o.breaker);
+    // RFC-006 §4.7: a statement that misses its per-tier timeout is retried on the next tier. With one tier there is
+    // no next tier, so the per-tier timeout would only drop a slow but good renewal: the statement timeout applies.
+    this.tierTimeoutMs = this.pools.length > 1 ? (o.tierTimeoutMs ?? PARAMS.tierTimeoutMs) : PARAMS.statementTimeoutMs + 500;
     this.displacement = o.displacement ?? C02_DISPLACEMENT;
-    this.pool.on('error', () => { /* an idle client died; the pool replaces it */ });
+  }
+
+  /** Opens one idle connection on every tier, so the first fallback does not wait for a connect (RFC-006 §4.7). */
+  async warm(): Promise<void> {
+    if (this.pools.length < 2) return;
+    await Promise.all(this.pools.map(async (p, tier) => {
+      try { const c = await withTierTimeout(p.connect(), tier, PARAMS.statementTimeoutMs, (late) => late.release()); c.release(); } catch { /* the tier is down now; the breaker learns it */ }
+    }));
+  }
+
+  /** The pool of the first live tier: every statement without a per-tier timeout starts there. */
+  get pool(): pg.Pool {
+    return this.pools[this.tiers.order()[0] ?? 0] as pg.Pool;
+  }
+
+  /** A client of one tier, connected within the per-tier timeout (a late connection is discarded). */
+  private tierClient(tier: number): Promise<pg.PoolClient> {
+    const pool = this.pools[tier] as pg.Pool;
+    return withTierTimeout(pool.connect(), tier, this.tierTimeoutMs, (late) => late.release(new Error('connected after the tier timeout')));
+  }
+
+  /**
+   * Runs `fn` on the first tier that answers within the per-tier timeout (RFC-006 §4.7): the renewal and the
+   * session poll. A timeout or an unreachable gateway moves to the next tier and counts toward its breaker.
+   */
+  /** Each per-tier attempt of the renewal and the session poll (monotonic ms), newest last; for tests and metrics. */
+  readonly tierTrace: Array<{ op: string; tier: number; startMs: number; endMs: number; ok: boolean }> = [];
+
+  private async onTiers<T>(fn: (c: pg.PoolClient) => Promise<T>, timeoutMs: number = this.tierTimeoutMs, op = 'statement'): Promise<T> {
+    let last: unknown;
+    for (const tier of this.tiers.order()) {
+      let client: pg.PoolClient | undefined;
+      const startMs = performance.now();
+      const trace = (ok: boolean): void => {
+        this.tierTrace.push({ op, tier, startMs, endMs: performance.now(), ok });
+        if (this.tierTrace.length > 1_000) this.tierTrace.shift();
+      };
+      try {
+        client = await this.tierClient(tier);
+        const out = await withTierTimeout(fn(client), tier, timeoutMs);
+        client.release();
+        this.tiers.success(tier);
+        trace(true);
+        return out;
+      } catch (e) {
+        trace(false);
+        client?.release(new Error('discarded after a tier failure'));
+        if (!(e instanceof TierTimeout) && !unreachable(e)) throw e;
+        this.tiers.timeout(tier);
+        last = e;
+      }
+    }
+    throw last instanceof Error ? last : new Error('no gateway tier answered');
   }
 
   async beginBatch(): Promise<BatchTxn> {
-    const client = await this.pool.connect();
-    try {
-      await client.query('BEGIN');                                  // SERIALIZABLE
-      await client.query('SAVEPOINT cockroach_restart');
-    } catch (e) {
-      client.release(e instanceof Error ? e : new Error(String(e)));
-      throw e;
+    let last: unknown;
+    for (const tier of this.tiers.order()) {
+      let client: pg.PoolClient | undefined;
+      try {
+        client = await this.tierClient(tier);
+        await withTierTimeout(client.query('BEGIN'), tier, this.tierTimeoutMs);                // SERIALIZABLE
+        await withTierTimeout(client.query('SAVEPOINT cockroach_restart'), tier, this.tierTimeoutMs);
+        return new PgBatchTxn(client, this.displacement, { index: tier, timeoutMs: this.tierTimeoutMs, onTimeout: () => this.tiers.timeout(tier) });
+      } catch (e) {
+        client?.release(e instanceof Error ? e : new Error(String(e)));
+        if (!(e instanceof TierTimeout) && !unreachable(e)) throw e;
+        this.tiers.timeout(tier);
+        last = e;
+      }
     }
-    return new PgBatchTxn(client, this.displacement);
+    throw last instanceof Error ? last : new Error('no gateway tier answered');
   }
 
+  /**
+   * A short transaction on the first tier that answers (RFC-006 §4.7): a tier that does not finish it within the
+   * statement timeout (plus 500 ms) is left for the next one. A write that timed out may still have committed:
+   * the acquisition adopts slots that already name its session (runtime.ts).
+   */
   private async tx<T>(fn: (q: (sql: string, p?: unknown[]) => Promise<Row[]>) => Promise<T>, begin = 'BEGIN'): Promise<T> {
-    const client = await this.pool.connect();
-    let broken = false;
-    try {
-      await client.query(begin);
-      const out = await fn(async (sql, p = []) => (await client.query(sql, p)).rows as Row[]);
-      await client.query('COMMIT');
-      return out;
-    } catch (e) {
-      try { await client.query('ROLLBACK'); } catch { broken = true; }
-      throw e;
-    } finally {
-      client.release(broken ? new Error('broken') : undefined);
+    let last: unknown;
+    for (const tier of this.tiers.order()) {
+      let client: pg.PoolClient | undefined;
+      try {
+        client = await this.tierClient(tier);
+        const c = client;
+        const run = async (): Promise<T> => {
+          let broken = false;
+          try {
+            await c.query(begin);
+            const out = await fn(async (sql, p = []) => (await c.query(sql, p)).rows as Row[]);
+            await c.query('COMMIT');
+            return out;
+          } catch (e) {
+            try { await c.query('ROLLBACK'); } catch { broken = true; }
+            if (broken) throw Object.assign(e instanceof Error ? e : new Error(String(e)), { brokenClient: true });
+            throw e;
+          }
+        };
+        const out = await withTierTimeout(run(), tier, PARAMS.statementTimeoutMs + 500);
+        client.release();
+        this.tiers.success(tier);
+        return out;
+      } catch (e) {
+        const timeout = e instanceof TierTimeout || unreachable(e);
+        client?.release(timeout || (e as { brokenClient?: boolean }).brokenClient ? new Error('discarded') : undefined);
+        if (!timeout) throw e;
+        this.tiers.timeout(tier);
+        last = e;
+      }
     }
+    throw last instanceof Error ? last : new Error('no gateway tier answered');
+  }
+
+  /** One statement outside a transaction, on the first tier that answers within the statement timeout. */
+  private async query(sql: string, params: unknown[] = []): Promise<{ rows: Row[]; rowCount: number | null }> {
+    return this.onTiers((c) => c.query(sql, params).then((r) => ({ rows: r.rows as Row[], rowCount: r.rowCount })), PARAMS.statementTimeoutMs + 500);
   }
 
   async insertSession(s: SessionRow): Promise<void> {
-    await this.pool.query(
+    await this.query(
       `INSERT INTO owner_session (shard, session_id, host, region, facility, kind, started_at, expires_at)
        VALUES ($1, $2, $3, $4, $5, $6, now(), now() + $7::INTERVAL)`,
       [s.shard, s.sessionId, s.host, s.region, s.facility, s.kind, `${s.ttlMs} milliseconds`]);
   }
 
   async renewSession(shard: number, sessionId: string, ttlMs: number): Promise<boolean> {
-    // RFC-006 §4.2: conditional only on NOT revoked (a lapsed, untaken session may resume).
-    const r = await this.pool.query(
+    // RFC-006 §4.2: conditional only on NOT revoked (a lapsed, untaken session may resume). §4.7: per-tier timeout.
+    const r = await this.onTiers((c) => c.query(
       `UPDATE owner_session SET expires_at = now() + $3::INTERVAL WHERE shard = $1 AND session_id = $2 AND NOT revoked`,
-      [shard, sessionId, `${ttlMs} milliseconds`]);
+      [shard, sessionId, `${ttlMs} milliseconds`]), this.tierTimeoutMs, 'renewal');
     return (r.rowCount ?? 0) === 1;
   }
 
   async listSlots(kind: string, slots: SlotNo[]): Promise<SlotLeaseRow[]> {
-    const r = await this.pool.query(
+    // The session poll (acquisition and the standby's present-time poll): per-tier timeout (RFC-006 §4.7).
+    const r = await this.onTiers((c) => c.query(
       `SELECT s.slot, s.session_id::STRING AS session_id, s.epoch,
               coalesce(se.expires_at <= now(), true) AS expired, coalesce(se.revoked, false) AS revoked
          FROM owner_slot s LEFT JOIN owner_session se ON se.session_id = s.session_id
-        WHERE s.kind = $1 AND s.slot = ANY($2::INT4[])`, [kind, slots]);
+        WHERE s.kind = $1 AND s.slot = ANY($2::INT4[])`, [kind, slots]));
     return (r.rows as Row[]).map((x) => ({
       slot: Number(x['slot']), sessionId: x['session_id'] === null ? null : String(x['session_id']), epoch: big(x['epoch']),
       sessionExpired: Boolean(x['expired']), sessionRevoked: Boolean(x['revoked']),
@@ -439,7 +574,7 @@ export class PgStore implements OwnerStore {
 
   async acquireFree(kind: string, slot: SlotNo, sessionId: string): Promise<{ slot: SlotNo; epoch: bigint } | undefined> {
     // R27-15: `= $old` never matches NULL, so a free slot has its own statement.
-    const r = await this.pool.query(
+    const r = await this.query(
       `UPDATE owner_slot SET session_id = $3, epoch = epoch + 1, acquired_at = now()
         WHERE kind = $1 AND slot = $2 AND session_id IS NULL RETURNING slot, epoch`, [kind, slot, sessionId]);
     const row = r.rows[0] as Row | undefined;
@@ -477,13 +612,69 @@ export class PgStore implements OwnerStore {
     }, 'BEGIN PRIORITY HIGH');
   }
 
-  async release(kind: string, held: Array<{ slot: SlotNo; epoch: bigint }>, sessionId: string): Promise<void> {
+  async acquireGroup(members: GroupMember[], sessionId: string, group: string, old: { shard: number; sessionId: string } | null):
+    Promise<Array<GroupMember & { epoch: bigint }> | undefined> {
+    return this.tx(async (q) => {
+      if (old) {
+        const revoked = await q(
+          `UPDATE owner_session SET revoked = true WHERE shard = $1 AND session_id = $2 AND (revoked OR expires_at <= now())
+           RETURNING session_id`, [old.shard, old.sessionId]);
+        if (revoked.length !== 1) throw new GroupNotTaken();
+      }
+      const out: Array<GroupMember & { epoch: bigint }> = [];
+      for (const m of members) {
+        const rows = await q(
+          `UPDATE owner_slot SET session_id = $1, epoch = epoch + 1, acquired_at = now(), slot_group = $4
+            WHERE kind = $2 AND slot = $3 AND ${old ? 'session_id = $5' : 'session_id IS NULL'} RETURNING epoch`,
+          [sessionId, m.kind, m.slot, group, ...(old ? [old.sessionId] : [])]);
+        const r = rows[0];
+        // One member not takeable: the whole group stays where it is (RFC-006 §4.2, §7.1).
+        if (!r) throw new GroupNotTaken();
+        out.push({ ...m, epoch: big(r['epoch']) });
+      }
+      return out;
+    }, old ? 'BEGIN PRIORITY HIGH' : 'BEGIN').catch((e: unknown) => {
+      if (e instanceof GroupNotTaken) return undefined;
+      throw e;
+    });
+  }
+
+  async rehomeGroup(held: Array<GroupMember & { epoch: bigint }>, oldSession: string, newSession: string):
+    Promise<Array<GroupMember & { epoch: bigint }> | undefined> {
+    return this.tx(async (q) => {
+      const out: Array<GroupMember & { epoch: bigint }> = [];
+      for (const h of held) {
+        const rows = await q(
+          `UPDATE owner_slot SET session_id = $1, epoch = epoch + 1, acquired_at = now()
+            WHERE kind = $2 AND slot = $3 AND session_id = $4 AND epoch = $5 RETURNING epoch`,
+          [newSession, h.kind, h.slot, oldSession, h.epoch.toString()]);
+        const r = rows[0];
+        if (!r) throw new GroupNotTaken();
+        out.push({ kind: h.kind, slot: h.slot, epoch: big(r['epoch']) });
+      }
+      return out;
+    }, 'BEGIN PRIORITY HIGH').catch((e: unknown) => {
+      if (e instanceof GroupNotTaken) return undefined;
+      throw e;
+    });
+  }
+
+  async clusterTime(): Promise<HlcTs> {
+    const r = await this.query('SELECT cluster_logical_timestamp()::STRING AS ts');
+    return hlc(String((r.rows[0] as Row)['ts']));
+  }
+
+  async revokeSession(shard: number, sessionId: string): Promise<void> {
+    await this.onTiers((c) => c.query('UPDATE owner_session SET revoked = true WHERE shard = $1 AND session_id = $2', [shard, sessionId]));
+  }
+
+  async release(kind: string, held: Array<{ slot: SlotNo; epoch: bigint }>, sessionId: string, keepSession = false): Promise<void> {
     await this.tx(async (q) => {
       for (const h of held) {
         await q(`UPDATE owner_slot SET session_id = NULL WHERE kind = $1 AND slot = $2 AND session_id = $3 AND epoch = $4`,
           [kind, h.slot, sessionId, h.epoch.toString()]);
       }
-      await q(`UPDATE owner_session SET revoked = true WHERE session_id = $1`, [sessionId]);
+      if (!keepSession) await q(`UPDATE owner_session SET revoked = true WHERE session_id = $1`, [sessionId]);
     });
   }
 
@@ -506,7 +697,7 @@ export class PgStore implements OwnerStore {
   }
 
   async readLogRows(kind: string, partition: Uint8Array, fromSeq: bigint): Promise<Array<LogRowWrite & { ts: HlcTs }>> {
-    const r = await this.pool.query(
+    const r = await this.query(
       `SELECT slot, partition, seq, generation, epoch, kind, schema_v, ts::STRING AS ts, identity, emits, audit, retention, key_id, payload, chain
          FROM ${assertIdentifier(tableNames(kind).log)} WHERE partition = $1 AND seq >= $2 ORDER BY seq`, [toPg(partition), fromSeq.toString()]);
     return (r.rows as Row[]).map((x) => ({
@@ -516,13 +707,39 @@ export class PgStore implements OwnerStore {
     }));
   }
 
+  async tailLog(kind: string, slots: SlotNo[], afterTs: HlcTs | null, at: 'follower' | 'present'):
+    Promise<{ rows: Array<LogRowWrite & { ts: HlcTs }>; through: HlcTs }> {
+    const sql = `SELECT slot, partition, seq, generation, epoch, kind, schema_v, ts::STRING AS ts, identity, emits, audit, retention, key_id, payload, chain
+         FROM ${assertIdentifier(tableNames(kind).log)} WHERE slot = ANY($1::INT4[]) AND ($2::DECIMAL IS NULL OR ts > $2::DECIMAL)
+        ORDER BY ts, partition, seq`;
+    let through: HlcTs;
+    let rows: Row[];
+    if (at === 'present') {
+      // Only a taking-over standby reads the live tail at the present timestamp (RFC-006 §4.4).
+      [rows, through] = await this.tx(async (q) => {
+        const r = await q(sql, [slots, afterTs]);
+        const t = await q('SELECT cluster_logical_timestamp()::STRING AS ts');
+        return [r, hlc(String(t[0]?.['ts']))] as [Row[], HlcTs];
+      }, 'BEGIN PRIORITY HIGH');
+    } else {
+      const f = await this.query(`SELECT ((extract(epoch FROM follower_read_timestamp()) * 1000000)::INT8 * 1000)::STRING AS ns`);
+      through = hlc(String((f.rows[0] as Row)['ns']));
+      rows = await this.tx((q) => q(sql, [slots, afterTs]), `BEGIN AS OF SYSTEM TIME '${through}'`);
+    }
+    return { through, rows: rows.map((x) => ({
+      slot: Number(x['slot']), partition: bytes(x['partition']), seq: big(x['seq']), generation: Number(x['generation']), epoch: big(x['epoch']),
+      kind: Number(x['kind']), schemaV: Number(x['schema_v']), ts: hlc(String(x['ts'])), identity: bytes(x['identity']), emits: bytes(x['emits']),
+      audit: bytes(x['audit']), retention: Number(x['retention']), keyId: bytes(x['key_id']), payload: bytes(x['payload']), chain: bytes(x['chain']),
+    })) };
+  }
+
   async listPartitions(kind: string, slot: SlotNo): Promise<Uint8Array[]> {
-    const r = await this.pool.query(`SELECT partition FROM ${assertIdentifier(tableNames(kind).head)} WHERE slot = $1 AND adopted`, [slot]);
+    const r = await this.query(`SELECT partition FROM ${assertIdentifier(tableNames(kind).head)} WHERE slot = $1 AND adopted`, [slot]);
     return (r.rows as Row[]).map((x) => bytes(x['partition']));
   }
 
-  async readTiming(shard: number): Promise<TimingSnapshot> {
-    return readTiming(async (sql, p) => (await this.pool.query(sql, p)).rows as Row[], shard);
+  async readTiming(shard: number): Promise<TimingRow> {
+    return readTiming(async (sql, p) => (await this.query(sql, p)).rows as Row[], shard);
   }
 
   async withReadTx<T>(at: 'present' | HlcTs, fn: (tx: ReadTx) => Promise<T>): Promise<T> {
@@ -531,7 +748,7 @@ export class PgStore implements OwnerStore {
   }
 
   async followerRead<T>(fn: (tx: ReadTx) => Promise<T>): Promise<{ value: T; servedAt: HlcTs }> {
-    const r = await this.pool.query(
+    const r = await this.query(
       `SELECT ((extract(epoch FROM follower_read_timestamp()) * 1000000)::INT8 * 1000)::STRING AS ns`);
     const servedAt = hlc(String((r.rows[0] as Row)['ns']));
     const value = await this.withReadTx(servedAt, fn);
@@ -539,8 +756,15 @@ export class PgStore implements OwnerStore {
   }
 
   async close(): Promise<void> {
-    await this.pool.end();
+    for (const p of this.pools) await p.end();
   }
+}
+
+/** A connection-level failure: the gateway is not reachable (the next tier may be). */
+function unreachable(e: unknown): boolean {
+  const code = (e as { code?: unknown }).code;
+  if (typeof code === 'string' && (code.startsWith('08') || ['ECONNREFUSED', 'ECONNRESET', 'EPIPE', 'ETIMEDOUT', 'EHOSTUNREACH'].includes(code))) return true;
+  return e instanceof Error && /Connection terminated|connection.*(closed|ended)/i.test(e.message);
 }
 
 /** The `closure_emitter` role's read (C01 §2.3, §3.6): feed sequence per link from `<kind>_head.streams` as of `at`. */

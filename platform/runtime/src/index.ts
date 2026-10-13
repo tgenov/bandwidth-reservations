@@ -27,16 +27,38 @@ export {
   relayProgressTopic, topicKind, type ClosureMessage,
 } from './feed/wire.ts';
 export {
-  OutboxRelay, parseCdcMessage, changefeedStatement, ensureChangefeed, cancelChangefeeds, changefeedJobs,
+  OutboxRelay, parseCdcMessage, parseCdcLogMessage, type RelayDerivation, type CdcLogMessage, changefeedStatement, ensureChangefeed, cancelChangefeeds, changefeedJobs,
   type RelayOptions, type ChangefeedOptions, type CdcMessage, type CdcOutboxRow,
 } from './relay/relay.ts';
 export { ClosureEmitter, emitterSlotKind, type ClosureEmitterOptions, type FeedSeqReader } from './closure/emitter.ts';
 export { FeedConsumerRuntime, type FeedConsumerOptions, type ConsumerAlert } from './consumer/consumer.ts';
-export { PgGapFill, MemoryGapFill, type GapFillSource, type GapFillRow, type PgGapFillOptions } from './consumer/gapfill.ts';
+export {
+  PgGapFill, MemoryGapFill, LogDerivedGapFill, pgStreamIndex, type GapFillSource, type GapFillRow, type PgGapFillOptions, type StreamIndexReader,
+} from './consumer/gapfill.ts';
 export { REPORT, SlotReport, markerChunks, outcomeStream, reportsMarkers, type LeaseAnswer, type ReaderChannel, type ReadLease } from './report/report.ts';
 export { StatusReader, ceilMicrosLiteral, type StatusReaderOptions, type ReadLeaseHolder } from './status/reader.ts';
 export { SlotMapCache, SLOT_MAP_TOPIC, fixedSlotMap, publishSlotMap, slotOfInMap, encodeSlotMap, decodeSlotMap, type SlotMapCacheOptions } from './placement/slot-map.ts';
 export { producerAcls, aclCommands, kafkajsAcls, checkAcls, holderPrincipal, relayPrincipal, closureEmitterPrincipal, type TopicAcl, type ExtraProducers, type AclOptions } from './acl/kafka-acl.ts';
+
+// ---------- I2: self-outboxed kinds, checkpoints ----------
+export {
+  deriveEvents, eventRecord, openLogRow, emitFunction, emitFunctionErrors, checkDeclaredEvents,
+  type EmitFunctions, type EmitFunction, type EmitInput, type EventRecord, type EventPlace,
+} from './selfout/derive.ts';
+export {
+  CheckpointStore, CheckpointError, MemoryObjectStore, FileObjectStore, CHECKPOINT,
+  type ObjectStore, type CheckpointErrorCode, type CheckpointAlert, type CheckpointStoreOptions,
+} from './checkpoint/store.ts';
+
+export {
+  TIMING, tauFor, writeTimingVersion, readTimingVersion, TimingVersionRefused, TimingAlarms, TimingProbe, toOperationalAlert,
+  type TimingVersion, type SecondLaneSettings, type TimingAlarmId, type TimingAlert, type TimingRoundTripPort,
+  type OffsetLevel as TimingOffsetLevel,
+} from './placement/timing.ts';
+export { TimingController, busAlertSink, type TimingControllerOptions } from './placement/timing-controller.ts';
+export { OffsetMonitor, OFFSET, type OffsetLevel, type OffsetSample, type OffsetMonitorOptions } from './offset.ts';
+export { GatewayTiers, TierTimeout, withTierTimeout, type GatewayTiersOptions } from './store/tiers.ts';
+export { StandbyTail, STANDBY_BUFFER_MAX, type StandbyPush, type StandbyChannel, type StandbyStats, type TailRow } from './standby/tail.ts';
 
 // TODO(S-PLAT-I1 item 15, C01 §3.1–§3.6): TLA+ model of sessions, revocation, resume, re-home, epochs, slot batches,
 //   handoff, read leases, report position, marker chain, relay progress and closure; TLC in CI.

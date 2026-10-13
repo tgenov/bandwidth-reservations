@@ -34,6 +34,8 @@ export const ownerRole = (kind: string): string => assertIdentifier(kind);
 export const standbyRole = (kind: string): string => assertIdentifier(`standby_${kind}`);
 export const gapfillRole = (consumer: string, producer: string): string => assertIdentifier(`gapfill_${consumer}_${producer}`);
 export const gapfillView = (producer: string, consumer: string): string => assertIdentifier(`${producer}_outbox_gapfill_${consumer}`);
+/** The gap-fill view of a self-outboxed producer (C01 §2.3: "a self-outboxed log through its stream index"). */
+export const logGapfillView = (producer: string, consumer: string): string => assertIdentifier(`${producer}_log_gapfill_${consumer}`);
 
 function add(m: PrivilegeMap, role: string, table: string, privs: Privilege[]): void {
   let r = m.get(role);
@@ -56,7 +58,7 @@ export function expectedPrivileges(decls: OwnerDeclaration[]): PrivilegeMap {
     const role = ownerRole(d.kind);
     const projections = d.projections.map((p) => t.projection(p.name));
     add(m, role, t.log, ['SELECT', 'INSERT']);
-    add(m, role, t.outbox, ['SELECT', 'INSERT']);
+    if (!d.selfOutboxed) add(m, role, t.outbox, ['SELECT', 'INSERT']);
     add(m, role, t.head, ['SELECT', 'INSERT', 'UPDATE']);
     for (const p of d.projections) {
       add(m, role, t.projection(p.name), ['SELECT', 'INSERT', 'UPDATE', ...(p.deletable ? ['DELETE' as const] : [])]);
@@ -73,9 +75,10 @@ export function expectedPrivileges(decls: OwnerDeclaration[]): PrivilegeMap {
       for (const x of [t.log, t.head, ...projections, 'owner_session', 'owner_slot']) add(m, 'status_reader', x, ['SELECT']);
     }
     if (d.streams.some((s) => s.closure === 'closedPerLink')) add(m, 'closure_emitter', t.head, ['SELECT']);
-    for (const x of [t.log, t.head, t.outbox, ...projections, ...PLATFORM_TABLES]) add(m, standbyRole(d.kind), x, ['SELECT']);
+    const own = d.selfOutboxed ? [t.log, t.head, t.streamIndex] : [t.log, t.head, t.outbox];
+    for (const x of [...own, ...projections, ...PLATFORM_TABLES]) add(m, standbyRole(d.kind), x, ['SELECT']);
     const consumers = new Set(d.streams.flatMap((s) => s.consumers));
-    for (const c of consumers) add(m, gapfillRole(c, d.kind), gapfillView(d.kind, c), ['SELECT']);
+    for (const c of consumers) add(m, gapfillRole(c, d.kind), d.selfOutboxed ? logGapfillView(d.kind, c) : gapfillView(d.kind, c), ['SELECT']);
   }
   return m;
 }
@@ -91,6 +94,17 @@ export function grantMigration(decls: OwnerDeclaration[], opts: GrantOptions = {
   for (const d of decls) {
     for (const c of new Set(d.streams.flatMap((s) => s.consumers))) {
       const topics = consumerTopics(d, c).map((x) => `'${x.replace(/'/g, "''")}'`);
+      if (d.selfOutboxed) {
+        // Only the consumer's streams: the index row names the stream, and the join gives the log row.
+        const streams = d.streams.filter((s) => s.consumers.includes(c)).map((s) => `'${s.name.replace(/'/g, "''")}'`);
+        const t = tableNames(d.kind);
+        st.push(`CREATE OR REPLACE VIEW ${logGapfillView(d.kind, c)} AS
+  SELECT si.stream, si.stream_seq, l.slot, l.partition, l.seq, l.generation, l.epoch, l.kind, l.schema_v, l.ts, l.identity, l.emits,
+         l.audit, l.retention, l.key_id, l.payload, l.chain
+    FROM ${t.streamIndex} AS si JOIN ${t.log} AS l ON l.partition = si.partition AND l.seq = si.seq
+   WHERE si.stream IN (${streams.join(', ')})`);
+        continue;
+      }
       st.push(`CREATE OR REPLACE VIEW ${gapfillView(d.kind, c)} AS
   SELECT slot, partition, stream, stream_seq, n, topic, msg_key, headers, payload, ts, generation, epoch
     FROM ${tableNames(d.kind).outbox} WHERE topic IN (${topics.join(', ')})`);

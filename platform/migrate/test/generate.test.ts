@@ -2,7 +2,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import type { OwnerDeclaration } from '@share/owner-runtime';
 import { homeKey, reverseBits20, slotOfPartition, utf8 } from '@share/owner-runtime';
-import { kindMigration, platformMigration, splitSlots } from '../src/index.ts';
+import { expectedPrivileges, grantMigration, kindMigration, platformMigration, splitSlots } from '../src/index.ts';
 
 const decl: OwnerDeclaration = {
   kind: 'canary', slotCount: 8,
@@ -81,4 +81,30 @@ test('should grant (C01 §2.3) owner, read roles, gap-fill view and placement st
   assert.doesNotMatch(sql, /ROW LEVEL SECURITY/);
   assert.match(grantMigration([link], { rowLevelSecurity: true }).statements.join('\n'), /CREATE POLICY owner_slot_write_link ON owner_slot FOR ALL TO link USING \(kind = 'link'\)/);
   assert.match(kindMigration(link).statements.join('\n'), /'closure_link', 0/);
+});
+
+test('should generate no outbox, a 25 h GC on the log, the stream index and a gap-fill view over the index and the log when the kind is self-outboxed (S-PLAT-I2 item 3)', () => {
+  const ingest: OwnerDeclaration = {
+    kind: 'ingx', slotCount: 4, selfOutboxed: true,
+    entryKinds: [{ kind: 1, name: 'row', schemaVersions: [1], retention: '7y' }],
+    projections: [],
+    streams: [
+      { name: 'handoff', topic: 'ingx.handoff.v1', key: 'partition', emitFn: { version: 1 }, closure: 'resolved', consumers: ['attr'] },
+      { name: 'drop_alert', topic: 'ingx.alert.v1', key: 'partition', emitFn: { version: 1 }, closure: 'none', consumers: [] },
+    ],
+  };
+  const sql = kindMigration(ingest).statements.join('\n');
+  assert.doesNotMatch(sql, /ingx_outbox/, 'no outbox table, TTL or split');
+  assert.match(sql, /ALTER TABLE ingx_log CONFIGURE ZONE USING gc.ttlseconds = 90000/);
+  assert.match(sql, /CREATE TABLE IF NOT EXISTS ingx_stream_index[\s\S]*PRIMARY KEY \(partition, stream, stream_seq\)/);
+  const p = expectedPrivileges([ingest]);
+  assert.equal(p.get('ingx')?.get('ingx_outbox'), undefined, 'no outbox grant');
+  assert.deepEqual([...(p.get('ingx')?.get('ingx_stream_index') ?? [])].sort(), ['INSERT', 'SELECT']);
+  assert.ok(p.get('standby_ingx')?.get('ingx_stream_index')?.has('SELECT'));
+  assert.equal(p.get('standby_ingx')?.get('ingx_outbox'), undefined);
+  assert.ok(p.get('gapfill_attr_ingx')?.get('ingx_log_gapfill_attr')?.has('SELECT'));
+  assert.equal(p.get('gapfill_attr_ingx')?.get('ingx_outbox_gapfill_attr'), undefined);
+  const g = grantMigration([ingest]).statements.join('\n');
+  assert.match(g, /CREATE OR REPLACE VIEW ingx_log_gapfill_attr[\s\S]*FROM ingx_stream_index AS si JOIN ingx_log AS l[\s\S]*WHERE si.stream IN \('handoff'\)/);
+  assert.doesNotMatch(g, /ingx_outbox/);
 });

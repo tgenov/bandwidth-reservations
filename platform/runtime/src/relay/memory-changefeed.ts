@@ -9,7 +9,7 @@ import { compareHlc } from '../hlc.ts';
 import type { MemoryBus } from '../feed/memory-bus.ts';
 import { cdcTopic } from '../feed/wire.ts';
 import type { MemoryStore } from '../store/memory.ts';
-import type { OutboxRowWrite } from '../store/types.ts';
+import type { LogRowWrite, OutboxRowWrite } from '../store/types.ts';
 
 const b = (x: Uint8Array): string => `\\x${hex(x)}`;
 
@@ -19,15 +19,17 @@ export class MemoryChangefeed {
   private last: HlcTs | undefined;
   private queue: Promise<void> = Promise.resolve();
   paused = false;
-  private held: Array<{ row: OutboxRowWrite; ts: HlcTs }> = [];
+  private held: Array<{ row: OutboxRowWrite; ts: HlcTs } | { log: LogRowWrite; ts: HlcTs }> = [];
 
-  constructor(store: MemoryStore, bus: MemoryBus, kind: string, partitions = 1) {
+  /** `table`: 'outbox' (default), or 'log' for a self-outboxed kind (RFC-006 §3.5: the changefeed is on the log). */
+  constructor(store: MemoryStore, bus: MemoryBus, kind: string, partitions = 1, table: 'outbox' | 'log' = 'outbox') {
     this.bus = bus;
     this.kind = kind;
     void bus.ensureTopic(cdcTopic(kind), partitions);   // MemoryBus.ensureTopic completes synchronously and never rejects
     store.commitListeners.push((k, w) => {
       if (k !== kind) return;
-      for (const row of w.outbox) this.held.push({ row, ts: w.ts });
+      if (table === 'log') for (const log of w.log) this.held.push({ log, ts: w.ts });
+      else for (const row of w.outbox) this.held.push({ row, ts: w.ts });
       if (!this.paused) this.flush();
     });
   }
@@ -35,8 +37,11 @@ export class MemoryChangefeed {
   /** Write the held rows (a paused changefeed holds rows back, as a lagging one does). */
   flush(): void {
     const rows = this.held.splice(0);
-    for (const { row, ts } of rows) {
+    for (const h of rows) {
+      const ts = h.ts;
       if (this.last === undefined || compareHlc(ts, this.last) > 0) this.last = ts;
+      if ('log' in h) { this.writeLog(h.log, ts); continue; }
+      const row = h.row;
       const after = {
         slot: row.slot, partition: b(row.partition), stream: row.stream, stream_seq: Number(row.streamSeq), n: row.n, topic: row.topic,
         msg_key: b(row.msgKey), headers: b(row.headers), payload: b(row.payload), ts: `@TS@`, generation: row.generation, epoch: Number(row.epoch),
@@ -46,6 +51,17 @@ export class MemoryChangefeed {
       const key = new Uint8Array(Buffer.from(JSON.stringify([row.slot, b(row.partition), row.stream, Number(row.streamSeq), row.n])));
       this.queue = this.queue.then(() => this.bus.produce(cdcTopic(this.kind), [{ key, value: new Uint8Array(Buffer.from(text)) }]));
     }
+  }
+
+  private writeLog(r: LogRowWrite, ts: HlcTs): void {
+    const after = {
+      slot: r.slot, partition: b(r.partition), seq: Number(r.seq), generation: r.generation, epoch: Number(r.epoch), kind: r.kind,
+      schema_v: r.schemaV, ts: '@TS@', identity: b(r.identity), emits: b(r.emits), audit: b(r.audit), retention: r.retention,
+      key_id: b(r.keyId), payload: b(r.payload), chain: b(r.chain),
+    };
+    const text = JSON.stringify({ after, updated: ts }).replace('"@TS@"', ts);
+    const key = new Uint8Array(Buffer.from(JSON.stringify([r.slot, b(r.partition), Number(r.seq)])));
+    this.queue = this.queue.then(() => this.bus.produce(cdcTopic(this.kind), [{ key, value: new Uint8Array(Buffer.from(text)) }]));
   }
 
   /** Write a delete event (a TTL or manual delete), which the relay must drop. */

@@ -1,9 +1,10 @@
 import { randomBytes } from 'node:crypto';
 import type {
   AppendCall, AppendOptions, AppendResult, BatchContext, DecideResult, Epoch, HeadRow, HlcTs, NotificationOut,
-  OwnerDeclaration, ProjectionWrite, RowRef, SlotNo, TimingSnapshot,
+  OwnerDeclaration, ProjectionWrite, RowRef, SlotNo,
 } from '../api.ts';
-import { bytesEqual, encodeJson, hex } from '../bytes.ts';
+import { bytesEqual, decodeJson, encodeJson, hex } from '../bytes.ts';
+import { checkDeclaredEvents, eventRecord, type EmitFunctions } from '../selfout/derive.ts';
 import { chainGenesis, chainNext } from '../chain.ts';
 import { retentionCode, tableNames } from '../declaration.ts';
 import { StaleEpochSignal } from '../errors.ts';
@@ -11,7 +12,7 @@ import { compareHlc } from '../hlc.ts';
 import { homeKey } from '../home.ts';
 import { checkProjectionWrite, rowId } from '../rowref.ts';
 import type { Sealer } from '../sealer.ts';
-import type { BatchTxn, BatchWrites, LogRowWrite, OutboxRowWrite, StoredHead } from '../store/types.ts';
+import type { BatchTxn, BatchWrites, LogRowWrite, OutboxRowWrite, StoredHead, TimingRow } from '../store/types.ts';
 import { PARAMS } from '../params.ts';
 
 /** Per-slot state the holder keeps between batches. */
@@ -44,7 +45,7 @@ export type CallVerdict =
 
 export interface AttemptPlan {
   ts: HlcTs;
-  timing: TimingSnapshot;
+  timing: TimingRow;
   batchId: Uint8Array;
   verdicts: CallVerdict[];
   writes: BatchWrites;
@@ -64,6 +65,8 @@ export interface AttemptEnv {
   holding: SlotHolding;
   /** Called once per decide run (tests count restarts). */
   onDecide?: () => void;
+  /** Emit functions of a self-outboxed kind (RFC-006 §3.5). */
+  emitFns?: EmitFunctions;
 }
 
 const DELETED = Symbol('deleted');
@@ -96,20 +99,6 @@ function notificationN(id: string): number {
 /** Keys of the sealed payload envelope of an entry with a sender fence (opened by readLog). */
 export const PAYLOAD_KEY = '$payload';
 export const FENCE_KEY = '$senderFence';
-
-/** Message key from a declared event field (C01 v1.1 erratum: a stream key may be a declared field). */
-function fieldKey(event: unknown, field: string): Uint8Array {
-  const v = event !== null && typeof event === 'object' ? (event as Record<string, unknown>)[field] : undefined;
-  if (v instanceof Uint8Array) return v;
-  if (typeof v === 'string') return new Uint8Array(Buffer.from(v, 'utf8'));
-  if (v === undefined) throw new Error(`event has no key field ${field}`);
-  return encodeJson(v);
-}
-
-function slotKey(slot: SlotNo): Uint8Array {
-  const b = Buffer.alloc(4); b.writeInt32BE(slot, 0);
-  return new Uint8Array(b);
-}
 
 /**
  * One attempt of the slot batch (RFC-006 §4.3; C01 §3.2): every read precedes every write; `decide`
@@ -262,6 +251,18 @@ export async function runAttempt(tx: BatchTxn, env: AttemptEnv, calls: PendingCa
       for (const e of decided.entries) for (const em of e.emits ?? []) {
         if (!decl.streams.some((s) => s.name === em.stream)) throw new Error(`stream ${em.stream} is not declared by ${kind}`);
       }
+      if (decl.selfOutboxed) {
+        // RFC-006 §3.5: the relay derives the events from the row; they must be what the emit functions give.
+        if ((decided.notifications ?? []).length > 0) throw new Error(`${kind} is self-outboxed: it has no outbox for notifications`);
+        if (!env.emitFns) throw new Error(`${kind} is self-outboxed: the runtime needs its emit functions`);
+        let seq = (working.get(key) ?? dbHead)?.seq ?? 0n;
+        for (const e of decided.entries) {
+          seq += 1n;
+          checkDeclaredEvents(decl, env.emitFns, {
+            partition: call.partition, seq, ts, kind: e.kind, schemaV: e.schemaV, identity: e.identity, payload: decodeJson(encodeJson(e.payload)),
+          }, e.emits ?? []);
+        }
+      }
     } catch (error) {
       verdicts.push({ kind: 'error', error: error instanceof Error ? error : new Error(String(error)) });
       continue;
@@ -279,6 +280,7 @@ export async function runAttempt(tx: BatchTxn, env: AttemptEnv, calls: PendingCa
     for (const entry of decided.entries) {
       next.seq += 1n;
       const emits: Array<[string, string]> = [];
+      const selfOut = decl.selfOutboxed === true;
       for (const em of entry.emits ?? []) {
         const streamSeq = (next.streams[em.stream] ?? 0n) + 1n;
         next.streams[em.stream] = streamSeq;
@@ -287,24 +289,20 @@ export async function runAttempt(tx: BatchTxn, env: AttemptEnv, calls: PendingCa
         streamSeqs[em.stream] = r ? [r[0], streamSeq] : [streamSeq, streamSeq];
         const stream = decl.streams.find((s) => s.name === em.stream);
         if (!stream) throw new Error(`stream ${em.stream} vanished`);
-        const keyId = env.sealer.keyId(stream.topic);
-        const pk = { slot: holding.slot, partition: call.partition, stream: em.stream, streamSeq, n: 0 };
-        const payload = env.sealer.seal(encodeJson(em.event), {
-          ownerKind: kind, table: t.outbox, primaryKey: pk, seqOrVersion: streamSeq, epoch: holding.epoch, rowKind: `event:${em.stream}`,
-        });
-        const msgKey = stream.key === 'slot' ? slotKey(holding.slot) : typeof stream.key === 'object' ? fieldKey(em.event, stream.key.field) : call.partition;
-        if (decl.selfOutboxed) streamIndex.push({ partition: call.partition, stream: em.stream, streamSeq, seq: next.seq });
-        const headers: Record<string, string> = {
-          partition: hex(call.partition), stream: em.stream, stream_seq: streamSeq.toString(),
-          generation: String(next.generation), epoch: holding.epoch.toString(), ts,
-          kind: String(entry.kind), schema_v: String(entry.schemaV), key_id: hex(keyId),
-          ...(stream.key === 'slot' ? { slot: String(holding.slot) } : {}),
-        };
-        // C01 §3.4 rule 7: the outcome id stays in the database copy of the headers only (never on Kafka).
-        const dbHeaders = stream.reportGated ? { ...headers, outcome_id: hex(entry.pendingAnswered ?? entry.identity) } : headers;
-        outbox.push({ slot: holding.slot, partition: call.partition, stream: em.stream, streamSeq, n: 0, topic: stream.topic,
-          msgKey, headers: encodeJson(dbHeaders), payload, generation: next.generation, epoch: holding.epoch, ifAbsent: false });
-        publish.push({ topic: stream.topic, key: msgKey, headers: kafkaHeaders(headers, call.partition), value: payload });
+        const rec = eventRecord(decl, env.sealer, {
+          slot: holding.slot, partition: call.partition, stream: em.stream, streamSeq, generation: next.generation, epoch: holding.epoch,
+          ts, entryKind: entry.kind, schemaV: entry.schemaV,
+        }, em.event, selfOut);
+        if (selfOut) {
+          // C01 §2.3, R47-19: no outbox row; the stream index finds the event by its stream sequence.
+          streamIndex.push({ partition: call.partition, stream: em.stream, streamSeq, seq: next.seq });
+        } else {
+          // C01 §3.4 rule 7: the outcome id stays in the database copy of the headers only (never on Kafka).
+          const dbHeaders = stream.reportGated ? { ...rec.headers, outcome_id: hex(entry.pendingAnswered ?? entry.identity) } : rec.headers;
+          outbox.push({ slot: holding.slot, partition: call.partition, stream: em.stream, streamSeq, n: 0, topic: rec.topic,
+            msgKey: rec.msgKey, headers: encodeJson(dbHeaders), payload: rec.payload, generation: next.generation, epoch: holding.epoch, ifAbsent: false });
+        }
+        publish.push({ topic: rec.topic, key: rec.msgKey, headers: kafkaHeaders(rec.headers, call.partition), value: rec.payload });
       }
       const keyId = env.sealer.keyId(t.log);
       const pk = { slot: holding.slot, partition: call.partition, seq: next.seq };

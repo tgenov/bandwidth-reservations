@@ -1,5 +1,11 @@
 import type { Condition, HlcTs, ProjectionWrite, ReadTx, RowRef, SlotNo, TimingSnapshot } from '../api.ts';
 
+/** A `platform_timing` row as the runtime reads it: C01's TimingSnapshot and the lane settings (C01 §2.3). */
+export interface TimingRow extends TimingSnapshot {
+  /** `second_lane` JSONB: {kind: {account|deadline: bool}} (lane (c) excluded in v1, C01 §3.2). */
+  secondLane?: Record<string, { account?: boolean; deadline?: boolean }>;
+}
+
 export interface StoredHead {
   homeKey: number; partition: Uint8Array; slot: SlotNo; generation: number; adopted: boolean;
   seq: bigint; ts: HlcTs; epoch: bigint; streams: Record<string, bigint>; chain: Uint8Array; batchId: Uint8Array;
@@ -41,7 +47,7 @@ export interface BatchTxn {
   /** firstStatement writes and the ts read in one statement (C01 §2.4 AppendOptions, M3). */
   firstStatement(writes: ProjectionWrite[]): Promise<HlcTs>;
   readFence(kind: string, slot: SlotNo): Promise<FenceRow | undefined>;
-  readTiming(shard: number): Promise<TimingSnapshot>;
+  readTiming(shard: number): Promise<TimingRow>;
   /** Open stops (state 'stopped') of these partitions: hex(partition) → detection_ref. */
   readStops(kind: string, partitions: Uint8Array[]): Promise<Map<string, Uint8Array>>;
   /** hex(partition) → head, for partitions that have one. */
@@ -68,6 +74,9 @@ export interface SlotLeaseRow {
   slot: SlotNo; sessionId: string | null; epoch: bigint; sessionExpired: boolean; sessionRevoked: boolean;
 }
 
+/** One owner_slot row of a slot group. */
+export interface GroupMember { kind: string; slot: SlotNo }
+
 export interface SessionRow {
   shard: number; sessionId: string; host: string; region: string; facility: string; kind: string; ttlMs: number;
 }
@@ -92,12 +101,36 @@ export interface OwnerStore {
     Promise<Array<{ slot: SlotNo; epoch: bigint }>>;
   rehome(kind: string, held: Array<{ slot: SlotNo; epoch: bigint }>, oldSession: string, newSession: string):
     Promise<Array<{ slot: SlotNo; epoch: bigint }>>;
-  release(kind: string, held: Array<{ slot: SlotNo; epoch: bigint }>, sessionId: string): Promise<void>;
+  /** Frees the slots still at these epochs; revokes the session too unless `keepSession` (a handoff, RFC-006 §4.2). */
+  release(kind: string, held: Array<{ slot: SlotNo; epoch: bigint }>, sessionId: string, keepSession?: boolean): Promise<void>;
+  /** Opens a connection on every gateway tier (RFC-006 §4.7); a store without tiers does nothing. */
+  warm?(): Promise<void>;
+  /** The database's time, `SELECT cluster_logical_timestamp()` (the owner-host offset check, RFC-006 §6.2). */
+  clusterTime?(): Promise<HlcTs>;
+  /** Gives up the session at once (RFC-006 §6.2 level D): standbys see it revoked and take its slots. */
+  revokeSession?(shard: number, sessionId: string): Promise<void>;
+  /**
+   * Slot groups (RFC-006 §4.2, §7.1; C01 §3.1): take every member of one group in one transaction, or none.
+   * `old` null: free-slot acquisition (every member free). Else acquisition by expiry: revoke the old session
+   * (expired or revoked) and take every member it holds. Sets `slot_group`. Undefined when not all were taken.
+   */
+  acquireGroup?(members: GroupMember[], sessionId: string, group: string, old: { shard: number; sessionId: string } | null):
+    Promise<Array<GroupMember & { epoch: bigint }> | undefined>;
+  /** Re-home of one group in one transaction: every member still at its own epoch, or none (C01 §3.1). */
+  rehomeGroup?(held: Array<GroupMember & { epoch: bigint }>, oldSession: string, newSession: string):
+    Promise<Array<GroupMember & { epoch: bigint }> | undefined>;
   resolutionRead(kind: string, sessionShard: number, sessionId: string, slots: SlotNo[], partitions: Uint8Array[]):
     Promise<ResolutionRead>;
-  readTiming(shard: number): Promise<TimingSnapshot>;
+  readTiming(shard: number): Promise<TimingRow>;
   /** A partition's log rows by (partition, seq) from `fromSeq`, across slots (C01 §3.1 rebuild, R47-01). */
   readLogRows?(kind: string, partition: Uint8Array, fromSeq: bigint): Promise<Array<LogRowWrite & { ts: HlcTs }>>;
+  /**
+   * A standby's tail (RFC-006 §4.4): log rows written by these slots with ts above `afterTs`, in (ts, partition,
+   * seq) order, and the read timestamp `through` (every such row with ts ≤ through is in `rows`). 'follower': a follower read (the standby_poll tail); 'present': a high-priority present-time read
+   * (the catch-up of a taking-over standby only).
+   */
+  tailLog?(kind: string, slots: SlotNo[], afterTs: HlcTs | null, at: 'follower' | 'present'):
+    Promise<{ rows: Array<LogRowWrite & { ts: HlcTs }>; through: HlcTs }>;
   /** Partitions whose head names the slot and is adopted (the partitions the slot serves, C01 §3.2). */
   listPartitions?(kind: string, slot: SlotNo): Promise<Uint8Array[]>;
   withReadTx<T>(at: 'present' | HlcTs, fn: (tx: ReadTx) => Promise<T>): Promise<T>;

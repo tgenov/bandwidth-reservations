@@ -29,6 +29,7 @@ export class Session {
   private timer: NodeJS.Timeout | undefined;
   private stopped = false;
   private busy = false;
+  private tickRunning = false;
   private readonly store: OwnerStore;
   private readonly t: SessionTimings;
   private readonly meta: { host: string; region: string; facility: string; kind: string };
@@ -105,7 +106,11 @@ export class Session {
         await this.events.onResume();
         this.viewEnd = tSend + ms(this.t.holderViewMs);
       }
-      await this.events.onTick();
+      // Not awaited: a slow acquisition or a statement on a dead gateway never delays the next renewal (RFC-006 §4.7).
+      if (!this.tickRunning) {
+        this.tickRunning = true;
+        this.events.onTick().catch(() => {}).finally(() => { this.tickRunning = false; });
+      }
     } catch {
       next = this.t.renewRetryMs;
     } finally {

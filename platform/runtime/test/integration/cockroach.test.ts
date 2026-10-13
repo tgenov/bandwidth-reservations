@@ -351,7 +351,10 @@ test('should run the additions (readLog opened with sender fence, listPartitions
   const onWarning = (w: Error): void => { warnings.push(w.message); };
   process.on('warning', onWarning);
   const store = new PgStore({ connectionString: URL });
-  const rt = new CockroachOwnerRuntime({ declaration: DECL2, store, slots: [0, 1], publisher: new MemoryPublisher(), load: new ManualLoad(), testing: { sessionTimings: FAST } });
+  const publisher = new MemoryPublisher();
+  // S-PLAT-I2: a self-outboxed kind has emit functions and no outbox; every entry here emits { account: 'a-1' }.
+  const rt = new CockroachOwnerRuntime({ declaration: DECL2, store, slots: [0, 1], publisher, load: new ManualLoad(),
+    emitFns: { byacct: { 1: () => [{ account: 'a-1' }] } }, testing: { sessionTimings: FAST } });
   open.push(async () => { await rt.stop(); await store.close(); process.off('warning', onWarning); });
   await rt.start(hooks());
   for (let i = 0; i < 40 && rt.heldSlots().length < 2; i++) await sleep(100);
@@ -372,7 +375,8 @@ test('should run the additions (readLog opened with sender fence, listPartitions
   assert.deepEqual((await rt.listPartitions(slotOfPartition(P, 2))).map(hex), [hex(P)]);
   const idx = await q(`SELECT stream_seq, seq FROM ${KIND2}_stream_index WHERE partition = $1 ORDER BY stream_seq`, [Buffer.from(P)]);
   assert.deepEqual(idx.map((x) => [String(x['stream_seq']), String(x['seq'])]), [['1', '1'], ['2', '2'], ['3', '3']]);
-  const ob = await q(`SELECT msg_key FROM ${KIND2}_outbox WHERE partition = $1 LIMIT 1`, [Buffer.from(P)]);
-  assert.equal((ob[0]?.['msg_key'] as Buffer).toString(), 'a-1', 'keyed by the declared field');
+  assert.equal(Buffer.from(publisher.sent[0]?.key ?? []).toString(), 'a-1', 'keyed by the declared field');
+  const outbox = await q(`SELECT count(*)::INT4 AS n FROM [SHOW TABLES] WHERE table_name = $1`, [`${KIND2}_outbox`]);
+  assert.equal(outbox[0]?.['n'], 0, 'a self-outboxed kind has no outbox table (C01 §2.3)');
   assert.deepEqual(warnings.filter((w) => /client\.query\(\) when the client is already executing/.test(w)), []);
 });

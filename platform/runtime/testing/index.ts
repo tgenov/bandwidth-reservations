@@ -708,7 +708,7 @@ export function feedEvent(args: {
 export { MemoryStore, memoryFeedSeqReader, type MemoryFaults, type CommitFault } from '../src/store/memory.ts';
 export { MemoryBus } from '../src/feed/memory-bus.ts';
 export { MemoryChangefeed } from '../src/relay/memory-changefeed.ts';
-export { MemoryGapFill } from '../src/consumer/gapfill.ts';
+export { MemoryGapFill, memoryStreamIndex } from '../src/consumer/gapfill.ts';
 
 // ---------------- status readers (C01 §2.4 StatusReaderRuntime) ----------------
 
@@ -751,4 +751,5 @@ export class StatusReaderDouble implements StatusReaderRuntime {
     return { holderLive: this.holderLive, ...(this.rule3Rows !== undefined ? { rows: this.rule3Rows } : {}) };
   }
 }
+export { FaultProxy } from './fault-proxy.ts';
 export { createTestDatabase, databaseUrl, devCellRequired, devCellSkip, staleTestDatabases, testDatabaseName } from './dev-cell.ts';

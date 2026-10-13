@@ -4,7 +4,7 @@
  */
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import type { AuditFields, EntryInput, OwnerDeclaration, OwnerHooks, SlotNo } from '../src/index.ts';
+import type { AuditFields, EmitFunctions, EntryInput, OwnerDeclaration, OwnerHooks, SlotNo } from '../src/index.ts';
 import {
   CockroachOwnerRuntime, ManualLoad, MemoryPublisher, NotClosed, chainGenesis, chainNext, encodeJson, hex, hlcParts, homeKey,
   producerAcls, slotOfPartition, utf8, validateDeclaration,
@@ -23,6 +23,8 @@ const DECL: OwnerDeclaration = {
   messages: [{ name: 'watermark', topic: 'ingestion.handoff.v1', consumers: ['rating'] }],
   selfOutboxed: true,
 };
+/** S-PLAT-I2: a self-outboxed kind needs its emit functions. Entry 'a' emits one event on byacct. */
+const EMIT: EmitFunctions = { byacct: { 1: (e) => (Buffer.from(e.identity).toString() === 'a' ? [{ account: 'acct-9', n: 1 }] : []) } };
 const entry = (id: string, extra: Partial<EntryInput> = {}): EntryInput => ({ kind: 1, schemaV: 1, identity: utf8(id), audit: AUDIT, payload: { id }, ...extra });
 const FAST = { sessionTtlMs: 300, sessionRenewMs: 40, renewRetryMs: 20, holderViewMs: 280, maxLoopDelayMs: 20 };
 const hooks = (): OwnerHooks => ({ async onAcquire() {}, onRelease() {}, onReportable() {}, onMovedOut() {}, async onAdopt() {}, async onNotification() {} });
@@ -30,7 +32,7 @@ const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
 async function boot(store = new MemoryStore(), publisher = new MemoryPublisher()) {
   store.seedSlots('sec', 4);
-  const rt = new CockroachOwnerRuntime({ declaration: DECL, store, slots: [0, 1, 2, 3], publisher, load: new ManualLoad(), testing: { sessionTimings: FAST } });
+  const rt = new CockroachOwnerRuntime({ declaration: DECL, store, slots: [0, 1, 2, 3], publisher, load: new ManualLoad(), emitFns: EMIT, testing: { sessionTimings: FAST } });
   await rt.start(hooks());
   return { rt, store, publisher };
 }
@@ -72,7 +74,7 @@ test('should list partitions of a slot, and rebuild the admitCommand high-water 
   assert.equal((await a.rt.append({ partition: P, entries: [entry('f', { senderFence: fence })] })).r, 'Committed');
   assert.deepEqual((await a.rt.listPartitions(slot)).map(hex), [hex(P)]);
   a.rt.pauseRenewalsForTest();
-  const b = new CockroachOwnerRuntime({ declaration: DECL, store, slots: [slot], load: new ManualLoad(), testing: { sessionTimings: FAST } });
+  const b = new CockroachOwnerRuntime({ declaration: DECL, store, slots: [slot], load: new ManualLoad(), emitFns: EMIT, testing: { sessionTimings: FAST } });
   let admitted: unknown;
   await b.start({ ...hooks(), async onAcquire() { admitted = b.admitCommand({ kind: 'acct', partition: utf8('A1') }, { generation: 0, epoch: 4n }); } });
   for (let i = 0; i < 100 && !b.heldSlots().includes(slot); i++) await sleep(10);

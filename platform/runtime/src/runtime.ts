@@ -18,7 +18,7 @@ import { DEFAULT_SESSION_TIMINGS, PARAMS, type SessionTimings } from './params.t
 import { MemoryPublisher, type Publisher } from './publisher.ts';
 import { DevSealer, type Sealer } from './sealer.ts';
 import { Session, sessionShard } from './session.ts';
-import type { OwnerStore } from './store/types.ts';
+import type { OwnerStore, TimingRow } from './store/types.ts';
 import type { FeedBus } from './feed/bus.ts';
 import { encodeMarker, markerSealContext } from './feed/wire.ts';
 import { FeedConsumerRuntime, type ConsumerAlert } from './consumer/consumer.ts';
@@ -26,6 +26,10 @@ import type { GapFillSource } from './consumer/gapfill.ts';
 import { REPORT, SlotReport, markerChunks, outcomeStream, reportsMarkers, type LeaseAnswer, type ReaderChannel } from './report/report.ts';
 import type { SlotMapCache } from './placement/slot-map.ts';
 import { isRetryable } from './errors.ts';
+import { emitFunctionErrors, openLogRow, type EmitFunctions } from './selfout/derive.ts';
+import type { CheckpointStore } from './checkpoint/store.ts';
+import { OffsetMonitor, type OffsetLevel, type OffsetSample } from './offset.ts';
+import { StandbyTail, type StandbyChannel, type StandbyPush, type StandbyStats } from './standby/tail.ts';
 
 export class NotInThisIncrement extends Error {
   constructor(what: string) {
@@ -63,6 +67,31 @@ export interface OwnerRuntimeOptions {
   log?: (msg: string, fields?: Record<string, unknown>) => void;
   /** The wall clock of `now()` and of timers (default: the system clock). */
   wallMs?: WallClock;
+  /** Emit functions of a self-outboxed kind (RFC-006 §3.5): required when the declaration is selfOutboxed. */
+  emitFns?: EmitFunctions;
+  /**
+   * Slot groups (RFC-006 §4.2, §7.1; C01 §2.2 `slotGroupWith`): this runtime leads the group. Its session is
+   * the session of every member; slot i of every member is taken, handed off, taken over and re-homed in one
+   * transaction with slot i of this kind. Each member is constructed before, with `slotGroupMember: true`.
+   */
+  slotGroup?: { members: CockroachOwnerRuntime[] };
+  /** This runtime is a member of a slot group; the group's leader holds its slots (see `slotGroup`). */
+  slotGroupMember?: boolean;
+  /**
+   * A hot standby (RFC-006 §4.4): it holds no slot until its holder's session expires or is revoked. It applies
+   * the holder's pushed batches and its own follower-read tail (every `pollMs`, default 250) to the owner's
+   * memory through `apply`, polls the holder's session at the present time every `pollMs`, and on expiry takes
+   * the slots, reads only the rows above its tail at the present time, then calls `onAcquire`.
+   */
+  standby?: { apply(rows: OpenedLogRow[]): void; pollMs?: number };
+  /**
+   * The owner-host offset check (RFC-006 §6.2): every `intervalMs` (1 s) against the database's time. Above
+   * 40 ms the process stops taking slots and hands its slots off; above 50 ms on three samples it gives up its
+   * session at once and calls `onGiveUp` (the supervisor then exits and restarts the process).
+   */
+  offsetCheck?: { intervalMs?: number; onGiveUp?: () => void; onLevel?: (level: OffsetLevel, s: OffsetSample) => void; onSample?: (s: OffsetSample) => void };
+  /** The checkpoint store of the process's own region (RFC-006 §12.11): `putCheckpoint`, `getCheckpoint`. */
+  checkpoints?: CheckpointStore;
   /** Test-only overrides of C01 §7 values. */
   testing?: {
     sessionTimings?: Partial<SessionTimings>;
@@ -85,6 +114,10 @@ interface Lane {
   holding: SlotHolding;
   queue: Queued[];
   running: boolean;
+  /** The second lane's batch is in flight (C01 §3.2, R47-31). */
+  secondRunning: boolean;
+  /** hex(partition) of the batch in flight on each lane: [first, second]. */
+  inFlight: [Set<string>, Set<string>];
   /** Set while Ambiguous resolution or a re-home runs: no batch starts (C01 §3.2). */
   gate: Promise<void> | null;
   released: boolean;
@@ -93,6 +126,8 @@ interface Lane {
   /** A marker-only transaction waits for the lane (C01 §3.4 rule 1). */
   markerWanted: boolean;
   reportableTimer: NodeJS.Timeout | undefined;
+  /** ts of the last batch pushed to the standbys, or the acquisition's catch-up read (RFC-006 §4.4). */
+  pushedThrough: HlcTs;
 }
 
 function slotKeyBytes(slot: SlotNo): Uint8Array {
@@ -102,6 +137,19 @@ function slotKeyBytes(slot: SlotNo): Uint8Array {
 
 const noop = (): void => {};
 
+/** Within bound this long after level A before the process takes slots again (RFC-006 §6.3, the database node's rule). */
+const OFFSET_REJOIN_MS = 10 * 60_000;
+
+/** The lowest of these positions; null when any is unknown (read from the start). */
+function minTs(xs: Array<HlcTs | undefined>): HlcTs | null {
+  let m: HlcTs | null = null;
+  for (const x of xs) {
+    if (x === undefined) return null;
+    if (m === null || compareHlc(x, m) < 0) m = x;
+  }
+  return m;
+}
+
 export class CockroachOwnerRuntime implements OwnerRuntime {
   private readonly o: OwnerRuntimeOptions;
   private readonly wallMs: WallClock;
@@ -110,23 +158,36 @@ export class CockroachOwnerRuntime implements OwnerRuntime {
   private readonly publisher: Publisher;
   private readonly sealer: Sealer;
   private readonly load: LoadMonitor;
-  private readonly session: Session;
+  private session: Session;
+  /** Slot groups (RFC-006 §7.1): the other runtimes of this process's group (leader), or the leader (member). */
+  private groupMembers: CockroachOwnerRuntime[] = [];
+  private groupLeader: CockroachOwnerRuntime | undefined;
   private readonly lanes = new Map<SlotNo, Lane>();
   private readonly generations = new Map<string, Generation>();
   private readonly fences = new Map<string, WriterFence>();
   private readonly timers = new Map<string, { partition: PartitionKey; timeout: NodeJS.Timeout }>();
   private readonly reportHandlers: Array<(slot: SlotNo, p: HlcTs) => void> = [];
   private hooks: OwnerHooks | undefined;
-  private lastTiming: TimingSnapshot = { version: 0n, epsilonMs: PARAMS.epsilonMs, deltaXMs: 320, tauMs: 420 };
+  private lastTiming: TimingRow = { version: 0n, epsilonMs: PARAMS.epsilonMs, deltaXMs: 320, tauMs: 420 };
   private control: Promise<void> = Promise.resolve();
   private started = false;
   private readonly consumer: FeedConsumerRuntime | undefined;
   private readonly readers = new Map<string, ReaderChannel>();
+  private readonly standbys = new Map<string, StandbyChannel>();
+  private readonly standbyTail: StandbyTail | undefined;
+  private standbyTimer: NodeJS.Timeout | undefined;
+  private tailBusy = false;
+  private offset: OffsetMonitor | undefined;
+  /** False from offset level A (RFC-006 §6.2): the process takes no new slot. */
+  private takingSlots = true;
+  private gaveUp = false;
   private heartbeat: NodeJS.Timeout | undefined;
   private readonly log: (msg: string, fields?: Record<string, unknown>) => void;
 
   constructor(o: OwnerRuntimeOptions) {
     assertDeclaration(o.declaration);
+    const emitErrors = emitFunctionErrors(o.declaration, o.emitFns);
+    if (emitErrors.length > 0) throw new Error(`invalid self-outboxed kind ${o.declaration.kind}:\n  ${emitErrors.join('\n  ')}`);
     this.o = o;
     this.wallMs = o.wallMs ?? systemClock;
     this.decl = o.declaration;
@@ -141,8 +202,25 @@ export class CockroachOwnerRuntime implements OwnerRuntime {
       {
         onRevoked: () => this.serialised(() => this.rehome()),
         onResume: () => this.serialised(() => this.resume()),
-        onTick: () => this.serialised(() => this.acquireWanted()),
+        onTick: () => this.serialised(async () => { await this.refreshTiming(); await this.acquireWanted(); }),
       });
+    if (o.standby) {
+      const apply = o.standby.apply;
+      this.standbyTail = new StandbyTail((rows) => apply(rows.map((r) => openLogRow(this.decl, this.sealer, r))));
+    }
+    if (o.slotGroup) {
+      for (const m of o.slotGroup.members) {
+        const md = m.decl;
+        if (!m.o.slotGroupMember) throw new Error(`slot group member ${md.kind} needs slotGroupMember: true`);
+        if (md.slotCount !== this.decl.slotCount) throw new Error(`slot group ${this.decl.kind}+${md.kind}: slot counts differ`);
+        if (md.slotGroupWith !== this.decl.kind && this.decl.slotGroupWith !== md.kind) {
+          throw new Error(`slot group ${this.decl.kind}+${md.kind}: neither declaration names the other in slotGroupWith`);
+        }
+        m.session = this.session;
+        m.groupLeader = this;
+      }
+      this.groupMembers = [...o.slotGroup.members];
+    }
     if (o.feeds) {
       this.consumer = new FeedConsumerRuntime({
         bus: o.feeds.bus, groupId: o.feeds.groupId ?? this.decl.kind, sealer: this.sealer,
@@ -160,13 +238,87 @@ export class CockroachOwnerRuntime implements OwnerRuntime {
   async start(hooks: OwnerHooks): Promise<void> {
     this.hooks = hooks;
     this.lastTiming = await this.store.readTiming(0);
+    if (this.o.slotGroupMember) {
+      // The group's leader opens the shared session and takes this kind's slots (RFC-006 §7.1).
+      this.started = true;
+      this.startHeartbeat();
+      return;
+    }
+    for (const m of this.groupMembers) if (!m.started) throw new Error(`start slot group member ${m.decl.kind} before its leader ${this.decl.kind}`);
+    await this.store.warm?.();
     await this.session.open();
     this.started = true;
+    if (this.standbyTail) await this.tailStandby();
     await this.serialised(() => this.acquireWanted());
     this.session.start();
+    this.startHeartbeat();
+    if (this.o.offsetCheck && this.store.clusterTime) {
+      const store = this.store;
+      const clusterTime = store.clusterTime as () => Promise<HlcTs>;
+      const onSample = this.o.offsetCheck.onSample;
+      this.offset = new OffsetMonitor({ dbTime: () => clusterTime.call(store), wallMs: this.wallMs, onLevel: (level, sample) => this.onOffsetLevel(level, sample),
+        ...(onSample ? { onSample } : {}) });
+      this.offset.start(this.o.offsetCheck.intervalMs);
+    }
+    if (this.standbyTail) {
+      // RFC-006 §4.4: every standby_poll (250 ms), the follower-read tail and the present-time session poll.
+      this.standbyTimer = setInterval(() => {
+        this.tailStandby().catch((e: unknown) => this.log('standby tail failed', { error: String(e) }));
+        this.serialised(() => this.acquireWanted()).catch(() => { /* serialised() logged it */ });
+      }, this.o.standby?.pollMs ?? 250);
+      this.standbyTimer.unref();
+    }
+  }
+
+  /** The follower-read tail of a standby, for the slots it does not hold. */
+  private async tailStandby(): Promise<void> {
+    const t = this.standbyTail;
+    if (!t || this.tailBusy || !this.store.tailLog) return;
+    const slots = this.o.slots.filter((s) => !this.lanes.has(s));
+    if (slots.length === 0) return;
+    this.tailBusy = true;
+    try {
+      const after = minTs(slots.map((s) => t.completeThrough(s)));
+      const { rows, through } = await this.store.tailLog(this.decl.kind, slots, after, 'follower');
+      t.tail(slots, rows, through);
+    } finally {
+      this.tailBusy = false;
+    }
+  }
+
+  /** The push channel of this standby, to give to its holder (`attachStandby`). */
+  standbyChannel(): StandbyChannel {
+    return { push: (p) => { if (p.kind === this.decl.kind && !this.lanes.has(p.slot)) this.standbyTail?.push(p); } };
+  }
+
+  /** The standby's counts (pushed, tailed and catch-up rows). */
+  standbyStats(): StandbyStats | undefined {
+    return this.standbyTail?.stats;
+  }
+
+  /** Holder side: push every Committed batch to this standby (RFC-006 §4.4). */
+  attachStandby(id: string, channel: StandbyChannel): void {
+    this.standbys.set(id, channel);
+  }
+
+  detachStandby(id: string): void {
+    this.standbys.delete(id);
+  }
+
+  private startHeartbeat(): void {
     // C01 §3.4: push to readers and advance the report position every heartbeat_interval (100 ms).
     this.heartbeat = setInterval(() => { for (const l of this.lanes.values()) this.advanceSoon(l); }, REPORT.heartbeatMs);
     this.heartbeat.unref();
+  }
+
+  /** The runtimes whose slots this process takes together: itself and its slot-group members. */
+  private group(): CockroachOwnerRuntime[] {
+    return [this, ...this.groupMembers];
+  }
+
+  /** The group's name in `owner_slot.slot_group`. */
+  private groupName(slot: SlotNo): string {
+    return `${this.group().map((r) => r.decl.kind).sort().join('+')}:${slot}`;
   }
 
   /** The consumer runtime of this process (undefined without `feeds`). */
@@ -176,19 +328,48 @@ export class CockroachOwnerRuntime implements OwnerRuntime {
 
   /** Drain lanes, release slots (onRelease 'shutdown'), stop renewals. */
   async stop(): Promise<void> {
+    if (this.o.slotGroupMember) {
+      if (this.localStopped) return;
+      // The leader releases this kind's slots with its own (one session for the group).
+      if (this.heartbeat) clearInterval(this.heartbeat);
+      await this.consumer?.stop();
+      if (this.groupLeader && !this.groupLeader.stopping) await this.groupLeader.stop();
+      await this.stopLocal();
+      return;
+    }
+    this.stopping = true;
+    this.offset?.stop();
+    if (this.standbyTimer) clearInterval(this.standbyTimer);
     this.session.stop();
     if (this.heartbeat) clearInterval(this.heartbeat);
     await this.consumer?.stop();
     await this.serialised(async () => {
-      await this.waitIdle([...this.lanes.values()]);
-      const held = [...this.lanes.values()].map((l) => ({ slot: l.holding.slot, epoch: l.holding.epoch }));
-      try { await this.store.release(this.decl.kind, held, this.session.sessionId); } catch (e) { this.log('release failed', { e: String(e) }); }
-      for (const h of held) this.loseSlot(h.slot, 'shutdown');
+      for (const r of this.group()) {
+        await r.waitIdle([...r.lanes.values()]);
+        const held = [...r.lanes.values()].map((l) => ({ slot: l.holding.slot, epoch: l.holding.epoch }));
+        try { await r.store.release(r.decl.kind, held, this.session.sessionId); } catch (e) { this.log('release failed', { e: String(e) }); }
+        for (const h of held) r.loseSlot(h.slot, 'shutdown');
+      }
     });
+    for (const m of this.groupMembers) await m.stop();
+    await this.stopLocal();
+  }
+
+  private stopping = false;
+  private localStopped = false;
+
+  private async stopLocal(): Promise<void> {
+    if (this.localStopped) return;
+    this.localStopped = true;
     for (const t of this.timers.values()) clearTimeout(t.timeout);
     this.timers.clear();
     this.load.stop();
     await this.publisher.close();
+  }
+
+  /** True while the holder's view of its session lasts (C01 §3.1), whatever the state of each slot. */
+  sessionViewLive(): boolean {
+    return this.session.leaseLive();
   }
 
   heldSlots(): SlotNo[] {
@@ -224,7 +405,6 @@ export class CockroachOwnerRuntime implements OwnerRuntime {
     if (this.load.shedding() || lane.queue.length >= PARAMS.maxQueuedCallsPerSlot) {
       return Promise.resolve({ r: 'Overloaded', retryAfterMs: PARAMS.overloadedRetryAfterMs });
     }
-    // TODO(I2, C01 §3.2 Lanes): opts.lane === 'second' runs on the primary lane until platform_timing enables it.
     return new Promise<AppendResult>((resolve, reject) => {
       lane.queue.push({ call, opts, resolve, reject });
       this.pump(lane);
@@ -232,8 +412,8 @@ export class CockroachOwnerRuntime implements OwnerRuntime {
   }
 
   private pump(lane: Lane): void {
-    if (lane.running || lane.gate || lane.released) return;
-    if (lane.markerWanted && this.session.leaseLive()) {
+    if (lane.gate || lane.released) return;
+    if (!lane.running && !lane.secondRunning && lane.markerWanted && this.session.leaseLive()) {
       lane.markerWanted = false;
       lane.running = true;
       this.runMarker(lane).finally(() => {
@@ -245,41 +425,91 @@ export class CockroachOwnerRuntime implements OwnerRuntime {
     if (lane.queue.length === 0) return;
     if (!this.session.leaseLive()) {
       // From the end of the holder's view the holder proposes nothing (C01 §3.1).
-      setTimeout(() => this.pump(lane), 50).unref();
+      if (!lane.running && !lane.secondRunning) setTimeout(() => this.pump(lane), 50).unref();
       return;
     }
-    lane.running = true;
-    const calls = this.take(lane);
-    this.runBatch(lane, calls).finally(() => {
-      lane.running = false;
+    if (!lane.running) this.startBatch(lane, 'primary', this.take(lane, 'primary'));
+    // C01 §3.2 (R47-31): a second batch only while the first is in flight, only of partitions not in it.
+    const mode = this.secondLaneMode();
+    if (mode && lane.running && !lane.secondRunning) this.startBatch(lane, 'second', this.take(lane, 'second', mode));
+  }
+
+  /**
+   * The second lane of this kind as `platform_timing.second_lane` sets it (RFC-006 §4.3, §6.4): 'account' carries
+   * any call, 'deadline' only calls with `lane: 'second'`. Lane (c), a second batch of the same partition, does
+   * not exist (C01 v1): a partition in one lane's batch never goes in the other's.
+   */
+  private secondLaneMode(): 'account' | 'deadline' | undefined {
+    return this.secondLaneOf();
+  }
+
+  /**
+   * Re-reads `platform_timing` (shard 0) on each renewal tick, so a lane that placement turns on in a new version
+   * is used within one tick (C01 §2.3; RFC-006 §4.3 "turning it on needs no release"). A batch still reads its own
+   * shard's row in the transaction for τ (C01 §8).
+   */
+  private async refreshTiming(): Promise<void> {
+    try {
+      const t = await this.store.readTiming(0);
+      if (t.version >= this.lastTiming.version) this.lastTiming = t;
+    } catch (e) { this.log('timing read failed', { error: String(e) }); }
+    for (const m of this.groupMembers) await m.refreshTiming();
+  }
+
+  private secondLaneOf(): 'account' | 'deadline' | undefined {
+    const s = this.lastTiming.secondLane?.[this.decl.kind];
+    return s?.account === true ? 'account' : s?.deadline === true ? 'deadline' : undefined;
+  }
+
+  private startBatch(lane: Lane, which: 'primary' | 'second', calls: Queued[]): void {
+    if (calls.length === 0) return;
+    const flight = new Set(calls.map((q) => hex(q.call.partition)));
+    if (which === 'primary') { lane.running = true; lane.inFlight[0] = flight; } else { lane.secondRunning = true; lane.inFlight[1] = flight; }
+    this.batchesStarted.push({ slot: lane.holding.slot, lane: which, partitions: [...flight], otherInFlight: [...lane.inFlight[which === 'primary' ? 1 : 0]] });
+    this.runBatch(lane, calls, which).finally(() => {
+      if (which === 'primary') { lane.running = false; lane.inFlight[0] = new Set(); } else { lane.secondRunning = false; lane.inFlight[1] = new Set(); }
       this.pump(lane);
     }).catch((e: unknown) => this.log('batch step failed', { slot: lane.holding.slot, error: String(e) }));
   }
 
-  /** One batch: every pending call up to the size limits; an exclusive call alone (C01 §3.2). */
-  private take(lane: Lane): Queued[] {
-    const first = lane.queue[0];
-    if (!first) return [];
-    if (first.opts.exclusive || first.opts.firstStatement) return [lane.queue.shift() as Queued];
+  /** Every batch started, with the other lane's in-flight partitions at that moment (tests check R47-31). */
+  readonly batchesStarted: Array<{ slot: SlotNo; lane: 'primary' | 'second'; partitions: string[]; otherInFlight: string[] }> = [];
+
+  /**
+   * One batch: pending calls in queue order up to the size limits; an exclusive call alone, on the first lane
+   * only (C01 §3.2). A call of a partition in the other lane's batch is skipped, and so is every later call of
+   * that partition, so each partition keeps its order and has at most one transaction in flight.
+   */
+  private take(lane: Lane, which: 'primary' | 'second', mode?: 'account' | 'deadline'): Queued[] {
+    const skip = new Set(lane.inFlight[which === 'primary' ? 1 : 0]);
     const out: Queued[] = [];
+    const rest: Queued[] = [];
     let entries = 0;
     let bytes = 0;
-    while (lane.queue.length > 0) {
-      const next = lane.queue[0] as Queued;
-      if (next.opts.exclusive || next.opts.firstStatement) break;
-      const n = next.call.decide ? 1 : Math.max(1, next.call.entries?.length ?? 0);
-      const b = next.call.entries ? encodeJson(next.call.entries.map((e) => e.payload)).byteLength : 0;
-      if (out.length > 0 && (entries + n > PARAMS.slotBatchMaxEntries || bytes + b > PARAMS.slotBatchMaxBytes)) break;
+    let closed = false;
+    for (const q of lane.queue) {
+      const k = hex(q.call.partition);
+      const special = q.opts.exclusive === true || q.opts.firstStatement !== undefined;
+      const eligible = which === 'primary' || (!special && (mode === 'account' || q.opts.lane === 'second'));
+      if (closed || skip.has(k) || !eligible) { rest.push(q); skip.add(k); continue; }
+      if (special) {
+        if (out.length === 0) { out.push(q); closed = true; } else { rest.push(q); skip.add(k); closed = true; }
+        continue;
+      }
+      const n = q.call.decide ? 1 : Math.max(1, q.call.entries?.length ?? 0);
+      const b = q.call.entries ? encodeJson(q.call.entries.map((e) => e.payload)).byteLength : 0;
+      if (out.length > 0 && (entries + n > PARAMS.slotBatchMaxEntries || bytes + b > PARAMS.slotBatchMaxBytes)) { rest.push(q); closed = true; continue; }
       entries += n; bytes += b;
-      out.push(lane.queue.shift() as Queued);
+      out.push(q);
     }
+    lane.queue = rest;
     return out;
   }
 
-  private async runBatch(lane: Lane, calls: Queued[]): Promise<void> {
+  private async runBatch(lane: Lane, calls: Queued[], which: 'primary' | 'second' = 'primary'): Promise<void> {
     let outcome: BatchOutcome;
     try {
-      outcome = await executeBatch(this.store, { decl: this.decl, sealer: this.sealer, holding: lane.holding, onDecide: this.o.testing?.onDecide }, calls, {
+      outcome = await executeBatch(this.store, { decl: this.decl, sealer: this.sealer, holding: lane.holding, onDecide: this.o.testing?.onDecide, ...(this.o.emitFns ? { emitFns: this.o.emitFns } : {}) }, calls, {
         batchRetries: PARAMS.batchRetries,
         abandonBeforeCommitMs: this.o.testing?.abandonBeforeCommitMs ?? PARAMS.abandonBeforeCommitMs,
         commitBackstopMs: this.o.testing?.commitBackstopMs ?? PARAMS.commitBackstopMs,
@@ -290,7 +520,7 @@ export class CockroachOwnerRuntime implements OwnerRuntime {
     switch (outcome.kind) {
       case 'answered':
         this.lastTiming = outcome.plan.timing;
-        this.applyCommitted(lane, outcome.plan);
+        this.applyCommitted(lane, outcome.plan, which === 'primary' ? lane.secondRunning : lane.running);
         outcome.plan.verdicts.forEach((v, i) => {
           const q = calls[i] as Queued;
           if (v.kind === 'error') q.reject(v.error);
@@ -325,17 +555,32 @@ export class CockroachOwnerRuntime implements OwnerRuntime {
     }
   }
 
-  private applyCommitted(lane: Lane, plan: AttemptPlan): void {
+  private applyCommitted(lane: Lane, plan: AttemptPlan, otherLaneBusy = false): void {
     for (const h of plan.writes.heads) {
       lane.holding.chains.set(hex(h.partition), h.chain);
       this.generations.set(hex(h.partition), h.generation);
     }
     for (const f of plan.senderFences) this.recordFence(f, f);
     this.directPublish(plan.publish);
+    this.pushToStandbys(lane, plan, !otherLaneBusy);
     const r = lane.report;
     if (compareHlc(plan.ts, r.committedThrough) > 0) r.committedThrough = plan.ts;
     for (const d of plan.reportDue) r.due.push({ ts: plan.ts, ...(d.pending ? { pending: d.pending } : {}) });
     this.advanceSoon(lane);
+  }
+
+  /** RFC-006 §4.4: push the batch to the hot standbys without waiting for an answer. */
+  private pushToStandbys(lane: Lane, plan: AttemptPlan, advances: boolean): void {
+    if (plan.writes.log.length === 0 || this.standbys.size === 0) {
+      if (compareHlc(plan.ts, lane.pushedThrough) > 0 && plan.writes.log.length > 0) lane.pushedThrough = plan.ts;
+      return;
+    }
+    const push: StandbyPush = { kind: this.decl.kind, slot: lane.holding.slot, epoch: lane.holding.epoch, ts: plan.ts,
+      prevTs: lane.pushedThrough, advances, rows: plan.writes.log };
+    if (compareHlc(plan.ts, lane.pushedThrough) > 0) lane.pushedThrough = plan.ts;
+    for (const [id, ch] of this.standbys) {
+      try { ch.push(push); } catch (e) { this.log('standby push failed', { standby: id, error: String(e) }); }
+    }
   }
 
   /** Not known to be committed ⇒ memory of those partitions is rebuilt from the head (C01 §3.2). */
@@ -391,8 +636,8 @@ export class CockroachOwnerRuntime implements OwnerRuntime {
   private newLane(slot: SlotNo, epoch: Epoch, initial: HlcTs): Lane {
     const lane: Lane = {
       holding: { slot, epoch, sessionId: this.session.sessionId, stopsVersion: null, stops: new Map(), chains: new Map(), integrityHolds: new Set() },
-      queue: [], running: false, gate: null, released: false,
-      report: new SlotReport(initial), markerWanted: false, reportableTimer: undefined,
+      queue: [], running: false, secondRunning: false, inFlight: [new Set(), new Set()], gate: null, released: false,
+      report: new SlotReport(initial), markerWanted: false, reportableTimer: undefined, pushedThrough: initial,
     };
     this.lanes.set(slot, lane);
     return lane;
@@ -552,7 +797,9 @@ export class CockroachOwnerRuntime implements OwnerRuntime {
 
   /** Free-slot acquisition and acquisition by expiry (RFC-006 §4.2), then catch-up and onAcquire. */
   private async acquireWanted(): Promise<void> {
-    if (!this.started) return;
+    if (!this.takingSlots && this.resumeTakingAt !== undefined && this.wallMs() >= this.resumeTakingAt) this.takingSlots = true;
+    if (!this.started || !this.takingSlots || this.gaveUp) return;
+    if (this.groupMembers.length > 0) { await this.acquireWantedGroup(); return; }
     const wanted = this.o.slots.filter((s) => !this.lanes.has(s));
     if (wanted.length === 0) return;
     const rows = await this.store.listSlots(this.decl.kind, wanted);
@@ -560,9 +807,14 @@ export class CockroachOwnerRuntime implements OwnerRuntime {
     const byOld = new Map<string, SlotNo[]>();
     for (const r of rows) {
       if (r.sessionId === null) {
+        // A standby takes only the slots of its holder's expired session (RFC-006 §4.7 rule 1).
+        if (this.standbyTail) continue;
         const a = await this.store.acquireFree(this.decl.kind, r.slot, this.session.sessionId);
         if (a) acquired.push(a);
-      } else if (r.sessionId !== this.session.sessionId && (r.sessionExpired || r.sessionRevoked)) {
+      } else if (r.sessionId === this.session.sessionId) {
+        // An acquisition whose answer was lost (a gateway tier timed out) but which committed: the slot is ours.
+        acquired.push({ slot: r.slot, epoch: r.epoch });
+      } else if (r.sessionExpired || r.sessionRevoked) {
         byOld.set(r.sessionId, [...(byOld.get(r.sessionId) ?? []), r.slot]);
       }
     }
@@ -574,6 +826,15 @@ export class CockroachOwnerRuntime implements OwnerRuntime {
     // Its timestamp is the initial report position (C01 §3.1, AI-33-2).
     const catchUp = await this.retryUntilAnswered(() => this.store.resolutionRead(
       this.decl.kind, this.session.shard, this.session.sessionId, acquired.map((a) => a.slot), []));
+    const t = this.standbyTail;
+    if (t && this.store.tailLog) {
+      // RFC-006 §4.4: a taking-over standby reads, at the present time, only the rows above its tail.
+      const slots = acquired.map((a) => a.slot);
+      const tail = this.store.tailLog;
+      const { rows: fresh, through } = await this.retryUntilAnswered(() => tail.call(this.store, this.decl.kind, slots, minTs(slots.map((s) => t.completeThrough(s))), 'present'));
+      t.tail(slots, fresh, through, true);
+      this.log('standby catch-up', { slots, rowsRead: fresh.length, catchUpRows: t.stats.catchUpRows });
+    }
     for (const a of acquired) this.newLane(a.slot, a.epoch, catchUp.tRes);
     for (const a of acquired) {
       this.log('acquired', { slot: a.slot, epoch: a.epoch.toString(), catchUp: catchUp.tRes });
@@ -586,6 +847,8 @@ export class CockroachOwnerRuntime implements OwnerRuntime {
 
   /** Re-home (C01 §3.1): new session, conditional transfer of each slot at its own epoch, steps 1–4, onAcquire('rehome'). */
   private async rehome(): Promise<void> {
+    if (this.groupLeader) { const l = this.groupLeader; await l.serialised(() => l.rehome()); return; }
+    if (this.groupMembers.length > 0) { await this.rehomeGroup(); return; }
     const lanes = [...this.lanes.values()];
     let release: () => void = noop;
     const gate = new Promise<void>((r) => { release = r; });
@@ -617,6 +880,7 @@ export class CockroachOwnerRuntime implements OwnerRuntime {
 
   /** Resume (C01 §3.1): steps 1–4; slots taken meanwhile are released; a revoked session re-homes. */
   private async resume(): Promise<void> {
+    if (this.groupMembers.length > 0) { await this.resumeGroup(); return; }
     const lanes = [...this.lanes.values()];
     await this.waitIdle(lanes);
     const read = await this.retryUntilAnswered(() => this.store.resolutionRead(
@@ -630,8 +894,165 @@ export class CockroachOwnerRuntime implements OwnerRuntime {
     for (const l of lanes) if (!l.released) this.startReporting(l, read.tRes, false);
   }
 
+  // ---------------- owner-host offset ladder (RFC-006 §6.2, §6.3) ----------------
+
+  private onOffsetLevel(level: OffsetLevel, sample: OffsetSample): void {
+    this.log('offset level', { level, boundMs: sample.boundMs });
+    this.o.offsetCheck?.onLevel?.(level, sample);
+    if (level === 'D') { this.serialised(() => this.giveUpSession()).catch(() => {}); return; }
+    if (level === 'A') { this.takingSlots = false; this.resumeTakingAt = undefined; this.serialised(() => this.handOffAll()).catch(() => {}); return; }
+    // RFC-006 §6.3 gives the database node's rule only (rejoins once within bound for 10 min); the owner host uses it too.
+    if (!this.takingSlots) this.resumeTakingAt = this.wallMs() + OFFSET_REJOIN_MS;
+  }
+
+  private resumeTakingAt: number | undefined;
+
+  /**
+   * Level A: hand every slot off (RFC-006 §6.2). No successor is named here: the slots are freed at their own
+   * epoch, so a standby or another process takes them by free-slot acquisition (see STATUS-I2.md).
+   */
+  private async handOffAll(): Promise<void> {
+    for (const r of this.group()) {
+      const lanes = [...r.lanes.values()];
+      let release: () => void = noop;
+      const gate = new Promise<void>((res) => { release = res; });
+      for (const l of lanes) l.gate ??= gate;     // stop proposing; wait for the batches in flight
+      try {
+        await r.waitIdle(lanes);
+        const held = lanes.map((l) => ({ slot: l.holding.slot, epoch: l.holding.epoch }));
+        await this.store.release(r.decl.kind, held, this.session.sessionId, true);
+        for (const h of held) r.loseSlot(h.slot, 'handedOff');
+      } finally { release(); }
+    }
+  }
+
+  /** Level D: give up the session at once; stop serving every slot; the supervisor restarts the process (RFC-006 §4.4). */
+  private async giveUpSession(): Promise<void> {
+    this.gaveUp = true;
+    this.session.stop();
+    if (this.standbyTimer) clearInterval(this.standbyTimer);
+    try {
+      await this.store.revokeSession?.(this.session.shard, this.session.sessionId);
+    } catch (e) { this.log('session give-up write failed; the session expires by itself', { error: String(e) }); }
+    for (const r of this.group()) for (const slot of [...r.lanes.keys()]) r.loseSlot(slot, 'shutdown');
+    this.o.offsetCheck?.onGiveUp?.();
+  }
+
+  // ---------------- slot groups (RFC-006 §4.2, §7.1; C01 §3.1) ----------------
+
+  /** Every slot of a group in one acquisition transaction, or none; then catch-up and onAcquire for each member. */
+  private async acquireWantedGroup(): Promise<void> {
+    if (!this.store.acquireGroup) throw new Error('slot groups need a store with acquireGroup');
+    const group = this.group();
+    const wanted = this.o.slots.filter((s) => group.every((r) => !r.lanes.has(s)));
+    if (wanted.length === 0) return;
+    const rows = new Map<string, import('./store/types.ts').SlotLeaseRow>();
+    for (const r of group) for (const x of await r.store.listSlots(r.decl.kind, wanted)) rows.set(`${r.decl.kind}|${x.slot}`, x);
+    const taken: Array<{ slot: SlotNo; epochs: Map<CockroachOwnerRuntime, Epoch> }> = [];
+    for (const slot of wanted) {
+      const members = group.map((r) => rows.get(`${r.decl.kind}|${slot}`));
+      if (members.some((m) => m === undefined)) continue;
+      const sessions = new Set(members.map((m) => m?.sessionId ?? null));
+      let old: { shard: number; sessionId: string } | null;
+      if (sessions.size === 1 && sessions.has(null)) old = null;
+      else if (sessions.size === 1 && members.every((m) => m && m.sessionId !== this.session.sessionId && (m.sessionExpired || m.sessionRevoked))) {
+        const id = members[0]?.sessionId as string;
+        old = { shard: sessionShard(id), sessionId: id };
+      } else continue;   // held, or members under different sessions: never take part of a group
+      const got = await this.store.acquireGroup(group.map((r) => ({ kind: r.decl.kind, slot })), this.session.sessionId, this.groupName(slot), old);
+      if (!got) continue;
+      const epochs = new Map<CockroachOwnerRuntime, Epoch>();
+      for (const r of group) {
+        const e = got.find((g) => g.kind === r.decl.kind)?.epoch;
+        if (e !== undefined) epochs.set(r, e);
+      }
+      taken.push({ slot, epochs });
+    }
+    if (taken.length === 0) return;
+    const slots = taken.map((t) => t.slot);
+    const catchUp = new Map<CockroachOwnerRuntime, HlcTs>();
+    for (const r of group) {
+      const read = await this.retryUntilAnswered(() => r.store.resolutionRead(r.decl.kind, this.session.shard, this.session.sessionId, slots, []));
+      catchUp.set(r, read.tRes);
+    }
+    for (const t of taken) for (const [r, e] of t.epochs) r.newLane(t.slot, e, catchUp.get(r) as HlcTs);
+    // C01 §2.4: onAcquire once per slot of a group, all before the group serves.
+    for (const t of taken) {
+      for (const [r, e] of t.epochs) {
+        r.log('acquired (slot group)', { slot: t.slot, epoch: e.toString(), group: this.groupName(t.slot) });
+        try { await r.rebuildFences(t.slot); } catch (err) { r.log('fence rebuild failed', { slot: t.slot, error: String(err) }); }
+        await r.hooks?.onAcquire(t.slot, e, 'expiry');
+      }
+    }
+    for (const t of taken) {
+      for (const r of t.epochs.keys()) {
+        const lane = r.lanes.get(t.slot);
+        if (lane) { r.startReporting(lane, catchUp.get(r) as HlcTs, true); r.pump(lane); }
+      }
+    }
+  }
+
+  /** Re-home of a group's slots: each group in one transaction, every member at its own epoch, or none (C01 §3.1). */
+  private async rehomeGroup(): Promise<void> {
+    if (!this.store.rehomeGroup) throw new Error('slot groups need a store with rehomeGroup');
+    const group = this.group();
+    const all = group.flatMap((r) => [...r.lanes.values()].map((l) => ({ r, l })));
+    let release: () => void = noop;
+    const gate = new Promise<void>((res) => { release = res; });
+    for (const { l } of all) l.gate ??= gate;
+    try {
+      for (const r of group) await r.waitIdle([...r.lanes.values()]);
+      const old = this.session.sessionId;
+      await this.session.open();
+      const kept: SlotNo[] = [];
+      for (const slot of [...new Set(all.map((x) => x.l.holding.slot))]) {
+        const held = all.filter((x) => x.l.holding.slot === slot).map((x) => ({ kind: x.r.decl.kind, slot, epoch: x.l.holding.epoch }));
+        const got = held.length === group.length ? await this.store.rehomeGroup(held, old, this.session.sessionId) : undefined;
+        for (const x of all.filter((y) => y.l.holding.slot === slot)) {
+          const e = got?.find((g) => g.kind === x.r.decl.kind)?.epoch;
+          if (e === undefined) { x.r.loseSlot(slot, 'taken'); continue; }
+          x.l.holding.epoch = e;
+          x.l.holding.sessionId = this.session.sessionId;
+          x.l.holding.stopsVersion = null;
+        }
+        if (got) kept.push(slot);
+      }
+      for (const r of group) {
+        const read = await this.retryUntilAnswered(() => r.store.resolutionRead(r.decl.kind, this.session.shard, this.session.sessionId, kept, []));
+        for (const slot of kept) { const l = r.lanes.get(slot); if (l) r.startReporting(l, read.tRes, true); }
+      }
+      for (const slot of kept) for (const r of group) { const l = r.lanes.get(slot); if (l) await r.hooks?.onAcquire(slot, l.holding.epoch, 'rehome'); }
+    } finally {
+      for (const { l } of all) if (l.gate === gate) l.gate = null;
+      release();
+      for (const { r, l } of all) r.pump(l);
+    }
+  }
+
+  /** Resume of a group (C01 §3.1 steps 1–4): a slot taken from any member is released from every member. */
+  private async resumeGroup(): Promise<void> {
+    const group = this.group();
+    for (const r of group) await r.waitIdle([...r.lanes.values()]);
+    let revoked = false;
+    const lost = new Set<SlotNo>();
+    const tRes = new Map<CockroachOwnerRuntime, HlcTs>();
+    for (const r of group) {
+      const read = await this.retryUntilAnswered(() => r.store.resolutionRead(
+        r.decl.kind, this.session.shard, this.session.sessionId, [...r.lanes.keys()], []));
+      revoked ||= read.sessionRevoked;
+      tRes.set(r, read.tRes);
+      for (const l of r.lanes.values()) {
+        const row = read.slots.get(l.holding.slot);
+        if (!row || row.epoch !== l.holding.epoch || row.sessionId !== this.session.sessionId) lost.add(l.holding.slot);
+      }
+    }
+    for (const slot of lost) for (const r of group) r.loseSlot(slot, 'taken');
+    if (revoked) { await this.rehomeGroup(); return; }
+    for (const r of group) for (const l of r.lanes.values()) if (!l.released) r.startReporting(l, tRes.get(r) as HlcTs, false);
+  }
+
   private async waitIdle(lanes: Lane[]): Promise<void> {
-    while (lanes.some((l) => l.running)) await new Promise((r) => setTimeout(r, 5));
+    while (lanes.some((l) => l.running || l.secondRunning)) await new Promise((r) => setTimeout(r, 5));
   }
 
   private loseSlot(slot: SlotNo, reason: 'staleEpoch' | 'handedOff' | 'taken' | 'shutdown'): void {
@@ -656,24 +1077,8 @@ export class CockroachOwnerRuntime implements OwnerRuntime {
    */
   async readLog(partition: PartitionKey, fromSeq: Seq = 1n): Promise<OpenedLogRow[]> {
     if (!this.store.readLogRows) throw new Error('the store cannot read log rows');
-    const t = tableNames(this.decl.kind);
     const rows = await this.store.readLogRows(this.decl.kind, partition, fromSeq);
-    return rows.map((r) => {
-      const ctx = { ownerKind: this.decl.kind, table: t.log, primaryKey: { slot: r.slot, partition: r.partition, seq: r.seq }, seqOrVersion: r.seq, epoch: r.epoch };
-      let payload = decodeJson(this.sealer.open(r.payload, { ...ctx, rowKind: `entry:${r.kind}` }));
-      let senderFence: OpenedLogRow['senderFence'];
-      if (payload !== null && typeof payload === 'object' && PAYLOAD_KEY in (payload as Record<string, unknown>)) {
-        const env = payload as Record<string, unknown>;
-        senderFence = env[FENCE_KEY] as OpenedLogRow['senderFence'];
-        payload = env[PAYLOAD_KEY];
-      }
-      const audit = decodeJson(this.sealer.open(r.audit, { ...ctx, rowKind: 'audit' }));
-      const emits = (decodeJson(r.emits) as Array<[string, string]>).map(([s, n]) => [s, BigInt(n)] as [string, StreamSeq]);
-      return {
-        slot: r.slot, partition: r.partition, seq: r.seq, generation: r.generation, epoch: r.epoch, kind: r.kind, schemaV: r.schemaV,
-        ts: r.ts, identity: r.identity, emits, retention: r.retention, payload, audit, chain: r.chain, ...(senderFence ? { senderFence } : {}),
-      };
-    });
+    return rows.map((r) => openLogRow(this.decl, this.sealer, r));
   }
 
   /** The partitions the slot serves: heads that name it and are adopted (C01 §3.2). For onAcquire rebuilds. */
@@ -742,9 +1147,10 @@ export class CockroachOwnerRuntime implements OwnerRuntime {
     return this.lastTiming;
   }
 
-  /** Liveness only, never decides an outcome (A8). TODO(S-PLAT-I1 rest, RFC-006 §6.2): owner-host offset check. */
+  /** Liveness only, never decides an outcome (A8). The bound is the last owner offset bound (RFC-006 §6.2), else ε. */
   now(): { ts: HlcTs; boundMs: number } {
-    return { ts: hlcFromWallMs(this.wallMs()), boundMs: PARAMS.epsilonMs };
+    const last = this.offset?.samples.at(-1);
+    return { ts: hlcFromWallMs(this.wallMs()), boundMs: last ? Math.ceil(last.boundMs) : PARAMS.epsilonMs };
   }
 
   // ---------------- positions (TODO I1b) ----------------
@@ -851,13 +1257,17 @@ export class CockroachOwnerRuntime implements OwnerRuntime {
     return { state: 'steady', preferredRegion: 'R1', disaster: null };
   }
 
-  // ---------------- checkpoints (TODO I2) ----------------
+  // ---------------- checkpoints (RFC-006 §12.11) ----------------
 
-  putCheckpoint(_kind: OwnerKind, _partition: PartitionKey, _seq: Seq, _bytes: Uint8Array): Promise<{ reference: string; digest: Uint8Array }> {
-    return Promise.reject(new NotInThisIncrement('putCheckpoint — TODO(I2, RFC-006 §12.11)'));
+  /** Seals and writes a state checkpoint to the process's own region (C01 §2.4; idempotent by (kind, partition, seq), §5). */
+  putCheckpoint(kind: OwnerKind, partition: PartitionKey, seq: Seq, bytes: Uint8Array): Promise<{ reference: string; digest: Uint8Array }> {
+    if (!this.o.checkpoints) return Promise.reject(new Error('putCheckpoint needs OwnerRuntimeOptions.checkpoints (the region\'s checkpoint store)'));
+    return this.o.checkpoints.put(kind, partition, seq, bytes);
   }
 
-  getCheckpoint(_reference: string): Promise<Uint8Array> {
-    return Promise.reject(new NotInThisIncrement('getCheckpoint — TODO(I2, RFC-006 §12.11)'));
+  /** Reads a checkpoint of the process's own region and verifies its digest (CheckpointError DIGEST_MISMATCH, OTHER_REGION, NOT_FOUND). */
+  getCheckpoint(reference: string): Promise<Uint8Array> {
+    if (!this.o.checkpoints) return Promise.reject(new Error('getCheckpoint needs OwnerRuntimeOptions.checkpoints (the region\'s checkpoint store)'));
+    return this.o.checkpoints.get(reference);
   }
 }

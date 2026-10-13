@@ -84,6 +84,25 @@ function projectionStatement(d: OwnerDeclaration, p: OwnerDeclaration['projectio
   return `CREATE TABLE IF NOT EXISTS ${table} (\n  ${body.trim()}\n)${ttl}`;
 }
 
+/** The outbox table (C01 §2.3): 26 h row TTL without changefeed events, 25 h GC. Absent for a self-outboxed kind. */
+function outboxTable(table: string): string[] {
+  return [
+    `CREATE TABLE IF NOT EXISTS ${table} (
+  slot INT4 NOT NULL, partition BYTES NOT NULL, stream STRING NOT NULL, stream_seq INT8 NOT NULL, n INT4 NOT NULL,
+  topic STRING NOT NULL, msg_key BYTES NOT NULL, headers BYTES NOT NULL, payload BYTES NOT NULL,
+  ts DECIMAL NOT NULL, generation INT4 NOT NULL, epoch INT8 NOT NULL,
+  PRIMARY KEY (slot, partition, stream, stream_seq, n),
+  INDEX ${table}_by_stream (partition, stream, stream_seq)
+) WITH (ttl_expire_after = '26 hours', ttl_disable_changefeed_replication = true)`,
+    `ALTER TABLE ${table} CONFIGURE ZONE USING gc.ttlseconds = ${OUTBOX_GC_SECONDS}`,
+  ];
+}
+
+/** A self-outboxed log (RFC-006 §3.5): its changefeed is the relay's source, so it keeps 25 h of MVCC history. */
+function selfOutboxedLog(log: string): string[] {
+  return [`ALTER TABLE ${log} CONFIGURE ZONE USING gc.ttlseconds = ${OUTBOX_GC_SECONDS}`];
+}
+
 /** Split points: every 64 slots for kinds above 256 slots (account, link), else every slot (RFC-006 §3.6). */
 export function splitSlots(slotCount: number): number[] {
   const step = slotCount > 256 ? 64 : 1;
@@ -113,14 +132,7 @@ export function kindMigration(d: OwnerDeclaration, opts: { presplit?: boolean } 
   PRIMARY KEY (home_key, partition)
 )`,
     `ALTER TABLE ${t.head} ADD COLUMN IF NOT EXISTS adopted BOOL NOT NULL DEFAULT true`,
-    `CREATE TABLE IF NOT EXISTS ${t.outbox} (
-  slot INT4 NOT NULL, partition BYTES NOT NULL, stream STRING NOT NULL, stream_seq INT8 NOT NULL, n INT4 NOT NULL,
-  topic STRING NOT NULL, msg_key BYTES NOT NULL, headers BYTES NOT NULL, payload BYTES NOT NULL,
-  ts DECIMAL NOT NULL, generation INT4 NOT NULL, epoch INT8 NOT NULL,
-  PRIMARY KEY (slot, partition, stream, stream_seq, n),
-  INDEX ${t.outbox}_by_stream (partition, stream, stream_seq)
-) WITH (ttl_expire_after = '26 hours', ttl_disable_changefeed_replication = true)`,
-    `ALTER TABLE ${t.outbox} CONFIGURE ZONE USING gc.ttlseconds = ${OUTBOX_GC_SECONDS}`,
+    ...(d.selfOutboxed ? selfOutboxedLog(t.log) : outboxTable(t.outbox)),
     ...d.projections.map((p) => projectionStatement(d, p)),
     `INSERT INTO owner_slot (kind, slot, session_id, epoch)
   SELECT ${kindLit}, s, NULL, 0 FROM generate_series(0, ${d.slotCount - 1}) AS s
@@ -135,7 +147,7 @@ export function kindMigration(d: OwnerDeclaration, opts: { presplit?: boolean } 
     const splits = splitSlots(d.slotCount);
     if (splits.length > 0) {
       statements.push(`ALTER TABLE ${t.log} SPLIT AT VALUES ${splits.map((s) => `(${s})`).join(', ')}`);
-      statements.push(`ALTER TABLE ${t.outbox} SPLIT AT VALUES ${splits.map((s) => `(${s})`).join(', ')}`);
+      if (!d.selfOutboxed) statements.push(`ALTER TABLE ${t.outbox} SPLIT AT VALUES ${splits.map((s) => `(${s})`).join(', ')}`);
       // A slot's homes s, s+n, s+2n… reverse to one contiguous home_key range starting at reverse(s) (RFC-006 §3.7).
       const headSplits = [...new Set(splits.map(reverseBits20))].sort((a, b) => a - b);
       statements.push(`ALTER TABLE ${t.head} SPLIT AT VALUES ${headSplits.map((h) => `(${h})`).join(', ')}`);
@@ -144,7 +156,6 @@ export function kindMigration(d: OwnerDeclaration, opts: { presplit?: boolean } 
   }
   if (d.selfOutboxed) {
     // C01 §2.3, R47-19: the stream index of a self-outboxed kind, filled in the same batch.
-    // TODO(I2, C01 §2.3): drop the outbox of a self-outboxed kind once the relay reads the log.
     statements.push(`CREATE TABLE IF NOT EXISTS ${t.streamIndex} (
   partition BYTES NOT NULL, stream STRING NOT NULL, stream_seq INT8 NOT NULL, seq INT8 NOT NULL,
   PRIMARY KEY (partition, stream, stream_seq)
