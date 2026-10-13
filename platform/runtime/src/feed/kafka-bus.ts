@@ -1,6 +1,7 @@
 /** FeedBus on Kafka through kafkajs: idempotent producer with acks=all (C01 §3.5), manual offset commits. */
 import { Kafka, logLevel, type Admin, type Consumer, type Producer } from 'kafkajs';
 import { partitionForKey, type BusProduceRecord, type BusRecord, type BusSubscribeOptions, type BusSubscription, type FeedBus } from './bus.ts';
+import { systemClock, type WallClock } from '../clock.ts';
 
 export interface KafkaBusOptions {
   brokers: string[];
@@ -8,11 +9,14 @@ export interface KafkaBusOptions {
   clientId: string;
   /** How old cached topic metadata can be (a partition-count increase is seen within this time). */
   metadataMaxAgeMs?: number;
+  /** The wall clock of the metadata cache (default: the system clock). */
+  wallMs?: WallClock;
 }
 
 export class KafkaBus implements FeedBus {
   private readonly kafka: Kafka;
   private readonly o: KafkaBusOptions;
+  private readonly wallMs: WallClock;
   private producer: Producer | undefined;
   private producerReady: Promise<void> | undefined;
   private admin: Admin | undefined;
@@ -22,6 +26,7 @@ export class KafkaBus implements FeedBus {
 
   constructor(o: KafkaBusOptions) {
     this.o = o;
+    this.wallMs = o.wallMs ?? systemClock;
     this.kafka = new Kafka({ clientId: o.clientId, brokers: o.brokers, logLevel: logLevel.NOTHING });
   }
 
@@ -68,7 +73,7 @@ export class KafkaBus implements FeedBus {
     try {
       const m = await admin.fetchTopicMetadata({ topics: [topic] });
       const n = m.topics[0]?.partitions.length ?? 0;
-      this.counts.set(topic, { n, at: Date.now() });
+      this.counts.set(topic, { n, at: this.wallMs() });
       return n;
     } catch {
       return 0;
@@ -77,7 +82,7 @@ export class KafkaBus implements FeedBus {
 
   private async cachedCount(topic: string): Promise<number> {
     const c = this.counts.get(topic);
-    if (c && Date.now() - c.at < (this.o.metadataMaxAgeMs ?? 5_000)) return c.n;
+    if (c && this.wallMs() - c.at < (this.o.metadataMaxAgeMs ?? 5_000)) return c.n;
     return this.partitionCount(topic);
   }
 

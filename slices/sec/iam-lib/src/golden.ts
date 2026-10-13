@@ -118,5 +118,5 @@ export const GOLDEN_FILE = fileURLToPath(new URL('../golden/c08-p01-i1.json', im
 
 if (process.argv.includes('--write') && process.argv[1] === fileURLToPath(import.meta.url)) {
   writeFileSync(GOLDEN_FILE, `${JSON.stringify(goldenVectors(), null, 2)}\n`);
-  console.log(`wrote ${GOLDEN_FILE}`);
+  process.stdout.write(`wrote ${GOLDEN_FILE}\n`);
 }

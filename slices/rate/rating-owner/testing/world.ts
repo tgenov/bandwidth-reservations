@@ -78,7 +78,7 @@ export function buildWorld(opts: WorldOptions) {
   const rating = new RatingOwner(rts.rating, { catalogue: new CatalogueReplica(), homeLedgerPartition: LedgerDouble.home,
     handoffPartitions: opts.handoffPartitions ?? 1, alerts, sleep: noSleep });
   const stageA = new StageAOwner(rts.attrA, { catalogue: new CatalogueReplica(), alerts, sleep: noSleep,
-    onWatermark: (dest, w) => { void rating.onStageAWatermark(dest, w); } });
+    onWatermark: (dest, w) => { rating.onStageAWatermark(dest, w).catch((e: unknown) => alerts.raise({ owner: 'rating', kind: 'STEP_FAILED', detail: `watermark: ${String(e)}` })); } });
   const stageB = new StageBOwner(rts.attrB, { rating, alerts, sleep: noSleep });
   rts.ingest.attach(ingest);
   rts.catalogue.attach(catalogue);

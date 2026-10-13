@@ -116,14 +116,14 @@ test('CP-2 ConditionFailed inside one batch: a later call sees an earlier call\'
 test('CP-2 Retry: exactly 5 restarts + 1 fresh attempt, then Retry; decide re-runs each time; nothing commits', async () => {
   let decides = 0;
   const { rt, store } = await boot(undefined, { testing: { sessionTimings: FAST, commitBackstopMs: 60, onDecide: () => { decides += 1; } } });
-  store.faults.commits = Array(7).fill('retry');
+  store.faults.commits = Array.from({ length: 7 }, () => 'retry' as const);
   const r = await rt.append({ partition: P, decide: () => ({ entries: [entry('r')] }) });
   assert.deepEqual(r, { r: 'Retry' });
   assert.equal(decides, 7);
   assert.equal(store.statements.filter((s) => s === 'restart').length, 5);
   assert.equal(store.commitCount, 0);
   // Six failures: the fresh attempt commits.
-  store.faults.commits = Array(6).fill('retry');
+  store.faults.commits = Array.from({ length: 6 }, () => 'retry' as const);
   decides = 0;
   assert.equal((await rt.append({ partition: P, decide: () => ({ entries: [entry('r')] }) })).r, 'Committed');
   assert.equal(decides, 7);

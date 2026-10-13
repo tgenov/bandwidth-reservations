@@ -54,7 +54,7 @@ export class IdentityOwner implements OwnerHooks {
     this.rt = o.runtime;
     this.certifier = o.certifier;
     this.workload = o.workload ?? 'spiffe://share/iam/holder';
-    this.alert = o.alert ?? ((m) => console.error(`iam: ${m}`));
+    this.alert = o.alert ?? ((m) => { process.stderr.write(`iam: ${m}\n`); });
     this.sleep = o.sleep ?? ((ms) => new Promise((r) => setTimeout(r, ms)));
     this.maxAttempts = o.maxAttempts ?? 6;
   }

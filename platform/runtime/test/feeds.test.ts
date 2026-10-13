@@ -130,10 +130,17 @@ test('closure emitter: a new holder writes every link once; the heartbeat repeat
   await relay.start();
   for (const l of ['A', 'B']) await rt.append({ partition: utf8(l), entries: [entry(l)] });
   await feed.resolve();
-  const emitter = new ClosureEmitter({ bus, declaration: DECL, store, feedSeqs: memoryFeedSeqReader(store), pollMs: 10, heartbeatMs: 100, sessionTimings: FAST });
+  let wall = 1_000_000;
+  const emitter = new ClosureEmitter({ bus, declaration: DECL, store, feedSeqs: memoryFeedSeqReader(store), pollMs: 10, heartbeatMs: 100, sessionTimings: FAST, wallMs: () => wall });
+  const links = (): string[] => emitter.emitted.flatMap((e) => (e.link ? [e.link] : []));
   await emitter.start();
-  await until(() => emitter.emitted.filter((e) => e.link).length >= 2);
-  await until(() => emitter.emitted.filter((e) => e.link).length >= 4, 2_000);   // heartbeat
+  await until(() => links().length >= 2);
+  assert.deepEqual(links().sort(), ['41', '42']);
+  for (let i = 0; i < 5; i++) await emitter.tick();
+  assert.equal(links().length, 2);            // no heartbeat before heartbeatMs on the clock
+  wall += 100;
+  await until(() => links().length >= 4, 2_000);
+  assert.deepEqual(links().slice(2).sort(), ['41', '42']);
   await emitter.stop(); await relay.stop(); await rt.stop();
 });
 

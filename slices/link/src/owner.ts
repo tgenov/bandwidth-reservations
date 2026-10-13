@@ -222,7 +222,7 @@ export class LinkOwner implements OwnerHooks {
   }
 
   private pump(mem: LinkMemory): void {
-    void this.serialise(mem, () => this.drain(mem));
+    void this.serialise(mem, () => this.drain(mem));   // fire and forget: drain() alerts BATCH_FAILED and answers each call
   }
 
   private async drain(mem: LinkMemory): Promise<void> {

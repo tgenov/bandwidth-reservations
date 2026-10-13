@@ -78,6 +78,7 @@ export class Session {
 
   private schedule(delay: number): void {
     if (this.stopped) return;
+    // Fire and forget: C01 §3.1 renew loop. tick() catches every error and schedules the next renewal.
     this.timer = setTimeout(() => void this.tick(), delay);
     this.timer.unref?.();
   }

@@ -24,7 +24,7 @@ export class MemoryChangefeed {
   constructor(store: MemoryStore, bus: MemoryBus, kind: string, partitions = 1) {
     this.bus = bus;
     this.kind = kind;
-    void bus.ensureTopic(cdcTopic(kind), partitions);
+    void bus.ensureTopic(cdcTopic(kind), partitions);   // MemoryBus.ensureTopic completes synchronously and never rejects
     store.commitListeners.push((k, w) => {
       if (k !== kind) return;
       for (const row of w.outbox) this.held.push({ row, ts: w.ts });

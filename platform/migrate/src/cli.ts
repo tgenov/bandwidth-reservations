@@ -9,7 +9,7 @@ import { applyMigrations } from './apply.ts';
 const args = process.argv.slice(2);
 const file = args.find((a) => !a.startsWith('--'));
 if (!file) {
-  console.error('usage: owner-migrate <declaration-module> [--print] [--no-presplit]');
+  process.stderr.write('usage: owner-migrate <declaration-module> [--print] [--no-presplit]\n');
   process.exit(2);
 }
 const mod = await import(pathToFileURL(resolve(file)).href) as { declaration?: OwnerDeclaration; default?: OwnerDeclaration };
@@ -17,8 +17,8 @@ const decl = mod.declaration ?? mod.default;
 if (!decl) throw new Error(`${file} exports no declaration`);
 const migrations = [platformMigration(), kindMigration(decl, { presplit: !args.includes('--no-presplit') })];
 if (args.includes('--print')) {
-  for (const m of migrations) console.log(`-- ${m.id}\n${m.statements.join(';\n\n')};\n`);
+  for (const m of migrations) process.stdout.write(`-- ${m.id}\n${m.statements.join(';\n\n')};\n\n`);
 } else {
   const url = process.env['DATABASE_URL'] ?? 'postgresql://root@localhost:26257/defaultdb?sslmode=disable';
-  console.log(JSON.stringify(await applyMigrations(url, migrations)));
+  process.stdout.write(`${JSON.stringify(await applyMigrations(url, migrations))}\n`);
 }

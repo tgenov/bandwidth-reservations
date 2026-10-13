@@ -124,13 +124,14 @@ export class RatingOwner implements OwnerHooks, RatingSink {
   /** C01 §3.7: a timer fired. The owner appends an entry if it is still due. */
   onTimer(partition: PartitionKey, key: string): void {
     const account = Buffer.from(partition).toString('utf8');
-    void this.queue.run(async () => {
+    // The runtime does not wait for a timer step (C01 §3.7), so a failed step is raised as an alert, not lost.
+    this.queue.run(async () => {
       if (key === 'figure') {
         await this.step(account, RATING_ENTRY.inputs, `figure:${this.nowMs()}`, (next) => (next.figureDue ? { applied: [], figureOnly: true } : null));
         await this.maybeEmit(account);
       }
       else await this.closeDue(account);
-    });
+    }).catch((e: unknown) => this.opts.alerts?.raise({ owner: 'rating', kind: 'STEP_FAILED', detail: `timer ${key} ${account}: ${String(e)}` }));
   }
 
   /** The stage A watermark of one destination partition of the hand-off topic (RFC-003 §4.2). */

@@ -11,6 +11,7 @@ import { FENCE_KEY, PAYLOAD_KEY } from './batch/attempt.ts';
 import { tableNames } from './declaration.ts';
 import { assertDeclaration } from './declaration.ts';
 import { compareHlc, hlcFromWallMs, hlcToWallMs } from './hlc.ts';
+import { systemClock, type WallClock } from './clock.ts';
 import { slotOfPartition } from './home.ts';
 import { EventLoopMonitor, type LoadMonitor } from './load.ts';
 import { DEFAULT_SESSION_TIMINGS, PARAMS, type SessionTimings } from './params.ts';
@@ -60,6 +61,8 @@ export interface OwnerRuntimeOptions {
     producerOf?: (topic: string) => string;
   };
   log?: (msg: string, fields?: Record<string, unknown>) => void;
+  /** The wall clock of `now()` and of timers (default: the system clock). */
+  wallMs?: WallClock;
   /** Test-only overrides of C01 §7 values. */
   testing?: {
     sessionTimings?: Partial<SessionTimings>;
@@ -101,6 +104,7 @@ const noop = (): void => {};
 
 export class CockroachOwnerRuntime implements OwnerRuntime {
   private readonly o: OwnerRuntimeOptions;
+  private readonly wallMs: WallClock;
   private readonly decl: OwnerDeclaration;
   private readonly store: OwnerStore;
   private readonly publisher: Publisher;
@@ -124,6 +128,7 @@ export class CockroachOwnerRuntime implements OwnerRuntime {
   constructor(o: OwnerRuntimeOptions) {
     assertDeclaration(o.declaration);
     this.o = o;
+    this.wallMs = o.wallMs ?? systemClock;
     this.decl = o.declaration;
     this.store = o.store;
     this.publisher = o.publisher ?? new MemoryPublisher();
@@ -160,7 +165,7 @@ export class CockroachOwnerRuntime implements OwnerRuntime {
     await this.serialised(() => this.acquireWanted());
     this.session.start();
     // C01 §3.4: push to readers and advance the report position every heartbeat_interval (100 ms).
-    this.heartbeat = setInterval(() => { for (const l of this.lanes.values()) void this.advance(l); }, REPORT.heartbeatMs);
+    this.heartbeat = setInterval(() => { for (const l of this.lanes.values()) this.advanceSoon(l); }, REPORT.heartbeatMs);
     this.heartbeat.unref();
   }
 
@@ -231,10 +236,10 @@ export class CockroachOwnerRuntime implements OwnerRuntime {
     if (lane.markerWanted && this.session.leaseLive()) {
       lane.markerWanted = false;
       lane.running = true;
-      void this.runMarker(lane).finally(() => {
+      this.runMarker(lane).finally(() => {
         lane.running = false;
         this.pump(lane);
-      });
+      }).catch((e: unknown) => this.log('marker step failed', { slot: lane.holding.slot, error: String(e) }));
       return;
     }
     if (lane.queue.length === 0) return;
@@ -245,10 +250,10 @@ export class CockroachOwnerRuntime implements OwnerRuntime {
     }
     lane.running = true;
     const calls = this.take(lane);
-    void this.runBatch(lane, calls).finally(() => {
+    this.runBatch(lane, calls).finally(() => {
       lane.running = false;
       this.pump(lane);
-    });
+    }).catch((e: unknown) => this.log('batch step failed', { slot: lane.holding.slot, error: String(e) }));
   }
 
   /** One batch: every pending call up to the size limits; an exclusive call alone (C01 §3.2). */
@@ -314,7 +319,7 @@ export class CockroachOwnerRuntime implements OwnerRuntime {
         lane.gate = this.serialised(() => this.resolveAmbiguous(lane, plan)).finally(() => {
           lane.gate = null;
           this.pump(lane);
-        });
+        }).catch(() => { /* serialised() logged the failure; the gate opens */ });
         return;
       }
     }
@@ -330,7 +335,7 @@ export class CockroachOwnerRuntime implements OwnerRuntime {
     const r = lane.report;
     if (compareHlc(plan.ts, r.committedThrough) > 0) r.committedThrough = plan.ts;
     for (const d of plan.reportDue) r.due.push({ ts: plan.ts, ...(d.pending ? { pending: d.pending } : {}) });
-    void this.advance(lane);
+    this.advanceSoon(lane);
   }
 
   /** Not known to be committed ⇒ memory of those partitions is rebuilt from the head (C01 §3.2). */
@@ -405,7 +410,7 @@ export class CockroachOwnerRuntime implements OwnerRuntime {
       lane.report.reportable = true;
       this.hooks?.onReportable(lane.holding.slot);
       for (const h of this.reportHandlers) h(lane.holding.slot, lane.report.position);
-      void this.advance(lane);
+      this.advanceSoon(lane);
     };
     if (!wait) { enable(); return; }
     lane.reportableTimer = setTimeout(enable, this.o.testing?.postAcquisitionWaitMs ?? REPORT.postAcquisitionWaitMs);
@@ -416,6 +421,11 @@ export class CockroachOwnerRuntime implements OwnerRuntime {
     lane.report.position = p;
     for (const h of this.reportHandlers) h(lane.holding.slot, p);
     if (reportsMarkers(this.decl) && lane.report.markerDue()) this.scheduleMarker(lane);
+  }
+
+  /** advance() without waiting for it: a failure is logged, and the next heartbeat tries again (C01 §3.4). */
+  private advanceSoon(lane: Lane): void {
+    this.advance(lane).catch((e: unknown) => this.log('report advance failed', { slot: lane.holding.slot, error: String(e) }));
   }
 
   /** Push "committed through" to the readers, then move P to what every live lease allows. */
@@ -734,7 +744,7 @@ export class CockroachOwnerRuntime implements OwnerRuntime {
 
   /** Liveness only, never decides an outcome (A8). TODO(S-PLAT-I1 rest, RFC-006 §6.2): owner-host offset check. */
   now(): { ts: HlcTs; boundMs: number } {
-    return { ts: hlcFromWallMs(Date.now()), boundMs: PARAMS.epsilonMs };
+    return { ts: hlcFromWallMs(this.wallMs()), boundMs: PARAMS.epsilonMs };
   }
 
   // ---------------- positions (TODO I1b) ----------------
@@ -794,7 +804,7 @@ export class CockroachOwnerRuntime implements OwnerRuntime {
     const prev = this.timers.get(k);
     if (prev) clearTimeout(prev.timeout);
     const arm = (): void => {
-      const wait = hlcToWallMs(atTs) - Date.now();
+      const wait = hlcToWallMs(atTs) - this.wallMs();
       const timeout = setTimeout(() => {
         if (compareHlc(this.now().ts, atTs) < 0) { arm(); return; }   // long waits are re-armed in steps
         this.timers.delete(k);

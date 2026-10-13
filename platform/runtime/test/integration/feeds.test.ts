@@ -117,7 +117,7 @@ test('setup: migrate both kinds with grants; topics; changefeeds', { ...T, skip:
   await admin.ensureTopic(`relay.progress.${ACCT}`, 1, { compacted: true });
   await ensureChangefeed(pool, LINK, { sinkUri: SINK });
   await ensureChangefeed(pool, ACCT, { sinkUri: SINK });
-  assert.equal((await pool.query(`SELECT count(*)::INT4 AS n FROM owner_slot WHERE kind = $1`, [`closure_${LINK}`])).rows[0].n, 1);
+  assert.equal((await pool.query<{ n: number }>(`SELECT count(*)::INT4 AS n FROM owner_slot WHERE kind = $1`, [`closure_${LINK}`])).rows[0]?.n, 1);
 });
 
 test('CP-8 on the cell: relay + closure emitter; markers never precede a row at or below them, across changefeed re-creation', { ...T, skip: SKIP }, async () => {
@@ -225,12 +225,13 @@ test('CP-7a on the cell: the marker chain across a takeover (prev = owner_slot.r
   clearInterval(keep);
   await until(() => b.rt.markersWritten.length >= 1, 10_000, 'B first marker');
   const bFirst = b.rt.markersWritten[0] as ReportMarker;
-  const row = (await pool.query(`SELECT report_through::STRING AS rt, marker_seq FROM owner_slot WHERE kind = $1 AND slot = $2`, [ACCT, S])).rows[0];
+  const row = (await pool.query<{ rt: string; marker_seq: string }>(`SELECT report_through::STRING AS rt, marker_seq FROM owner_slot WHERE kind = $1 AND slot = $2`, [ACCT, S])).rows[0];
+  assert.ok(row, 'the owner_slot row exists');
   assert.equal(bFirst.prevReportPosition, aLast.reportPosition, 'prev = the predecessor\'s last marker');
   assert.ok(bFirst.pendingAnswered.map((x) => Buffer.from(x).toString()).includes('q2'), 'rule 7: the successor lists q2');
   assert.equal(hlc(String(row.rt)), b.rt.markersWritten[b.rt.markersWritten.length - 1]?.reportPosition);
   // The marker rows in the outbox chain without a gap or overlap.
-  const ms = await pool.query(`SELECT stream_seq FROM ${ACCT}_outbox WHERE slot = $1 AND partition = ''::BYTES ORDER BY stream_seq`, [S]);
+  const ms = await pool.query<{ stream_seq: string }>(`SELECT stream_seq FROM ${ACCT}_outbox WHERE slot = $1 AND partition = ''::BYTES ORDER BY stream_seq`, [S]);
   assert.deepEqual(ms.rows.map((x) => Number(x.stream_seq)), Array.from({ length: ms.rows.length }, (_, i) => i + 1));
   assert.equal(Number(row.marker_seq), ms.rows.length);
   // onMarker on Kafka gets every marker (direct publish of both holders).
@@ -281,8 +282,9 @@ test('CP-11: the grants conformance job is clean, then finds UPDATE on a log tab
     await pool.query(`REVOKE UPDATE ON TABLE owner_slot FROM placement`);
   }
   // Placement's Stop path: only stops_version, through the definer function.
-  const before = (await pool.query(`SELECT stops_version FROM owner_slot WHERE kind = $1 AND slot = 0`, [LINK])).rows[0].stops_version;
+  const stopsVersion = async (): Promise<bigint> =>
+    BigInt((await pool.query<{ stops_version: string }>(`SELECT stops_version FROM owner_slot WHERE kind = $1 AND slot = 0`, [LINK])).rows[0]?.stops_version ?? -1);
+  const before = await stopsVersion();
   await pool.query(`SELECT placement_set_stops_version($1, 0)`, [LINK]);
-  const afterV = (await pool.query(`SELECT stops_version FROM owner_slot WHERE kind = $1 AND slot = 0`, [LINK])).rows[0].stops_version;
-  assert.equal(BigInt(afterV), BigInt(before) + 1n);
+  assert.equal(await stopsVersion(), before + 1n);
 });

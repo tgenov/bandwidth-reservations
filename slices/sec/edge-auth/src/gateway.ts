@@ -4,7 +4,7 @@
  * answer of §2.3 with the ‹unauth_floor›. Steps 2 and 7 (shedding, advisory counters, poll limiter) are I2.
  */
 import { createHmac, randomBytes } from 'node:crypto';
-import type { PartitionKey, SlotOfAnswer } from '@share/owner-runtime';
+import { systemClock, type PartitionKey, type SlotOfAnswer } from '@share/owner-runtime';
 import {
   CONTEXT_METADATA_KEY, CONTEXT_TTL_MICROS, OPS, decide, encodeContext, parseKey, secretMatches,
   type EpochMicros, type Operation, type PolicyBundle, type PrincipalContext, type UnsignedPolicyBundle,
@@ -20,7 +20,7 @@ export interface EdgeClock {
   waitUntil(t: EpochMicros): Promise<void>;
 }
 
-const BASE_WALL_MICROS = BigInt(Date.now()) * 1000n;
+const BASE_WALL_MICROS = BigInt(systemClock()) * 1000n;
 const BASE_HR_NS = process.hrtime.bigint();
 
 /** A monotonic wall clock: a timer for whole milliseconds, then a short spin (at most 1 ms) to the instant. */

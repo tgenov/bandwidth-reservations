@@ -14,6 +14,7 @@ import type {
   BatchTxn, BatchWrites, DisplacementCondition, FenceRow, LogRowWrite, OutboxRowWrite, OwnerStore, ResolutionRead,
   SessionRow, SlotLeaseRow, StoredHead,
 } from './types.ts';
+import { systemClock, type WallClock } from '../clock.ts';
 
 export type CommitFault = 'ok' | 'retry' | 'ambiguousCommitted' | 'ambiguousNotCommitted' | 'hang';
 
@@ -50,8 +51,14 @@ export class MemoryStore implements OwnerStore {
   readonly commitListeners: Array<(kind: string, w: BatchWrites) => void> = [];
   /** Statement names in order, across transactions (tests assert ordering, e.g. CP-4). */
   readonly statements: string[] = [];
+  private readonly wallMs: WallClock;
   private lastWallNs = 0n;
   private logical = 0n;
+
+  /** `wallMs`: the clock of session expiry and of commit timestamps (default: the system clock). */
+  constructor(o: { wallMs?: WallClock } = {}) {
+    this.wallMs = o.wallMs ?? systemClock;
+  }
 
   /** Seed owner_slot rows as the migration tool does. */
   seedSlots(kind: string, slotCount: number): void {
@@ -72,7 +79,7 @@ export class MemoryStore implements OwnerStore {
   }
 
   nowTs(): HlcTs {
-    const wall = BigInt(Date.now()) * 1_000_000n;
+    const wall = BigInt(this.wallMs()) * 1_000_000n;
     if (wall > this.lastWallNs) { this.lastWallNs = wall; this.logical = 0n; } else { this.logical += 1n; }
     return hlc(`${this.lastWallNs}.${this.logical.toString().padStart(10, '0')}`);
   }
@@ -82,13 +89,13 @@ export class MemoryStore implements OwnerStore {
   }
 
   async insertSession(s: SessionRow): Promise<void> {
-    this.sessions.set(s.sessionId, { shard: s.shard, expiresAt: Date.now() + s.ttlMs, revoked: false, kind: s.kind });
+    this.sessions.set(s.sessionId, { shard: s.shard, expiresAt: this.wallMs() + s.ttlMs, revoked: false, kind: s.kind });
   }
 
   async renewSession(_shard: number, sessionId: string, ttlMs: number): Promise<boolean> {
     const s = this.sessions.get(sessionId);
     if (!s || s.revoked) return false;
-    s.expiresAt = Date.now() + ttlMs;
+    s.expiresAt = this.wallMs() + ttlMs;
     return true;
   }
 
@@ -97,7 +104,7 @@ export class MemoryStore implements OwnerStore {
       const r = this.slots.get(`${kind}|${slot}`);
       if (!r) return [];
       const s = r.sessionId ? this.sessions.get(r.sessionId) : undefined;
-      return [{ slot, sessionId: r.sessionId, epoch: r.epoch, sessionExpired: s ? s.expiresAt <= Date.now() : true, sessionRevoked: s?.revoked ?? false }];
+      return [{ slot, sessionId: r.sessionId, epoch: r.epoch, sessionExpired: s ? s.expiresAt <= this.wallMs() : true, sessionRevoked: s?.revoked ?? false }];
     });
   }
 
@@ -110,7 +117,7 @@ export class MemoryStore implements OwnerStore {
 
   async acquireExpired(kind: string, _oldShard: number, oldSession: string, slots: SlotNo[], sessionId: string): Promise<Array<{ slot: SlotNo; epoch: bigint }>> {
     const old = this.sessions.get(oldSession);
-    if (!old || !(old.revoked || old.expiresAt <= Date.now())) return [];
+    if (!old || !(old.revoked || old.expiresAt <= this.wallMs())) return [];
     old.revoked = true;
     const out: Array<{ slot: SlotNo; epoch: bigint }> = [];
     for (const slot of slots) {

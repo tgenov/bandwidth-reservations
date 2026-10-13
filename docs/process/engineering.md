@@ -122,7 +122,7 @@ Rules:
   its ID passes in its owning slice.
 - A failing test is fixed at once. Do not skip it, do not mark it as known, and do not
   merge with it. A flaky test is a bug and is fixed the same day.
-- Before a commit, run `npm run check`: type checks and unit tests for every package. Run
+- Before a commit, run `npm run check`: the boundary check, ESLint (`eslint.config.js`), type checks and unit tests for every package. Run
   the integration tests before a merge to `integration`.
 
 ## 9. Code

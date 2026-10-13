@@ -1,5 +1,6 @@
 /** @share/owner-runtime — C01 v1 owner runtime (S-PLAT I1a, I1b). */
 export * from './api.ts';
+export { systemClock, type WallClock } from './clock.ts';
 export { hlc, compareHlc, hlcFromWallMs, hlcToWallMs, hlcAddMs, hlcParts } from './hlc.ts';
 export { home, homeKey, reverseBits20, slotOfPartition, isPowerOfTwo } from './home.ts';
 export { chainGenesis, chainNext, type ChainRow } from './chain.ts';

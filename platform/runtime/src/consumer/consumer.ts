@@ -241,6 +241,7 @@ class TopicSubscription {
         await this.handler(p.e);
       } catch (err) {
         this.c.log?.('feed handler failed; retrying', { topic: this.topic, error: String(err) });
+        // Fire and forget: serial() logs a failed step (C01 §3.5 consumer retry).
         setTimeout(() => void this.serial(() => this.drain(st)), this.c.retryMs ?? 1_000).unref();
         return;
       }
@@ -268,7 +269,7 @@ class TopicSubscription {
     if (st.gapTimer || !this.c.gapFill || this.stopped) return;
     st.gapTimer = setTimeout(() => {
       st.gapTimer = undefined;
-      void this.serial(() => this.fillGap(st));
+      void this.serial(() => this.fillGap(st));   // fire and forget: serial() logs a failed step (C01 §3.5 gap fill)
     }, this.c.gapTimeoutMs ?? 5_000);
     st.gapTimer.unref();
   }
@@ -420,6 +421,7 @@ class TopicSubscription {
 
   private scheduleCommit(): void {
     if (this.commitTimer || this.stopped) return;
+    // Fire and forget: commitNow() logs a failed offset commit; the next commit covers it (C01 §3.5).
     this.commitTimer = setTimeout(() => { this.commitTimer = undefined; void this.commitNow(); }, 50);
     this.commitTimer.unref();
   }

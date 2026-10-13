@@ -75,7 +75,7 @@ class FaultStore {
     const inner = this.inner;
     return new Proxy(inner, {
       get(target, prop, recv) {
-        if (prop !== 'beginBatch') { const v = Reflect.get(target, prop, recv); return typeof v === 'function' ? v.bind(target) : v; }
+        if (prop !== 'beginBatch') { const v: unknown = Reflect.get(target, prop, recv); return typeof v === 'function' ? (v.bind(target) as unknown) : v; }
         return async (): Promise<BatchTxn> => {
           const tx = await inner.beginBatch();
           const commit = tx.commit.bind(tx);

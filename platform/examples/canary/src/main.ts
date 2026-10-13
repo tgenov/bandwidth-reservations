@@ -27,7 +27,9 @@ let n = 0;
 const timer = setInterval(() => {
   const p = utf8(`canary-${n % 8}`);
   if (!owner.held.has(owner.slotOf(p))) { n++; return; }
-  void owner.increment(p, `tick-${process.pid}-${n++}`).then((a) => console.log(JSON.stringify(a, (_k, v: unknown) => (typeof v === 'bigint' ? v.toString() : v))));
+  owner.increment(p, `tick-${process.pid}-${n++}`)
+    .then((a) => console.log(JSON.stringify(a, (_k, v: unknown) => (typeof v === 'bigint' ? v.toString() : v))))
+    .catch((e: unknown) => console.error(`canary: increment failed: ${String(e)}`));
 }, 1_000);
 
 const shutdown = async (): Promise<void> => {
@@ -36,5 +38,6 @@ const shutdown = async (): Promise<void> => {
   await store.close();
   process.exit(0);
 };
-process.on('SIGINT', () => void shutdown());
-process.on('SIGTERM', () => void shutdown());
+const exitOnFailure = (e: unknown): void => { console.error(`canary: shutdown failed: ${String(e)}`); process.exit(1); };
+process.on('SIGINT', () => { shutdown().catch(exitOnFailure); });
+process.on('SIGTERM', () => { shutdown().catch(exitOnFailure); });

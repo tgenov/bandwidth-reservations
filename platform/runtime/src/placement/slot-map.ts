@@ -7,6 +7,7 @@
  * slotOf (R47-29): an override if any; else h = home(account) (first 4 bytes of SHA-256, big-endian, mod 2^20)
  * and s = h mod n; a splitting slot answers `s` with headDecides for its upper half.
  */
+import { randomUUID } from 'node:crypto';
 import type { HlcTs, MapVersion, SlotMapVersion, SlotNo, SlotOfAnswer } from '../api.ts';
 import { decodeJson, encodeJson, hex } from '../bytes.ts';
 import { home } from '../home.ts';
@@ -100,15 +101,16 @@ export class SlotMapCache {
   async start(): Promise<void> {
     if (!this.o) throw new Error('SlotMapCache.start needs a bus');
     this.sub = await this.o.bus.subscribe({
-      groupId: this.o.groupId ?? `slotmap-${process.pid}-${Date.now()}`, topics: [SLOT_MAP_TOPIC], fromBeginning: true,
+      groupId: this.o.groupId ?? `slotmap-${process.pid}-${randomUUID()}`, topics: [SLOT_MAP_TOPIC], fromBeginning: true,
       onRecord: async (r) => { if (r.value) this.apply(decodeSlotMap(r.value)); },
     });
   }
 
   /** Resolves once a version is applied (or after the timeout). */
   async ready(timeoutMs = 10_000): Promise<boolean> {
-    const end = Date.now() + timeoutMs;
-    while (!this.v && Date.now() < end) await new Promise((r) => setTimeout(r, 20));
+    // An elapsed time: the monotonic clock, not the wall clock (engineering.md §5).
+    const end = performance.now() + timeoutMs;
+    while (!this.v && performance.now() < end) await new Promise((r) => setTimeout(r, 20));
     return this.v !== undefined;
   }
 

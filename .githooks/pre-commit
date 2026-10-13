@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
-# Before a commit: the slice boundary check, then the type check and unit tests of each workspace with
-# staged changes. A change in platform/, contracts/ or the root package files checks every workspace.
+# Before a commit: the slice boundary check, ESLint on the staged workspaces, then the type check and unit tests
+# of each workspace with staged changes. A change in platform/, contracts/, the root package files or the lint
+# config checks every workspace.
 # Skip once with `git commit --no-verify`.
 set -euo pipefail
 cd "$(git rev-parse --show-toplevel)"
@@ -14,7 +15,7 @@ targets=()
 add() { [[ " ${targets[*]-} " == *" $1 "* ]] || targets+=("$1"); }
 while IFS= read -r path; do
   case "$path" in
-    platform/*|contracts/*|package.json|package-lock.json|tsconfig*.json) targets=("${ALL[@]}"); break ;;
+    platform/*|contracts/*|package.json|package-lock.json|tsconfig*.json|eslint.config.js|tools/eslint/*) targets=("${ALL[@]}"); break ;;
     slices/*) s=${path#slices/}; s=${s%%/*}
               if [ "$(npm pkg get "scripts.typecheck:$s")" != "{}" ]; then add "$s"; else targets=("${ALL[@]}"); break; fi ;;
   esac
@@ -22,6 +23,18 @@ done <<< "$staged"
 
 echo "pre-commit: check:boundaries"
 npm run -s check:boundaries || fail "check:boundaries"
+lint_paths=()
+for w in "${targets[@]-}"; do
+  case "$w" in
+    '') ;;
+    platform) lint_paths+=(platform contracts) ;;
+    *) lint_paths+=("slices/$w") ;;
+  esac
+done
+if [ ${#lint_paths[@]} -gt 0 ]; then
+  echo "pre-commit: eslint ${lint_paths[*]}"
+  npx --no-install eslint "${lint_paths[@]}" || fail "lint"
+fi
 for w in "${targets[@]-}"; do
   [ -n "$w" ] || continue
   echo "pre-commit: typecheck:$w + test:$w"

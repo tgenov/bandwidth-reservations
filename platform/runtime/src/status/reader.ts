@@ -16,6 +16,7 @@ import { keyObject } from '../rowref.ts';
 import { toPg } from '../store/pg.ts';
 import { PARAMS } from '../params.ts';
 import { REPORT, type LeaseAnswer, type ReaderChannel } from '../report/report.ts';
+import { systemClock, type WallClock } from '../clock.ts';
 
 /** The holder's side of the lease protocol (in-process in I1; gRPC later). */
 export interface ReadLeaseHolder {
@@ -38,6 +39,8 @@ export interface StatusReaderOptions {
   rule3Rows?: (q: (sql: string, params?: unknown[]) => Promise<Array<Record<string, unknown>>>, requestKey: Uint8Array) => Promise<unknown>;
   /** Cache time of a "holder live" answer of replicaRule3Check. */
   rule3CacheMs?: number;
+  /** The wall clock of the rule 3 cache (default: the system clock). */
+  wallMs?: WallClock;
 }
 
 interface LeaseState {
@@ -59,6 +62,7 @@ export function ceilMicrosLiteral(t: HlcTs): string {
 
 export class StatusReader implements StatusReaderRuntime {
   private readonly o: StatusReaderOptions;
+  private readonly wallMs: WallClock;
   private readonly leases = new Map<SlotNo, LeaseState>();
   private readonly applied = new Map<SlotNo, HlcTs>();
   private readonly slots = new Set<SlotNo>();
@@ -68,6 +72,7 @@ export class StatusReader implements StatusReaderRuntime {
 
   constructor(o: StatusReaderOptions) {
     this.o = o;
+    this.wallMs = o.wallMs ?? systemClock;
   }
 
   /** Serve these slots: attach to their holders and renew leases every heartbeat. */
@@ -154,7 +159,7 @@ export class StatusReader implements StatusReaderRuntime {
     const q = async (sql: string, params: unknown[] = []): Promise<Array<Record<string, unknown>>> =>
       (await this.o.pool.query(sql, params.map(toPg))).rows as Array<Record<string, unknown>>;
     let holderLive: boolean;
-    if (cachedUntil !== undefined && Date.now() < cachedUntil) {
+    if (cachedUntil !== undefined && this.wallMs() < cachedUntil) {
       holderLive = true;
     } else {
       const rows = await q(
@@ -162,7 +167,7 @@ export class StatusReader implements StatusReaderRuntime {
            FROM owner_slot s LEFT JOIN owner_session se ON se.session_id = s.session_id
           WHERE s.kind = $1 AND s.slot = $2`, [this.o.kind, accountSlot]);
       holderLive = Boolean(rows[0]?.['live']);
-      if (holderLive) this.rule3Cache.set(accountSlot, Date.now() + (this.o.rule3CacheMs ?? 100));
+      if (holderLive) this.rule3Cache.set(accountSlot, this.wallMs() + (this.o.rule3CacheMs ?? 100));
       else this.rule3Cache.delete(accountSlot);
     }
     if (!this.o.rule3Rows) return { holderLive };

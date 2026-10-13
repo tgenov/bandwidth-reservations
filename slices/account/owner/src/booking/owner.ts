@@ -306,7 +306,7 @@ export class AccountOwner implements OwnerHooks {
       return ans;
     }
     resolveIntake('ok');
-    if (req.state === 'undecided') void this.workflow(acct, req).catch((err: unknown) => this.alert('WORKFLOW_FAILED', account, String(err)));
+    if (req.state === 'undecided') this.workflow(acct, req).catch((err: unknown) => this.alert('WORKFLOW_FAILED', account, String(err)));
     return this.answerWithin(acct, req, call.receivedAtMono);
   }
 

@@ -37,9 +37,11 @@
     "typecheck:rate": "tsc --noEmit -p slices/rate",
     "test:rate": "node --test --test-concurrency=1 'slices/rate/*/test/*.test.ts'",
     "check:boundaries": "python3 tools/check_boundaries.py",
+    "lint": "eslint platform slices contracts",
+    "lint:fix": "eslint --fix platform slices contracts",
     "typecheck": "npm run -s typecheck:platform && npm run -s typecheck:link && npm run -s typecheck:sec && npm run -s typecheck:account && npm run -s typecheck:rate && npm run -s typecheck:contracts",
     "test:unit": "npm run -s test:platform && npm run -s test:link && npm run -s test:sec && npm run -s test:account && npm run -s test:rate",
-    "check": "npm run -s check:boundaries && npm run -s typecheck && npm run -s test:unit && npm run -s test:contracts",
+    "check": "npm run -s check:boundaries && npm run -s lint && npm run -s typecheck && npm run -s test:unit && npm run -s test:contracts",
     "test:integration": "npm run -s test:platform:integration && npm run -s test:link:integration",
     "ci": "bash tools/ci.sh",
     "prepare": "git rev-parse --is-inside-work-tree >/dev/null 2>&1 && git config core.hooksPath .githooks || true",
@@ -53,7 +55,9 @@
   "devDependencies": {
     "@types/node": "^24.19.2",
     "@types/pg": "^8.11.10",
-    "typescript": "~5.9.3"
+    "eslint": "10.11.0",
+    "typescript": "~5.9.3",
+    "typescript-eslint": "8.71.1"
   },
   "engines": {
     "node": ">=24"

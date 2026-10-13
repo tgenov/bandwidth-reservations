@@ -93,6 +93,7 @@ export class StageAOwner implements OwnerHooks {
     rt.subscribe(TOPIC_BINDINGS, { positions: [] }, 'committed', (e) => this.queue.run(() => this.onBinding(e)));
     rt.subscribe(TOPIC_CATALOGUE, { positions: [] }, 'committed', async (e) => { opts.catalogue.applyFeedEvent(e); });
     rt.onResolved(TOPIC_CATALOGUE, (_d, R) => opts.catalogue.onResolved(R));
+    // Fire and forget: onResolved does not wait (C01 §3.5); the step only reads state and calls onWatermark.
     rt.onResolved(TOPIC_HANDOFF, (dest, R) => { void this.queue.run(async () => this.onHandoffResolved(dest, R)); });
   }
 

@@ -12,6 +12,7 @@
  */
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from 'node:http';
 import { randomUUID } from 'node:crypto';
+import { systemClock } from '@share/owner-runtime';
 import {
   isValidIdempotencyKey, type AccountOwner, type BookRequest, type C10Answer, type PrincipalContext, type StatusReader,
 } from '@share/account-owner';
@@ -57,14 +58,14 @@ export interface BookingApiOptions {
   owner: AccountOwner;
   reader: StatusReader;
   identity: EdgeIdentity;
-  /** Wall clock in ms for the principal context. Default: Date.now. */
+  /** Wall clock in ms for the principal context. Default: the system clock. */
   wallMs?: () => number;
   /** Monotonic clock in ms for the ack rule. Default: performance.now. */
   monoMs?: () => number;
 }
 
 export function createBookingApi(o: BookingApiOptions): Server {
-  const wallMs = o.wallMs ?? (() => Date.now());
+  const wallMs = o.wallMs ?? systemClock;
   const monoMs = o.monoMs ?? (() => performance.now());
   return createServer((req, res) => {
     const receivedAtMono = monoMs();

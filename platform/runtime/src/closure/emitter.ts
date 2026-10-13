@@ -17,6 +17,7 @@ import { Session, sessionShard } from '../session.ts';
 import type { OwnerStore } from '../store/types.ts';
 import { partitionForKey, type BusSubscription, type FeedBus } from '../feed/bus.ts';
 import { cdcTopic, closureTopic, decodeRelayProgress, encodeClosure, relayProgressTopic } from '../feed/wire.ts';
+import { systemClock, type WallClock } from '../clock.ts';
 
 /** Feed sequence of each link as of `at` (the `closure_emitter` role's follower read of `<kind>_head.streams`). */
 export interface FeedSeqReader {
@@ -30,6 +31,8 @@ export interface ClosureEmitterOptions {
   store: OwnerStore;
   feedSeqs?: FeedSeqReader;
   heartbeatMs?: number;
+  /** The wall clock of the heartbeat (default: the system clock). */
+  wallMs?: WallClock;
   pollMs?: number;
   sessionTimings?: Partial<SessionTimings>;
   log?: (msg: string, fields?: Record<string, unknown>) => void;
@@ -39,6 +42,7 @@ export const emitterSlotKind = (kind: string): string => `closure_${kind}`;
 
 export class ClosureEmitter {
   private readonly o: ClosureEmitterOptions;
+  private readonly wallMs: WallClock;
   private readonly kind: string;
   private readonly progress = new Map<number, HlcTs>();
   private sub: BusSubscription | undefined;
@@ -54,6 +58,7 @@ export class ClosureEmitter {
 
   constructor(o: ClosureEmitterOptions) {
     this.o = o;
+    this.wallMs = o.wallMs ?? systemClock;
     this.kind = o.declaration.kind;
     this.session = new Session(o.store, { ...DEFAULT_SESSION_TIMINGS, ...o.sessionTimings },
       { host: 'closure-emitter', region: 'r1', facility: 'r1a', kind: emitterSlotKind(this.kind) },
@@ -114,6 +119,7 @@ export class ClosureEmitter {
 
   private schedule(): void {
     if (this.stopped) return;
+    // Fire and forget: C01 §3.6 closure poll loop. tick() catches and logs every error.
     this.timer = setTimeout(() => void this.tick().finally(() => this.schedule()), this.o.pollMs ?? 200);
     this.timer.unref();
   }
@@ -126,11 +132,11 @@ export class ClosureEmitter {
       const R = await this.computeRMin();
       if (R === undefined) return;
       const advanced = this.lastR === undefined || compareHlc(R, this.lastR) > 0;
-      const full = Date.now() - this.lastFull >= (this.o.heartbeatMs ?? 10_000);
+      const full = this.wallMs() - this.lastFull >= (this.o.heartbeatMs ?? 10_000);
       if (!advanced && !full) return;
       await this.emit(R, full ? null : (this.lastR ?? null));
       this.lastR = R;
-      if (full) this.lastFull = Date.now();
+      if (full) this.lastFull = this.wallMs();
     } catch (e) {
       this.o.log?.('closure emitter pass failed', { error: String(e) });
     } finally {
