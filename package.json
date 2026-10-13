@@ -5,7 +5,10 @@
   "workspaces": [
     "platform/runtime",
     "platform/migrate",
-    "platform/examples/canary"
+    "platform/examples/canary",
+    "slices/rate/common",
+    "slices/rate/ingestion",
+    "slices/rate/rating-owner"
   ],
   "scripts": {
     "test": "node --test --test-concurrency=1 test/*.test.ts",
@@ -13,7 +16,9 @@
     "test:platform": "node --test --test-concurrency=1 'platform/*/test/*.test.ts' 'platform/examples/*/test/*.test.ts'",
     "test:platform:integration": "node --test --test-concurrency=1 'platform/*/test/integration/*.test.ts' 'platform/examples/*/test/integration/*.test.ts'",
     "dev:up": "docker compose -f platform/dev/docker-compose.yml up -d --wait",
-    "dev:down": "docker compose -f platform/dev/docker-compose.yml down -v"
+    "dev:down": "docker compose -f platform/dev/docker-compose.yml down -v",
+    "typecheck:rate": "tsc --noEmit -p slices/rate",
+    "test:rate": "node --test --test-concurrency=1 'slices/rate/*/test/*.test.ts'"
   },
   "dependencies": {
     "pg": "^8.13.1"

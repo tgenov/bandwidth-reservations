@@ -1,0 +1,19 @@
+{
+  "name": "@share/rating-owner",
+  "version": "0.1.0",
+  "description": "S-RATE catalogue, attribution stages A and B, rating and charge-line emission (I1 walking skeleton)",
+  "private": true,
+  "type": "module",
+  "exports": {
+    ".": "./src/index.ts",
+    "./testing": "./testing/index.ts"
+  },
+  "scripts": {
+    "test": "node --test --test-concurrency=1 'test/*.test.ts'"
+  },
+  "dependencies": {
+    "@share/owner-runtime": "1.0.0-alpha.1",
+    "@share/rate-common": "0.1.0",
+    "@share/ingestion": "0.1.0"
+  }
+}

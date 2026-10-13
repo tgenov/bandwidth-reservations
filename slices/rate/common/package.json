@@ -1,0 +1,16 @@
+{
+  "name": "@share/rate-common",
+  "version": "0.1.0",
+  "description": "S-RATE shared code: C06 and C11 types, exact arithmetic, minutes, C01 append policy",
+  "private": true,
+  "type": "module",
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "scripts": {
+    "test": "node --test --test-concurrency=1 'test/*.test.ts'"
+  },
+  "dependencies": {
+    "@share/owner-runtime": "1.0.0-alpha.1"
+  }
+}
