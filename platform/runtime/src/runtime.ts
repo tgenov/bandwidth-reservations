@@ -120,6 +120,8 @@ export interface OwnerRuntimeOptions {
     sessionTimings?: Partial<SessionTimings>;
     commitBackstopMs?: number;
     abandonBeforeCommitMs?: number;
+    /** The monotonic clock (ms) of the abandon budget of each batch (C01 §7); default `performance.now`. */
+    batchNowMs?: () => number;
     onDecide?: () => void;
     /** read_lease + ε after an acquisition (C01 §3.1); default 500 ms. */
     postAcquisitionWaitMs?: number;
@@ -625,6 +627,7 @@ export class CockroachOwnerRuntime implements OwnerRuntime {
         batchRetries: PARAMS.batchRetries,
         abandonBeforeCommitMs: this.o.testing?.abandonBeforeCommitMs ?? PARAMS.abandonBeforeCommitMs,
         commitBackstopMs: this.o.testing?.commitBackstopMs ?? PARAMS.commitBackstopMs,
+        ...(this.o.testing?.batchNowMs ? { nowMs: this.o.testing.batchNowMs } : {}),
       });
     } catch (e) {
       outcome = { kind: 'failed', error: e instanceof Error ? e : new Error(String(e)) };

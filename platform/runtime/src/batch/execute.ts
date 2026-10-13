@@ -14,6 +14,8 @@ export interface ExecuteOptions {
   batchRetries: number;
   abandonBeforeCommitMs: number;
   commitBackstopMs: number;
+  /** The monotonic clock of the abandon budget, in ms (default `performance.now`; engineering.md §5: a test steps it). */
+  nowMs?: () => number;
 }
 
 async function quietly(p: Promise<void>): Promise<void> {
@@ -41,6 +43,7 @@ async function commitWithBackstop(tx: BatchTxn, backstopMs: number): Promise<voi
  */
 export async function executeBatch(store: OwnerStore, env: AttemptEnv, calls: PendingCall[], o: ExecuteOptions): Promise<BatchOutcome> {
   const abandonMs = Math.min(o.abandonBeforeCommitMs, ...calls.map((c) => c.opts.abandonBeforeCommitMs ?? o.abandonBeforeCommitMs));
+  const nowMs = o.nowMs ?? (() => performance.now());
   let restarts = 0;
   let freshAttempts = 0;
   let tx: BatchTxn;
@@ -50,7 +53,7 @@ export async function executeBatch(store: OwnerStore, env: AttemptEnv, calls: Pe
     return { kind: 'failed', error: e instanceof Error ? e : new Error(String(e)) };
   }
   for (;;) {
-    const started = performance.now();
+    const started = nowMs();
     let plan: AttemptPlan | undefined;
     try {
       plan = await runAttempt(tx, env, calls);
@@ -60,7 +63,7 @@ export async function executeBatch(store: OwnerStore, env: AttemptEnv, calls: Pe
         return { kind: 'answered', plan };
       }
       await tx.write(env.decl.kind, plan.writes);
-      if (performance.now() - started > abandonMs) throw new AbandonSignal();
+      if (nowMs() - started > abandonMs) throw new AbandonSignal();
       try {
         await commitWithBackstop(tx, o.commitBackstopMs);
       } catch (e) {
