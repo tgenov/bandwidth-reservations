@@ -2,6 +2,7 @@ import pg from 'pg';
 import type { OwnerDeclaration } from '@share/owner-runtime';
 import { kindMigration, platformMigration, type Migration } from './generate.ts';
 import { grantMigration, type GrantOptions } from './grants.ts';
+import { assertClearColumns } from './clear-columns.ts';
 
 export interface ApplyReport { applied: Array<{ id: string; statements: number }> }
 
@@ -25,7 +26,10 @@ export async function applyMigrations(connectionString: string, migrations: Migr
 
 export async function migrateKinds(connectionString: string, declarations: OwnerDeclaration[],
   opts: { presplit?: boolean; grants?: boolean | GrantOptions } = {}): Promise<ApplyReport> {
-  const ms = [platformMigration(), ...declarations.map((d) => kindMigration(d, opts))];
+  const kinds = declarations.map((d) => kindMigration(d, opts));
+  // C01 CP-13 (RFC-005 RK-8): refuse a clear column outside the declared set before any statement runs.
+  declarations.forEach((d, i) => assertClearColumns(d, kinds[i]?.statements ?? []));
+  const ms = [platformMigration(), ...kinds];
   if (opts.grants) ms.push(grantMigration(declarations, typeof opts.grants === 'object' ? opts.grants : {}));
   return applyMigrations(connectionString, ms);
 }

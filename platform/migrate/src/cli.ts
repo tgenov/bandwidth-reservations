@@ -5,6 +5,7 @@ import { resolve } from 'node:path';
 import type { OwnerDeclaration } from '@share/owner-runtime';
 import { kindMigration, platformMigration } from './generate.ts';
 import { applyMigrations } from './apply.ts';
+import { assertClearColumns } from './clear-columns.ts';
 
 const args = process.argv.slice(2);
 const file = args.find((a) => !a.startsWith('--'));
@@ -15,7 +16,9 @@ if (!file) {
 const mod = await import(pathToFileURL(resolve(file)).href) as { declaration?: OwnerDeclaration; default?: OwnerDeclaration };
 const decl = mod.declaration ?? mod.default;
 if (!decl) throw new Error(`${file} exports no declaration`);
-const migrations = [platformMigration(), kindMigration(decl, { presplit: !args.includes('--no-presplit') })];
+const kind = kindMigration(decl, { presplit: !args.includes('--no-presplit') });
+assertClearColumns(decl, kind.statements);   // C01 CP-13 schema lint, before printing or applying
+const migrations = [platformMigration(), kind];
 if (args.includes('--print')) {
   for (const m of migrations) process.stdout.write(`-- ${m.id}\n${m.statements.join(';\n\n')};\n\n`);
 } else {
