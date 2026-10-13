@@ -3,7 +3,8 @@
 
 This is a design model, not code of the runtime. It applies the rules of RFC-006 §4.7 rule 5
 (5a sojourn admission control, 5b per-entry batch cap, 5c abandon handling) and reports the
-per-second goodput and the count of state changes for the cases of review 77.
+per-second goodput and the count of state changes for the cases of review 77,
+and judges the §22.1 "Overload recovery" criteria as review 78 (D-78-1 … D-78-5) sets them.
 
 Database time of a batch of n entries: d = F + c·n (ms), optionally multiplied by noise.
 A batch not at COMMIT within A = 2,000 ms of BEGIN is abandoned (C01 abandonBeforeCommitMs).
@@ -57,6 +58,8 @@ def run(F=50.0, c=2.0, phases=((3000, 1000), (33000, 200)), initial=0, seed=1, r
     shed_k = [0]              # calls shed in this episode
     est = {'F': None, 'c': None, 'samples': [], 'bound_run': 0}
     commits = []
+    bstarts = []              # start time of each batch
+    abandon_at = []           # time of each abandon
     waits = []                # queue wait of committed calls (first enqueue to take)
     stats = {'abandons': 0, 'batches': 0, 'fresh': 0, 'shed': 0, 'lost': 0, 'retry': 0, 'max_d': 0.0}
 
@@ -93,6 +96,7 @@ def run(F=50.0, c=2.0, phases=((3000, 1000), (33000, 200)), initial=0, seed=1, r
         return n
 
     def drain_ms(q):
+        """Expected drain of q entries (5a `D`); 500 ms with no estimate."""
         if est['c'] is None:
             return 500.0
         cap = max(1, min(HARD_CAP, int(budget / est['c'])))
@@ -108,8 +112,14 @@ def run(F=50.0, c=2.0, phases=((3000, 1000), (33000, 200)), initial=0, seed=1, r
         else:
             above_since[0] = None
 
+    def expected_sojourn(now):
+        """5a: with no estimate, the age of the oldest queued call (review 78 D-78-4)."""
+        if est['c'] is None:
+            return (now - queue[0][0]) if queue else 0.0
+        return drain_ms(len(queue))
+
     def maybe_release(now):
-        if state[0] == 'ovl' and trace[-1][1] != round(now) and drain_ms(len(queue)) <= target:
+        if state[0] == 'ovl' and trace[-1][1] != round(now) and expected_sojourn(now) <= target:
             state[0] = 'adm'; changes[0] += 1; above_since[0] = None; trace.append(('release', round(now)))
 
     def start(now, batch=None, fresh=False):
@@ -133,6 +143,7 @@ def run(F=50.0, c=2.0, phases=((3000, 1000), (33000, 200)), initial=0, seed=1, r
         if stall and stall[0] <= now < stall[1]:
             d += stall[2]; excluded = stall[3]
         busy[0] = True; stats['batches'] += 1
+        bstarts.append(now)
         if fresh:
             stats['fresh'] += 1
         if d > A:
@@ -151,7 +162,8 @@ def run(F=50.0, c=2.0, phases=((3000, 1000), (33000, 200)), initial=0, seed=1, r
             if rules and state[0] == 'ovl':
                 stats['shed'] += 1; shed_k[0] += 1
                 drain = min(retry_max, drain_ms(len(queue) + shed_k[0]))
-                push(now + retry_floor + rnd.uniform(0, drain), 'arr', data)
+                retry_after = min(retry_max, retry_floor + rnd.uniform(0, drain))   # clamped after the base (D-78-5)
+                push(now + retry_after, 'arr', data)
             else:
                 queue.append((now, data)); start(now)
         elif kind == 'done':
@@ -168,6 +180,7 @@ def run(F=50.0, c=2.0, phases=((3000, 1000), (33000, 200)), initial=0, seed=1, r
         elif kind == 'abandon':
             batch, was_fresh = data
             busy[0] = False; stats['abandons'] += 1
+            abandon_at.append(now)
             if rules and est['F'] is not None:
                 est['c'] = max(est['c'] or 0.0, (A - est['F']) / len(batch))
             elif rules:
@@ -192,9 +205,15 @@ def run(F=50.0, c=2.0, phases=((3000, 1000), (33000, 200)), initial=0, seed=1, r
         s = int(t // 1000)
         if s < secs:
             per_s[s] += 1
+    per_s_b = [0] * secs
+    for t in bstarts:
+        s = int(t // 1000)
+        if s < secs:
+            per_s_b[s] += 1
     waits.sort()
     p99w = waits[int(0.99 * (len(waits) - 1))] if waits else 0.0
-    return dict(trace=trace, per_s=per_s, changes=changes[0], p99_wait=p99w, **stats)
+    return dict(trace=trace, per_s=per_s, per_s_b=per_s_b, changes=changes[0], p99_wait=p99w,
+                abandon_at=abandon_at, **stats)
 
 
 def offered(phases, s):
@@ -215,6 +234,53 @@ def report(name, r, phases, from_s):
           f"fresh {r['fresh']}; shed {r['shed']}; lost {r['lost']}; batches {r['batches']}; "
           f"max batch {r['max_d']:.0f} ms; p99 queue wait {r['p99_wait']:.0f} ms")
     print('   per-s:', r['per_s'])
+
+
+def judge(r, phases, C, after_s, start_s=0, window=None):
+    """§22.1 "Overload recovery" criteria (1) to (4) on one run (review 78 D-78-1).
+    after_s: the start of criterion (2): 3 s + T_d + 2 s; in (b) and (d) the end of the slowdown window + T_d + 2 s.
+    start_s: the burst start. window: (from_s, to_s), the slowdown window of (b) and (d), exempt from (1) and (4).
+    Goodput is counted per 1 s, and per 2 s while draining; on a slot with fewer than 20 batches a second,
+    per window of 20 batch durations (at least 2 s) in place of both (sliding by 1 s)."""
+    g, nb = r['per_s'], r['per_s_b']
+    secs = len(g)
+    exempt = (lambda s: window[0] <= s < window[1]) if window else (lambda s: False)
+    a = int(math.ceil(after_s))
+    bps = sum(nb[a:]) / max(1, secs - a)
+    w1 = 1 if bps >= 20 else min(10, max(2, int(math.ceil(20 / bps)))) if bps else 2
+    w2 = max(2, w1)
+
+    def win(i, w):
+        return sum(g[i:i + w]), sum(offered(phases, s) for s in range(i, i + w))
+
+    ratios = [x / o for x, o in (win(i, w1) for i in range(a, secs - w1 + 1))]
+    zeros = [i for i in range(start_s + 1, secs - w1 + 1)
+             if not any(exempt(s) for s in range(i, i + w1)) and win(i, w1)[0] == 0]
+    d_end = int(after_s - 2)                    # the end of T_d
+    drain = [i for i in range(start_s, d_end - w2 + 1) if not any(exempt(s) for s in range(i, i + w2))]
+    low = [i for i in drain if win(i, w2)[0] < 0.8 * C * w2 and win(i, w2)[0] < 0.95 * win(i, w2)[1]]
+    two = min((win(i, w2)[0] / w2 / C for i in drain), default=None)
+    late = [t for k, t in r['trace'] if k == 'enter' and t >= after_s * 1000]
+    ab_out = [t for t in r['abandon_at'] if not (window and window[0] * 1000 <= t < window[1] * 1000)]
+    ok = (min(ratios) >= 0.95 and not zeros and not low and not late
+          and len(ab_out) <= 0.01 * r['batches'] and all(t < after_s * 1000 for t in ab_out))
+    print(f"   criteria from {after_s:.1f} s (windows {w1} s): (1) zero windows {zeros or 'none'}; "
+          f"while draining min {two if two is None else f'{two:.0%}'} of C, windows below 80% of C and 95% of offered "
+          f"{low or 'none'}; (2) min {min(ratios):.0%} of offered, entries after {late or 'none'}; "
+          f"(3) {r['changes']} state changes, last at {r['trace'][-1][1] / 1000 if r['trace'] else '-'} s; "
+          f"(4) {len(ab_out)} abandons of {r['batches']} batches outside the slowdown window: "
+          f"{'PASS' if ok else 'FAIL'}")
+    return ok
+
+
+def slow_backlog(r, phases, C, window):
+    """(b), (d): the backlog E that the slowdown window leaves, its drain time T_d and C_slow seen."""
+    lo, hi = window
+    off = sum(offered(phases, s) for s in range(lo, hi))
+    done = sum(r['per_s'][lo:hi])
+    lam = offered(phases, hi)
+    E = off - done
+    return E, E / (C - lam), done / (hi - lo)
 
 
 if __name__ == '__main__':
@@ -243,23 +309,46 @@ if __name__ == '__main__':
     st = ((33000, 200),)
     r = run(phases=st, stall=(10000, 10500, 800.0, True))
     report('  rules on, fallback batches not sampled', r, st, 2)
-    print('Case 5, a burst of 2 C for 3 s then 0.8 C (§22.1 run (a) with the case 1 database; C = 444/s)')
+    C = 444                                     # capacity of the case 1 database with 5b (calls/s)
+    seeds = range(1, 21)                        # D-78-2: 20 seeds with 20% noise set the state-change limit
+
+    def noisy(label, **kw):
+        cs = sorted(run(noise=0.2, seed=k, **kw)['changes'] for k in seeds)
+        print(f"{label}: state changes with 20% noise, seeds 1 to 20: {cs} (min {cs[0]}, median "
+              f"{cs[len(cs) // 2]}, max {cs[-1]})")
+
+    print('Case 5, a burst of 2 C for 3 s then 0.8 C (§22.1 run (a) with the case 1 database; C = 444/s, T_d = 15 s)')
     ph = ((3000, 888), (40000, 355))
     r = run(phases=ph, end=40000)
     report('  rules on, v1', r, ph, 0)
-    print('Case 6, a burst of 5 C for 3 s then 0.8 C (§22.1 run (a′) with the case 1 database; C = 444/s)')
-    ph = ((3000, 2220), (60000, 355))
+    judge(r, ph, C, 3 + 15 + 2)
+    noisy('  rules on, v1', phases=ph, end=40000)
+    print('Case 6, a burst of 5 C for 3 s then 0.8 C to 93 s (§22.1 run (a′) with the case 1 database; T_d = 60 s)')
+    ph = ((3000, 2220), (93000, 355))
     for label, kw in [('  rules off', dict(rules=False)), ('  rules on, v1', dict())]:
-        r = run(phases=ph, end=60000, **kw)
+        r = run(phases=ph, end=93000, **kw)
         report(label, r, ph, 0)
-    print('Case 7, the database 10 times slower per row for 10 s (c = 20 ms/row in 10 to 20 s) at 200/s (§22.1 run (b))')
-    st = ((33000, 200),)
+        judge(r, ph, C, 3 + 60 + 2)
+    noisy('  rules on, v1', phases=ph, end=93000)
+    print('Case 7, §22.1 run (b): 0.8 C (355/s) to 120 s, c 10 times larger per row in 10 to 20 s (c = 20 ms/row)')
+    ph = ((120000, 355),)
+    sw = (10, 24)                               # slowdown window: the slowdown and 2 abandon budgets after the restore
     for label, kw in [('  rules off', dict(rules=False)), ('  rules on, v1 fallback', dict()),
                       ('  rules on, CI6-5 (no fresh attempt)', dict(fresh_attempt=False))]:
-        r = run(phases=st, slow=(10000, 20000, 10.0), **kw)
-        report(label, r, st, 0)
-    print('Case 8, the database 30 times slower per row for 10 s (c = 60 ms/row in 10 to 20 s) at 200/s: abandons occur')
+        r = run(phases=ph, slow=(10000, 20000, 10.0), end=120000, **kw)
+        report(label, r, ph, 0)
+        E, Td, seen = slow_backlog(r, ph, C, sw)
+        print(f"   slowdown window 10 to 24 s: goodput {seen:.0f}/s (C_slow about 44/s); backlog E = {E}; "
+              f"T_d = E / (C - 355) = {Td:.1f} s")
+        judge(r, ph, C, sw[1] + Td + 2, start_s=sw[0], window=sw)
+    noisy('  rules on, v1', phases=ph, slow=(10000, 20000, 10.0), end=120000)
+    st = ((60000, 200),)
+    print('Case 8, the database 30 times slower per row for 10 s (c = 60 ms/row in 10 to 20 s) at 200/s to 60 s: abandons occur')
     for label, kw in [('  rules off', dict(rules=False)), ('  rules on, v1 fallback', dict()),
                       ('  rules on, CI6-5 (no fresh attempt)', dict(fresh_attempt=False))]:
         r = run(phases=st, slow=(10000, 20000, 30.0), **kw)
         report(label, r, st, 0)
+        E, Td, seen = slow_backlog(r, st, C, sw)
+        print(f"   slowdown window 10 to 24 s: goodput {seen:.0f}/s (C_slow about 15/s); backlog E = {E}; "
+              f"T_d = E / (C - 200) = {Td:.1f} s")
+        judge(r, st, C, sw[1] + Td + 2, start_s=sw[0], window=sw)
