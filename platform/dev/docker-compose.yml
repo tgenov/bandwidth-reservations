@@ -9,7 +9,8 @@
 #   - set KAFKA_CONTROLLER_QUORUM_VOTERS to "1@kafka1:9093,2@kafka2:9093,3@kafka3:9093" on all three;
 #   - set KAFKA_DEFAULT_REPLICATION_FACTOR=3, KAFKA_MIN_INSYNC_REPLICAS=2 and the offsets/transaction
 #     state log replication factors to 3 (the producer uses acks=all, C01 §3.5);
-#   - TODO(I1b, C01 §2.5): SASL principals per producer and the per-topic producer ACLs.
+#   - TODO(S-PLAT-I1 rest, C01 §2.5): SASL principals per producer, an authorizer, and the ACLs that
+#     producerAcls() generates (aclCommands() prints kafka-acls.sh lines).
 
 x-crdb: &crdb
   image: cockroachdb/cockroach:v24.3.5

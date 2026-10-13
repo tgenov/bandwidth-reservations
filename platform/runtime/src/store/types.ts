@@ -26,6 +26,12 @@ export interface OutboxRowWrite {
 /** Every write of one batch; all rows carry the batch's `ts`. */
 export interface BatchWrites {
   ts: HlcTs; log: LogRowWrite[]; outbox: OutboxRowWrite[]; heads: StoredHead[]; projections: ProjectionWrite[];
+  /** A report marker in this transaction: owner_slot.report_through and marker_seq (C01 §3.4, V59-6). */
+  slotUpdate?: { slot: SlotNo; reportThrough: HlcTs; markerSeq: bigint };
+  /** Self-outboxed kinds: `<kind>_stream_index` rows (C01 §2.3, R47-19). */
+  streamIndex?: Array<{ partition: Uint8Array; stream: string; streamSeq: bigint; seq: bigint }>;
+  /** Kinds with slotPositions: the slot's new commit position (C08 §C). */
+  slotPosition?: { slot: SlotNo; position: bigint };
 }
 
 export type DisplacementCondition = Extract<Condition, { kind: 'displacementRead' }>;
@@ -44,6 +50,10 @@ export interface BatchTxn {
   readRows(refs: RowRef[]): Promise<Map<string, unknown>>;
   readDisplacement(c: DisplacementCondition): Promise<{ row: unknown | undefined } | 'lockTimeout'>;
   readTs(): Promise<HlcTs>;
+  /** C01 §3.4 rule 7: `outcome_id` of every outcome event of the slot with after < ts ≤ upTo (marker-only transactions). */
+  readOutcomeIds?(kind: string, slot: SlotNo, stream: string, after: HlcTs | null, upTo: HlcTs): Promise<Uint8Array[]>;
+  /** Kinds with slotPositions: the slot's last commit position (0 before the first). */
+  readSlotPosition?(kind: string, slot: SlotNo): Promise<bigint>;
   write(kind: string, w: BatchWrites): Promise<void>;
   /** ROLLBACK TO SAVEPOINT cockroach_restart: keeps intents (a restart, not an abort). */
   restart(): Promise<void>;
@@ -86,6 +96,10 @@ export interface OwnerStore {
   resolutionRead(kind: string, sessionShard: number, sessionId: string, slots: SlotNo[], partitions: Uint8Array[]):
     Promise<ResolutionRead>;
   readTiming(shard: number): Promise<TimingSnapshot>;
+  /** A partition's log rows by (partition, seq) from `fromSeq`, across slots (C01 §3.1 rebuild, R47-01). */
+  readLogRows?(kind: string, partition: Uint8Array, fromSeq: bigint): Promise<Array<LogRowWrite & { ts: HlcTs }>>;
+  /** Partitions whose head names the slot and is adopted (the partitions the slot serves, C01 §3.2). */
+  listPartitions?(kind: string, slot: SlotNo): Promise<Uint8Array[]>;
   withReadTx<T>(at: 'present' | HlcTs, fn: (tx: ReadTx) => Promise<T>): Promise<T>;
   followerRead<T>(fn: (tx: ReadTx) => Promise<T>): Promise<{ value: T; servedAt: HlcTs }>;
   close(): Promise<void>;

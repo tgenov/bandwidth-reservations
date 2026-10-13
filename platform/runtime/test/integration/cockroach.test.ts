@@ -4,7 +4,7 @@
  * Overloaded), CP-3, CP-4, "decide re-runs on restart" and "a stale epoch never commits"; plus direct publish
  * to Kafka when KAFKA_BROKERS (default localhost:9092) answers.
  */
-import { test } from 'node:test';
+import { afterEach, test } from 'node:test';
 import assert from 'node:assert/strict';
 import { connect } from 'node:net';
 import { randomBytes } from 'node:crypto';
@@ -81,7 +81,13 @@ class FaultStore {
           const rollback = tx.rollback.bind(tx);
           tx.commit = async (ms: number) => {
             if (self.beforeCommit) { const f = self.beforeCommit; self.beforeCommit = undefined; await f(); }
-            if (self.retriesAtCommit > 0) { self.retriesAtCommit -= 1; throw retryableError('injected 40001 at RELEASE'); }
+            if (self.retriesAtCommit > 0) {
+              self.retriesAtCommit -= 1;
+              // A real 40001 from CockroachDB: the transaction restarts with a new timestamp, as in production.
+              // (A client-made 40001 would keep the old timestamp across ROLLBACK TO SAVEPOINT.)
+              await (tx as unknown as { client: pg.PoolClient }).client.query(`SELECT crdb_internal.force_retry('1h')`);
+              throw retryableError('force_retry did not fail');
+            }
             if (self.ambiguous === 'notCommitted') { self.ambiguous = 'none'; await rollback(); throw new AmbiguousCommitError('injected: not committed'); }
             await commit(ms);
             if (self.ambiguous === 'committed') { self.ambiguous = 'none'; throw new AmbiguousCommitError('injected: committed, answer lost'); }
@@ -99,6 +105,14 @@ function hooks(): OwnerHooks & { released: Array<[SlotNo, string]> } {
   return h;
 }
 
+/** Each test has a hard timeout, so that a hang fails fast. */
+const T = { timeout: 30_000 };
+/** Every runtime and client that a test opens. afterEach closes them, also when an assertion fails. */
+const open: Array<() => Promise<void>> = [];
+afterEach(async () => {
+  for (const c of open.splice(0).reverse()) await c().catch(() => {});
+});
+
 async function boot(slots: SlotNo[] = [0, 1, 2, 3], publisher: Publisher = new MemoryPublisher()) {
   const pgStore = new PgStore({ connectionString: URL, displacement: {
     table: `${KIND}_displacement`,
@@ -107,10 +121,14 @@ async function boot(slots: SlotNo[] = [0, 1, 2, 3], publisher: Publisher = new M
   const faults = new FaultStore(pgStore);
   const load = new ManualLoad();
   const h = hooks();
-  const rt = new CockroachOwnerRuntime({ declaration: DECL, store: faults.wrap(), slots, publisher, load, testing: { sessionTimings: FAST } });
+  const rt = new CockroachOwnerRuntime({ declaration: DECL, store: faults.wrap(), slots, publisher, load, testing: { sessionTimings: FAST },
+    log: process.env['ITEST_LOG'] ? (m, f) => console.log(m, f) : undefined });
+  let closed = false;
+  const close = async (): Promise<void> => { if (closed) return; closed = true; await rt.stop(); await pgStore.close(); };
+  open.push(close);
   await rt.start(h);
   for (let i = 0; i < 40 && rt.heldSlots().length < slots.length; i++) await sleep(100);
-  return { rt, faults, load, h, pgStore, close: async () => { await rt.stop(); await pgStore.close(); } };
+  return { rt, faults, load, h, pgStore, close };
 }
 
 async function q(sql: string, params: unknown[] = []): Promise<Array<Record<string, unknown>>> {
@@ -121,14 +139,22 @@ async function q(sql: string, params: unknown[] = []): Promise<Array<Record<stri
 
 const fresh = (): Uint8Array => utf8(`p-${randomBytes(4).toString('hex')}`);
 
-test('setup: migrate the platform tables and the test kind', { skip: SKIP }, async () => {
-  await migrateKinds(URL, [DECL], { presplit: false });
+const KIND2 = `${KIND}x`;
+const DECL2: OwnerDeclaration = {
+  kind: KIND2, slotCount: 2, slotPositions: true, selfOutboxed: true,
+  entryKinds: [{ kind: 1, name: 'e', schemaVersions: [1], retention: 'ops' }],
+  projections: [],
+  streams: [{ name: 'byacct', topic: `${KIND2}.byacct.v1`, key: { field: 'account' }, emitFn: { version: 1 }, closure: 'none', consumers: [] }],
+};
+
+test('setup: migrate the platform tables and the test kind', { ...T, skip: SKIP }, async () => {
+  await migrateKinds(URL, [DECL, DECL2], { presplit: false });
   await migrateKinds(URL, [DECL], { presplit: false });   // idempotent
-  const rows = await q('SELECT count(*)::INT AS n FROM owner_slot WHERE kind = $1', [KIND]);
+  const rows = await q('SELECT count(*)::INT4 AS n FROM owner_slot WHERE kind = $1', [KIND]);
   assert.equal(rows[0]?.['n'], 4);
 });
 
-test('CP-2 Committed: log, head (batch_id) and outbox in one transaction; chain matches; ts increasing', { skip: SKIP }, async () => {
+test('CP-2 Committed: log, head (batch_id) and outbox in one transaction; chain matches; ts increasing', { ...T, skip: SKIP }, async () => {
   const { rt, close } = await boot();
   const P = fresh();
   const a = await rt.append({ partition: P, entries: [entry('a'), entry('b')] });
@@ -148,12 +174,12 @@ test('CP-2 Committed: log, head (batch_id) and outbox in one transaction; chain 
   const head = await q(`SELECT seq, batch_id, chain FROM ${KIND}_head WHERE partition = $1`, [Buffer.from(P)]);
   assert.equal(String(head[0]?.['seq']), '3');
   assert.equal((head[0]?.['batch_id'] as Buffer).length, 16);
-  const ob = await q(`SELECT count(*)::INT AS n FROM ${KIND}_outbox WHERE partition = $1`, [Buffer.from(P)]);
+  const ob = await q(`SELECT count(*)::INT4 AS n FROM ${KIND}_outbox WHERE partition = $1`, [Buffer.from(P)]);
   assert.equal(ob[0]?.['n'], 3);
   await close();
 });
 
-test('CP-2 ConditionFailed commits the rest of the batch', { skip: SKIP }, async () => {
+test('CP-2 ConditionFailed commits the rest of the batch', { ...T, skip: SKIP }, async () => {
   const { rt, close } = await boot();
   const P = fresh();
   const mark: RowRef = { table: `${KIND}_mark`, key: { partition: P, id: 'm' } };
@@ -166,7 +192,7 @@ test('CP-2 ConditionFailed commits the rest of the batch', { skip: SKIP }, async
   await close();
 });
 
-test('CP-2 Retry after 5 restarts + 1 fresh attempt; CP-3 decide re-runs with a new ts each time', { skip: SKIP }, async () => {
+test('CP-2 Retry after 5 restarts + 1 fresh attempt; CP-3 decide re-runs with a new ts each time', { ...T, skip: SKIP }, async () => {
   const { rt, faults, close } = await boot();
   const P = fresh();
   faults.retriesAtCommit = 7;
@@ -174,7 +200,7 @@ test('CP-2 Retry after 5 restarts + 1 fresh attempt; CP-3 decide re-runs with a 
   assert.deepEqual(await rt.append({ partition: P, decide: (ctx) => { seen.push(ctx.ts); return { entries: [entry('r')] }; } }), { r: 'Retry' });
   assert.equal(seen.length, 7);
   assert.equal(new Set(seen).size, 7);
-  assert.equal((await q(`SELECT count(*)::INT AS n FROM ${KIND}_log WHERE partition = $1`, [Buffer.from(P)]))[0]?.['n'], 0);
+  assert.equal((await q(`SELECT count(*)::INT4 AS n FROM ${KIND}_log WHERE partition = $1`, [Buffer.from(P)]))[0]?.['n'], 0);
   faults.retriesAtCommit = 2;
   seen.length = 0;
   const r = await rt.append({ partition: P, decide: (ctx) => { seen.push(ctx.ts); return { entries: [entry(`at-${seen.length}`)] }; } });
@@ -184,20 +210,30 @@ test('CP-2 Retry after 5 restarts + 1 fresh attempt; CP-3 decide re-runs with a 
   await close();
 });
 
-test('CP-2 StaleEpoch: a successor acquisition between the fence read and COMMIT; the stale epoch never commits', { skip: SKIP }, async () => {
+test('CP-2 StaleEpoch: a successor acquisition between the fence read and COMMIT; the stale epoch never commits', { ...T, skip: SKIP }, async () => {
   const { rt, faults, h, close } = await boot();
   const P = fresh();
   const slot = slotOfPartition(P, 4);
   faults.beforeCommit = async () => {
-    await q('UPDATE owner_slot SET epoch = epoch + 1 WHERE kind = $1 AND slot = $2', [KIND, slot]);
+    // The successor's acquisition commits after the fence read. Its high-priority read of the head then pushes
+    // the batch above the acquisition, so the batch's fence read fails refresh (40001) and the restart sees the
+    // new epoch. (Without the push, CockroachDB can order the batch before the acquisition, which is correct.)
+    const c = new pg.Client({ connectionString: URL });
+    await c.connect();
+    try {
+      await c.query('BEGIN PRIORITY HIGH');
+      await c.query('UPDATE owner_slot SET epoch = epoch + 1 WHERE kind = $1 AND slot = $2', [KIND, slot]);
+      await c.query(`SELECT seq FROM ${KIND}_head WHERE partition = $1`, [Buffer.from(P)]);
+      await c.query('COMMIT');
+    } finally { await c.end(); }
   };
   assert.deepEqual(await rt.append({ partition: P, entries: [entry('late')] }), { r: 'StaleEpoch' });
-  assert.equal((await q(`SELECT count(*)::INT AS n FROM ${KIND}_log WHERE partition = $1`, [Buffer.from(P)]))[0]?.['n'], 0);
+  assert.equal((await q(`SELECT count(*)::INT4 AS n FROM ${KIND}_log WHERE partition = $1`, [Buffer.from(P)]))[0]?.['n'], 0);
   assert.ok(h.released.some(([s, r]) => s === slot && r === 'staleEpoch'));
   await close();
 });
 
-test('CP-2a Ambiguous: classified by batch_id with the resolution read (committed, and not committed)', { skip: SKIP }, async () => {
+test('CP-2a Ambiguous: classified by batch_id with the resolution read (committed, and not committed)', { ...T, skip: SKIP }, async () => {
   const { rt, faults, close } = await boot();
   const P = fresh();
   faults.ambiguous = 'committed';
@@ -211,14 +247,14 @@ test('CP-2a Ambiguous: classified by batch_id with the resolution read (committe
   await close();
 });
 
-test('CP-2 Overloaded only from shedding', { skip: SKIP }, async () => {
+test('CP-2 Overloaded only from shedding', { ...T, skip: SKIP }, async () => {
   const { rt, load, close } = await boot();
   load.value = true;
   assert.equal((await rt.append({ partition: fresh(), entries: [entry('o')] })).r, 'Overloaded');
   await close();
 });
 
-test('CP-4: exclusive + firstStatement placeholders are intents first; a concurrent displacement read meets them (lockTimeout)', { skip: SKIP }, async () => {
+test('CP-4: exclusive + firstStatement placeholders are intents first; a concurrent displacement read meets them (lockTimeout)', { ...T, skip: SKIP }, async () => {
   // Two partitions in different slots so their lanes run concurrently.
   const L = utf8('link-A');
   let R = fresh();
@@ -241,11 +277,16 @@ test('CP-4: exclusive + firstStatement placeholders are intents first; a concurr
   unblock();
   assert.equal((await cut).r, 'Committed');
   const after = await rt.append({ partition: R, conditions: [{ kind: 'displacementRead', link: utf8('link-A'), request: new Uint8Array(request), attempt: 1, lockTimeoutMs: 10, label: 'disp' }], entries: [entry('confirm2')] });
-  assert.deepEqual(after, { r: 'ConditionFailed', which: 'disp' }, 'the committed marker is found');
+  assert.equal(after.r, 'ConditionFailed', 'the committed marker is found');
+  if (after.r === 'ConditionFailed') { assert.equal(after.which, 'disp'); assert.equal(after.displacement?.attempt, 1); }
+  // C02 / P1-S78: a marker of ANY attempt fails the condition (here the confirm asks for attempt 2).
+  const other = await rt.append({ partition: R, conditions: [{ kind: 'displacementRead', link: utf8('link-A'), request: new Uint8Array(request), attempt: 2, lockTimeoutMs: 10, label: 'disp' }], entries: [entry('confirm3')] });
+  assert.equal(other.r, 'ConditionFailed');
+  if (other.r === 'ConditionFailed') assert.equal(other.displacement?.attempt, 1, 'the marker attempt is returned');
   await close();
 });
 
-test('CP-1: two processes contend for a slot across a pause; one committed writer at a time; seq contiguous', { skip: SKIP }, async () => {
+test('CP-1: two processes contend for a slot across a pause; one committed writer at a time; seq contiguous', { ...T, skip: SKIP }, async () => {
   const P = fresh();
   const slot = slotOfPartition(P, 4);
   const a = await boot([slot]);
@@ -266,7 +307,7 @@ test('CP-1: two processes contend for a slot across a pause; one committed write
   await a.close(); await b.close();
 });
 
-test('direct publish to Kafka after Committed (idempotent producer, acks=all)', { skip: SKIP || (!kafkaUp && `Kafka not reachable at ${BROKERS[0]}`) }, async () => {
+test('direct publish to Kafka after Committed (idempotent producer, acks=all)', { ...T, skip: SKIP || (!kafkaUp && `Kafka not reachable at ${BROKERS[0]}`) }, async () => {
   const publisher = new KafkaPublisher({ brokers: BROKERS, clientId: `${KIND}-holder` });
   const { rt, close } = await boot([0, 1, 2, 3], publisher);
   const kafka = new Kafka({ clientId: 'itest-consumer', brokers: BROKERS, logLevel: logLevel.NOTHING });
@@ -276,6 +317,7 @@ test('direct publish to Kafka after Committed (idempotent producer, acks=all)', 
   await admin.disconnect();
   const consumer = kafka.consumer({ groupId: `itest-${KIND}` });
   await consumer.connect();
+  open.push(() => consumer.disconnect());
   await consumer.subscribe({ topic: `${KIND}.counter.v1`, fromBeginning: true });
   const got: string[] = [];
   await consumer.run({ eachMessage: async ({ message }) => { got.push(String(message.headers?.['stream_seq'] ?? '')); } });
@@ -285,4 +327,35 @@ test('direct publish to Kafka after Committed (idempotent producer, acks=all)', 
   assert.deepEqual(got.sort(), ['1', '2']);
   await consumer.disconnect();
   await close();
+});
+
+test('additions on the cell: readLog (opened, sender fence), listPartitions, slot positions, stream index; no pg deprecation warning', { ...T, skip: SKIP }, async () => {
+  const warnings: string[] = [];
+  const onWarning = (w: Error): void => { warnings.push(w.message); };
+  process.on('warning', onWarning);
+  const store = new PgStore({ connectionString: URL });
+  const rt = new CockroachOwnerRuntime({ declaration: DECL2, store, slots: [0, 1], publisher: new MemoryPublisher(), load: new ManualLoad(), testing: { sessionTimings: FAST } });
+  open.push(async () => { await rt.stop(); await store.close(); process.off('warning', onWarning); });
+  await rt.start(hooks());
+  for (let i = 0; i < 40 && rt.heldSlots().length < 2; i++) await sleep(100);
+  const P = fresh();
+  const fence = { kind: 'other', partition: utf8('S1'), generation: 0, epoch: 3n };
+  const e = (id: string, extra: Partial<EntryInput> = {}): EntryInput => ({ ...entry(id), emits: [{ stream: 'byacct', event: { account: 'a-1' } }], ...extra });
+  const r1 = await rt.append({ partition: P, entries: [e('a', { senderFence: fence }), e('b')] });
+  const r2 = await rt.append({ partition: P, entries: [e('c')] });
+  assert.ok(r1.r === 'Committed' && r2.r === 'Committed');
+  if (r1.r === 'Committed' && r2.r === 'Committed') {
+    assert.ok(r1.slotPositions && r2.slotPositions);
+    assert.equal(r2.slotPositions?.[0], (r1.slotPositions?.[1] ?? 0n) + 1n, 'slot-wide positions are contiguous');
+  }
+  const rows = await rt.readLog(P);
+  assert.deepEqual(rows.map((r) => r.seq), [1n, 2n, 3n]);
+  assert.deepEqual(rows[0]?.payload, { id: 'a' });
+  assert.equal(rows[0]?.senderFence?.epoch, 3n);
+  assert.deepEqual((await rt.listPartitions(slotOfPartition(P, 2))).map(hex), [hex(P)]);
+  const idx = await q(`SELECT stream_seq, seq FROM ${KIND2}_stream_index WHERE partition = $1 ORDER BY stream_seq`, [Buffer.from(P)]);
+  assert.deepEqual(idx.map((x) => [String(x['stream_seq']), String(x['seq'])]), [['1', '1'], ['2', '2'], ['3', '3']]);
+  const ob = await q(`SELECT msg_key FROM ${KIND2}_outbox WHERE partition = $1 LIMIT 1`, [Buffer.from(P)]);
+  assert.equal((ob[0]?.['msg_key'] as Buffer).toString(), 'a-1', 'keyed by the declared field');
+  assert.deepEqual(warnings.filter((w) => /client\.query\(\) when the client is already executing/.test(w)), []);
 });

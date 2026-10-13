@@ -55,3 +55,30 @@ test('split points: every slot below 257 slots, every 64 above; head splits are 
     assert.ok(k >= lo && k < hi, `partition ${i}`);
   }
 });
+
+test('grants (C01 §2.3): owner, read roles, gap-fill view, placement stops function; RLS only when asked', async () => {
+  const { grantMigration, expectedPrivileges } = await import('../src/index.ts');
+  const link: OwnerDeclaration = {
+    kind: 'link', slotCount: 4, entryKinds: [{ kind: 1, name: 'e', schemaVersions: [1], retention: '7y' }],
+    projections: [
+      { name: 'displacement', ddl: 'link_id STRING, request BYTES, PRIMARY KEY (link_id, request)', clearColumns: [], deletable: true, readableBy: [{ role: 'account', contractRef: 'C02' }] },
+      { name: 'cut', ddl: 'partition BYTES, PRIMARY KEY (partition)', clearColumns: [] },
+    ],
+    streams: [{ name: 'schedule', topic: 'link.schedule.v1', key: 'partition', emitFn: { version: 1 }, closure: 'closedPerLink', consumers: ['account'] }],
+  };
+  const p = expectedPrivileges([link]);
+  assert.deepEqual([...(p.get('link')?.get('link_log') ?? [])].sort(), ['INSERT', 'SELECT']);
+  assert.ok(p.get('link')?.get('link_displacement')?.has('DELETE'));
+  assert.ok(!p.get('link')?.get('link_cut')?.has('DELETE'), 'DELETE only on deletable projections');
+  assert.ok(p.get('account')?.get('link_displacement')?.has('SELECT'), 'the cross-owner read RFC-000 §8 names');
+  assert.ok(p.get('closure_emitter')?.get('link_head')?.has('SELECT'));
+  assert.ok(p.get('gapfill_account_link')?.get('link_outbox_gapfill_account')?.has('SELECT'));
+  assert.ok(!p.get('placement'), 'placement has no table privilege on owner_slot');
+  const sql = grantMigration([link]).statements.join('\n');
+  assert.match(sql, /CREATE OR REPLACE VIEW link_outbox_gapfill_account[\s\S]*WHERE topic IN \('link.schedule.v1'\)/);
+  assert.match(sql, /placement_set_stops_version[\s\S]*SECURITY DEFINER/);
+  assert.match(sql, /REVOKE EXECUTE ON FUNCTION placement_set_stops_version\(STRING, INT4\) FROM public/);
+  assert.doesNotMatch(sql, /ROW LEVEL SECURITY/);
+  assert.match(grantMigration([link], { rowLevelSecurity: true }).statements.join('\n'), /CREATE POLICY owner_slot_write_link ON owner_slot FOR ALL TO link USING \(kind = 'link'\)/);
+  assert.match(kindMigration(link).statements.join('\n'), /'closure_link', 0/);
+});

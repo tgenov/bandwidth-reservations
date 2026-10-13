@@ -289,3 +289,22 @@ test('CP-1: two processes contend for a slot across a pause; no two committed wr
   assert.ok(results.every((r) => r.r === 'Committed'));
   await a.rt.stop(); await b.rt.stop();
 });
+
+test('C02 / P1-S78: a displacement marker with ANY attempt fails displacementRead; ConditionFailed carries the marker', async () => {
+  const { rt, store } = await boot();
+  const link = utf8('L-disp');
+  const request = new Uint8Array(12);
+  const cond = (attempt: number) => ({ kind: 'displacementRead' as const, link, request, attempt, lockTimeoutMs: 10, label: 'disp' });
+  const A = utf8('acct-d');
+  assert.equal((await rt.append({ partition: A, conditions: [cond(2)], entries: [entry('none')] })).r, 'Committed', 'no marker: passes');
+  store.displacement.set(`${hex(link)}|${hex(request)}`, { attempt: 1, reduction_seq: '7' });
+  for (const attempt of [1, 2]) {
+    const r = await rt.append({ partition: A, conditions: [cond(attempt)], entries: [entry(`e${attempt}`)] });
+    assert.equal(r.r, 'ConditionFailed');
+    if (r.r === 'ConditionFailed') {
+      assert.equal(r.which, 'disp');
+      assert.equal(r.displacement?.attempt, 1, 'the marker attempt is returned (C02 alert on mismatch)');
+    }
+  }
+  await rt.stop();
+});

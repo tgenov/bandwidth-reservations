@@ -6,7 +6,8 @@
 import type { HlcTs, ProjectionWrite, ReadTx, RowRef, SlotNo, TimingSnapshot } from '../api.ts';
 import { hex } from '../bytes.ts';
 import { AmbiguousCommitError, retryableError } from '../errors.ts';
-import { hlc } from '../hlc.ts';
+import { compareHlc, hlc } from '../hlc.ts';
+import { outcomeIdsOf } from './pg.ts';
 
 import { rowId } from '../rowref.ts';
 import type {
@@ -42,6 +43,11 @@ export class MemoryStore implements OwnerStore {
   readonly displacement = new Map<string, unknown>();
   timing: TimingSnapshot = { version: 1n, epsilonMs: 100, deltaXMs: 320, tauMs: 420 };
   commitCount = 0;
+  readonly streamIndex: Array<{ kind: string; partition: Uint8Array; stream: string; streamSeq: bigint; seq: bigint }> = [];
+  readonly slotPositions = new Map<string, bigint>();
+  /** Rows of projections by table, with their key columns (for withReadTx queries). */
+  /** Called after each committed batch (tests use it as a changefeed). */
+  readonly commitListeners: Array<(kind: string, w: BatchWrites) => void> = [];
   /** Statement names in order, across transactions (tests assert ordering, e.g. CP-4). */
   readonly statements: string[] = [];
   private lastWallNs = 0n;
@@ -149,15 +155,52 @@ export class MemoryStore implements OwnerStore {
     return this.timing;
   }
 
+  async readLogRows(kind: string, partition: Uint8Array, fromSeq: bigint): Promise<Array<LogRowWrite & { ts: HlcTs }>> {
+    void kind;
+    return this.log.filter((l) => hex(l.partition) === hex(partition) && l.seq >= fromSeq).sort((a, b) => (a.seq < b.seq ? -1 : 1));
+  }
+
+  async listPartitions(kind: string, slot: SlotNo): Promise<Uint8Array[]> {
+    return [...this.heads.entries()].filter(([k, h]) => k.startsWith(`${kind}|`) && h.slot === slot && h.adopted).map(([, h]) => h.partition);
+  }
+
   async withReadTx<T>(_at: 'present' | HlcTs, fn: (tx: ReadTx) => Promise<T>): Promise<T> {
-    return fn({ query: async () => [] });
+    return fn({ query: async (sql, params) => this.query(sql, params ?? []) as never });
   }
 
   async followerRead<T>(fn: (tx: ReadTx) => Promise<T>): Promise<{ value: T; servedAt: HlcTs }> {
-    return { value: await fn({ query: async () => [] }), servedAt: this.nowTs() };
+    return { value: await fn({ query: async (sql, params) => this.query(sql, params ?? []) as never }), servedAt: this.nowTs() };
   }
 
+  /**
+   * A small query engine for consistentRead / followerRead in unit tests:
+   * `SELECT … FROM <projection> [WHERE c1 = $1 AND c2 = $2 …]` over the projection rows (key columns and row),
+   * and the same over `<kind>_head`. Any other statement throws.
+   */
+  query(sql: string, params: unknown[]): Array<Record<string, unknown>> {
+    return memoryQuery(sql, params, (table) => {
+      const out: Array<Record<string, unknown>> = [];
+      if (table.endsWith('_head')) {
+        const kind = table.slice(0, -'_head'.length);
+        for (const [k, h] of this.heads) if (k.startsWith(`${kind}|`)) out.push({ ...h, home_key: h.homeKey });
+      } else {
+        for (const r of this.projectionRows.get(table) ?? []) out.push({ ...r.key, ...(r.row as Record<string, unknown>) });
+      }
+      return out;
+    });
+  }
+
+  /** table → rows with their key (kept beside `rows` for query()). */
+  readonly projectionRows = new Map<string, Array<{ id: string; key: Record<string, unknown>; row: unknown }>>();
+
   async close(): Promise<void> {}
+
+  private indexProjection(p: ProjectionWrite): void {
+    const id = rowId({ table: p.table, key: p.key });
+    const list = (this.projectionRows.get(p.table) ?? []).filter((r) => r.id !== id);
+    if (p.op === 'upsert') list.push({ id, key: p.key as Record<string, unknown>, row: p.row });
+    this.projectionRows.set(p.table, list);
+  }
 
   /** Apply a committed batch atomically. */
   applyWrites(kind: string, w: BatchWrites): void {
@@ -167,8 +210,15 @@ export class MemoryStore implements OwnerStore {
       this.outbox.push({ ...r, ts: w.ts });
     }
     for (const h of w.heads) this.heads.set(`${kind}|${hex(h.partition)}`, h);
-    for (const p of w.projections) applyProjection(this.rows, p);
+    for (const p of w.projections) { applyProjection(this.rows, p); this.indexProjection(p); }
+    for (const x of w.streamIndex ?? []) this.streamIndex.push({ kind, ...x });
+    if (w.slotPosition) this.slotPositions.set(`${kind}|${w.slotPosition.slot}`, w.slotPosition.position);
+    if (w.slotUpdate) {
+      const row = this.slots.get(`${kind}|${w.slotUpdate.slot}`);
+      if (row) { row.reportThrough = w.slotUpdate.reportThrough; row.markerSeq = w.slotUpdate.markerSeq; }
+    }
     this.commitCount += 1;
+    for (const l of this.commitListeners) l(kind, w);
   }
 }
 
@@ -255,6 +305,17 @@ class MemoryTxn implements BatchTxn {
     return this.ts;
   }
 
+  async readSlotPosition(kind: string, slot: SlotNo): Promise<bigint> {
+    return this.store.slotPositions.get(`${kind}|${slot}`) ?? 0n;
+  }
+
+  async readOutcomeIds(kind: string, slot: SlotNo, stream: string, after: HlcTs | null, upTo: HlcTs): Promise<Uint8Array[]> {
+    void kind;
+    const rows = this.store.outbox.filter((o) => o.slot === slot && o.stream === stream && o.partition.byteLength > 0
+      && (after === null || compareHlc(o.ts, after) > 0) && compareHlc(o.ts, upTo) <= 0);
+    return outcomeIdsOf(rows.map((r) => r.headers));
+  }
+
   async write(kind: string, w: BatchWrites): Promise<void> {
     this.store.statements.push('write');
     this.pending = { kind, w: { ...w, projections: [...this.firstWrites, ...w.projections] } };
@@ -305,3 +366,37 @@ class MemoryTxn implements BatchTxn {
   }
 }
 
+
+/** FeedSeqReader over a MemoryStore: the highest stream_seq of each partition's rows with ts ≤ at (unit tests). */
+export function memoryFeedSeqReader(store: MemoryStore): import('../closure/emitter.ts').FeedSeqReader {
+  return {
+    async feedSeqs(_kind, stream, at, changedAfter) {
+      const best = new Map<string, { link: Uint8Array; feedSeq: bigint; ts: HlcTs }>();
+      for (const o of store.outbox) {
+        if (o.stream !== stream || compareHlc(o.ts, at) > 0) continue;
+        const k = hex(o.partition);
+        const cur = best.get(k);
+        if (!cur || cur.feedSeq < o.streamSeq) best.set(k, { link: o.partition, feedSeq: o.streamSeq, ts: o.ts });
+      }
+      return [...best.values()].filter((b) => changedAfter === null || compareHlc(b.ts, changedAfter) > 0)
+        .map((b) => ({ link: b.link, feedSeq: b.feedSeq }));
+    },
+  };
+}
+
+/**
+ * `SELECT … FROM <table> [WHERE c1 = $1 AND c2 = $2 …]` over rows that `rowsOf(table)` gives (unit tests and
+ * the runtime double). Bytes compare by value; other values by their string form. Any other statement throws.
+ */
+export function memoryQuery(sql: string, params: unknown[], rowsOf: (table: string) => Array<Record<string, unknown>>): Array<Record<string, unknown>> {
+  const m = /^\s*SELECT\s+[\s\S]+?\s+FROM\s+([a-z][a-z0-9_]*)(?:\s+WHERE\s+([\s\S]+?))?\s*;?\s*$/i.exec(sql);
+  if (!m) throw new Error(`memory query supports SELECT … FROM t [WHERE c = $n AND …] only: ${sql}`);
+  const conds = (m[2] ?? '').split(/\s+AND\s+/i).filter((c) => c.trim().length > 0).map((c) => {
+    const x = /^\s*([a-z][a-z0-9_]*)\s*=\s*\$(\d+)\s*$/i.exec(c);
+    if (!x) throw new Error(`memory query: unsupported condition ${c}`);
+    return { col: x[1] as string, value: params[Number(x[2]) - 1] };
+  });
+  const eq = (a: unknown, b: unknown): boolean =>
+    a instanceof Uint8Array || b instanceof Uint8Array ? a instanceof Uint8Array && b instanceof Uint8Array && hex(a) === hex(b) : String(a) === String(b);
+  return rowsOf(m[1] as string).filter((r) => conds.every((c) => eq(r[c.col], c.value)));
+}

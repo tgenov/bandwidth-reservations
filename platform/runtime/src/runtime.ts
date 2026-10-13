@@ -1,12 +1,14 @@
 import { hostname } from 'node:os';
 import type {
   AppendCall, AppendOptions, AppendResult, Epoch, FeedCheckpoint, FeedEvent, Generation, HlcTs, MonotonicNs,
-  OwnerDeclaration, OwnerHooks, OwnerKind, OwnerRuntime, PartitionKey, ReadTx, ReportMarker, RouteInfo, Seq, SlotNo,
+  OpenedLogRow, OwnerDeclaration, OwnerHooks, OwnerKind, OwnerRuntime, PartitionKey, ReadTx, ReportMarker, RouteInfo, Seq, SlotNo,
   SlotOfAnswer, StreamSeq, TimingSnapshot, WriterFence,
 } from './api.ts';
 import type { AttemptPlan, OutboxMessage, PendingCall, SlotHolding } from './batch/attempt.ts';
 import { executeBatch, type BatchOutcome } from './batch/execute.ts';
-import { bytesEqual, encodeJson, hex } from './bytes.ts';
+import { bytesEqual, decodeJson, encodeJson, hex } from './bytes.ts';
+import { FENCE_KEY, PAYLOAD_KEY } from './batch/attempt.ts';
+import { tableNames } from './declaration.ts';
 import { assertDeclaration } from './declaration.ts';
 import { compareHlc, hlcFromWallMs, hlcToWallMs } from './hlc.ts';
 import { slotOfPartition } from './home.ts';
@@ -16,10 +18,17 @@ import { MemoryPublisher, type Publisher } from './publisher.ts';
 import { DevSealer, type Sealer } from './sealer.ts';
 import { Session, sessionShard } from './session.ts';
 import type { OwnerStore } from './store/types.ts';
+import type { FeedBus } from './feed/bus.ts';
+import { encodeMarker, markerSealContext } from './feed/wire.ts';
+import { FeedConsumerRuntime, type ConsumerAlert } from './consumer/consumer.ts';
+import type { GapFillSource } from './consumer/gapfill.ts';
+import { REPORT, SlotReport, markerChunks, outcomeStream, reportsMarkers, type LeaseAnswer, type ReaderChannel } from './report/report.ts';
+import type { SlotMapCache } from './placement/slot-map.ts';
+import { isRetryable } from './errors.ts';
 
 export class NotInThisIncrement extends Error {
   constructor(what: string) {
-    super(`${what} is not in @share/owner-runtime ${'1.0.0-alpha.1'} (S-PLAT I1a)`);
+    super(`${what} is not in this @share/owner-runtime increment (S-PLAT I1)`);
     this.name = 'NotInThisIncrement';
   }
 }
@@ -35,8 +44,21 @@ export interface OwnerRuntimeOptions {
   host?: string; region?: string; facility?: string;
   /** Timer firing callback (C01 §3.7: firing only makes the owner append). C01 names no hook for it. */
   onTimer?: (partition: PartitionKey, key: string) => void;
-  /** Slot counts of other kinds for `route` on the fixed map (TODO I1b: placement feed, C01 §3.8). */
+  /** Slot counts of other kinds for `route` on the fixed map (C01 §3.8; the account kind uses `slotMap`). */
   routeSlotCounts?: Record<OwnerKind, number>;
+  /** The placement feed cache (`placement.slot_map.v1`, C01 §3.8): `slotOf` and `route('account', …)` use it. */
+  slotMap?: SlotMapCache;
+  /** The consumer runtime (C01 §3.5): `subscribe`, `onResolved`, `onClosed`, `onMarker` need it. */
+  feeds?: {
+    bus: FeedBus;
+    /** Consumer group prefix (default `<kind>`). */
+    groupId?: string;
+    gapFill?: GapFillSource;
+    gapTimeoutMs?: number;
+    alert?: (a: ConsumerAlert) => void;
+    /** Producer kind of a topic, for gap fill (needed for contract topics such as `catalogue.v1`). */
+    producerOf?: (topic: string) => string;
+  };
   log?: (msg: string, fields?: Record<string, unknown>) => void;
   /** Test-only overrides of C01 §7 values. */
   testing?: {
@@ -44,6 +66,10 @@ export interface OwnerRuntimeOptions {
     commitBackstopMs?: number;
     abandonBeforeCommitMs?: number;
     onDecide?: () => void;
+    /** read_lease + ε after an acquisition (C01 §3.1); default 500 ms. */
+    postAcquisitionWaitMs?: number;
+    /** Ids per report marker (C01 §3.4 rule 5); default 5,000. */
+    markerChunkMax?: number;
   };
 }
 
@@ -59,6 +85,16 @@ interface Lane {
   /** Set while Ambiguous resolution or a re-home runs: no batch starts (C01 §3.2). */
   gate: Promise<void> | null;
   released: boolean;
+  /** Report position, read leases and marker state (C01 §3.4). */
+  report: SlotReport;
+  /** A marker-only transaction waits for the lane (C01 §3.4 rule 1). */
+  markerWanted: boolean;
+  reportableTimer: NodeJS.Timeout | undefined;
+}
+
+function slotKeyBytes(slot: SlotNo): Uint8Array {
+  const b = Buffer.alloc(4); b.writeInt32BE(slot, 0);
+  return new Uint8Array(b);
 }
 
 const noop = (): void => {};
@@ -80,6 +116,9 @@ export class CockroachOwnerRuntime implements OwnerRuntime {
   private lastTiming: TimingSnapshot = { version: 0n, epsilonMs: PARAMS.epsilonMs, deltaXMs: 320, tauMs: 420 };
   private control: Promise<void> = Promise.resolve();
   private started = false;
+  private readonly consumer: FeedConsumerRuntime | undefined;
+  private readonly readers = new Map<string, ReaderChannel>();
+  private heartbeat: NodeJS.Timeout | undefined;
   private readonly log: (msg: string, fields?: Record<string, unknown>) => void;
 
   constructor(o: OwnerRuntimeOptions) {
@@ -99,6 +138,16 @@ export class CockroachOwnerRuntime implements OwnerRuntime {
         onResume: () => this.serialised(() => this.resume()),
         onTick: () => this.serialised(() => this.acquireWanted()),
       });
+    if (o.feeds) {
+      this.consumer = new FeedConsumerRuntime({
+        bus: o.feeds.bus, groupId: o.feeds.groupId ?? this.decl.kind, sealer: this.sealer,
+        ...(o.feeds.gapFill ? { gapFill: o.feeds.gapFill } : {}),
+        ...(o.feeds.gapTimeoutMs !== undefined ? { gapTimeoutMs: o.feeds.gapTimeoutMs } : {}),
+        ...(o.feeds.alert ? { alert: o.feeds.alert } : {}),
+        ...(o.feeds.producerOf ? { producerOf: o.feeds.producerOf } : {}),
+        log: this.log,
+      });
+    }
   }
 
   // ---------------- lifecycle (not part of OwnerRuntime) ----------------
@@ -110,11 +159,21 @@ export class CockroachOwnerRuntime implements OwnerRuntime {
     this.started = true;
     await this.serialised(() => this.acquireWanted());
     this.session.start();
+    // C01 §3.4: push to readers and advance the report position every heartbeat_interval (100 ms).
+    this.heartbeat = setInterval(() => { for (const l of this.lanes.values()) void this.advance(l); }, REPORT.heartbeatMs);
+    this.heartbeat.unref();
+  }
+
+  /** The consumer runtime of this process (undefined without `feeds`). */
+  feedConsumer(): FeedConsumerRuntime | undefined {
+    return this.consumer;
   }
 
   /** Drain lanes, release slots (onRelease 'shutdown'), stop renewals. */
   async stop(): Promise<void> {
     this.session.stop();
+    if (this.heartbeat) clearInterval(this.heartbeat);
+    await this.consumer?.stop();
     await this.serialised(async () => {
       await this.waitIdle([...this.lanes.values()]);
       const held = [...this.lanes.values()].map((l) => ({ slot: l.holding.slot, epoch: l.holding.epoch }));
@@ -168,7 +227,17 @@ export class CockroachOwnerRuntime implements OwnerRuntime {
   }
 
   private pump(lane: Lane): void {
-    if (lane.running || lane.gate || lane.released || lane.queue.length === 0) return;
+    if (lane.running || lane.gate || lane.released) return;
+    if (lane.markerWanted && this.session.leaseLive()) {
+      lane.markerWanted = false;
+      lane.running = true;
+      void this.runMarker(lane).finally(() => {
+        lane.running = false;
+        this.pump(lane);
+      });
+      return;
+    }
+    if (lane.queue.length === 0) return;
     if (!this.session.leaseLive()) {
       // From the end of the holder's view the holder proposes nothing (C01 §3.1).
       setTimeout(() => this.pump(lane), 50).unref();
@@ -258,6 +327,10 @@ export class CockroachOwnerRuntime implements OwnerRuntime {
     }
     for (const f of plan.senderFences) this.recordFence(f, f);
     this.directPublish(plan.publish);
+    const r = lane.report;
+    if (compareHlc(plan.ts, r.committedThrough) > 0) r.committedThrough = plan.ts;
+    for (const d of plan.reportDue) r.due.push({ ts: plan.ts, ...(d.pending ? { pending: d.pending } : {}) });
+    void this.advance(lane);
   }
 
   /** Not known to be committed ⇒ memory of those partitions is rebuilt from the head (C01 §3.2). */
@@ -284,8 +357,11 @@ export class CockroachOwnerRuntime implements OwnerRuntime {
       this.loseSlot(lane.holding.slot, 'staleEpoch');
       return;
     }
-    if (read.sessionRevoked) await this.rehome();
-    // TODO(I1b, C01 §3.1 step 4): the slot's report position is set to T_res.
+    if (read.sessionRevoked) { await this.rehome(); return; }
+    // Step 4 (C01 §3.1): the slot's report position is set to T_res (never back).
+    const r = lane.report;
+    if (compareHlc(read.tRes, r.committedThrough) > 0) r.committedThrough = read.tRes;
+    if (r.reportable && compareHlc(read.tRes, r.position) > 0) this.setPosition(lane, read.tRes);
   }
 
   private async retryUntilAnswered<T>(fn: () => Promise<T>): Promise<T> {
@@ -307,13 +383,161 @@ export class CockroachOwnerRuntime implements OwnerRuntime {
     return next;
   }
 
-  private newLane(slot: SlotNo, epoch: Epoch): Lane {
+  private newLane(slot: SlotNo, epoch: Epoch, initial: HlcTs): Lane {
     const lane: Lane = {
       holding: { slot, epoch, sessionId: this.session.sessionId, stopsVersion: null, stops: new Map(), chains: new Map(), integrityHolds: new Set() },
       queue: [], running: false, gate: null, released: false,
+      report: new SlotReport(initial), markerWanted: false, reportableTimer: undefined,
     };
     this.lanes.set(slot, lane);
     return lane;
+  }
+
+  // ---------------- report position, read leases, markers (C01 §3.4) ----------------
+
+  /** After an acquisition commit: report nothing until read_lease + ε; then onReportable (C01 §3.1). */
+  private startReporting(lane: Lane, initial: HlcTs, wait: boolean): void {
+    if (lane.reportableTimer) clearTimeout(lane.reportableTimer);
+    lane.report = new SlotReport(initial);
+    const enable = (): void => {
+      lane.reportableTimer = undefined;
+      if (lane.released) return;
+      lane.report.reportable = true;
+      this.hooks?.onReportable(lane.holding.slot);
+      for (const h of this.reportHandlers) h(lane.holding.slot, lane.report.position);
+      void this.advance(lane);
+    };
+    if (!wait) { enable(); return; }
+    lane.reportableTimer = setTimeout(enable, this.o.testing?.postAcquisitionWaitMs ?? REPORT.postAcquisitionWaitMs);
+    lane.reportableTimer.unref();
+  }
+
+  private setPosition(lane: Lane, p: HlcTs): void {
+    lane.report.position = p;
+    for (const h of this.reportHandlers) h(lane.holding.slot, p);
+    if (reportsMarkers(this.decl) && lane.report.markerDue()) this.scheduleMarker(lane);
+  }
+
+  /** Push "committed through" to the readers, then move P to what every live lease allows. */
+  private async advance(lane: Lane): Promise<void> {
+    const r = lane.report;
+    if (!r.reportable || lane.released || !this.session.leaseLive()) return;
+    const target = r.committedThrough;
+    await Promise.all([...this.readers].map(async ([id, ch]) => {
+      try {
+        const a = await ch.apply(lane.holding.slot, target);
+        const cur = r.applied.get(id);
+        if (cur === undefined || compareHlc(a, cur) > 0) r.applied.set(id, a);
+      } catch { /* that reader's lease holds P back until it ends */ }
+    }));
+    if (lane.released || lane.report !== r || !this.session.leaseLive()) return;
+    const p = r.target(process.hrtime.bigint());
+    if (compareHlc(p, r.position) > 0) this.setPosition(lane, p);
+    else if (reportsMarkers(this.decl) && r.markerDue()) this.scheduleMarker(lane);
+  }
+
+  private scheduleMarker(lane: Lane): void {
+    const r = lane.report;
+    if (r.markerScheduled) return;
+    r.markerScheduled = true;
+    // Rule 1: a marker-only transaction within marker_max_wait (20 ms) of P passing an unmarked entry.
+    setTimeout(() => {
+      r.markerScheduled = false;
+      if (lane.released || lane.report !== r) return;
+      lane.markerWanted = true;
+      this.pump(lane);
+    }, REPORT.markerMaxWaitMs).unref();
+  }
+
+  /** A marker-only transaction (C01 §3.4): owner_slot.report_through and marker_seq, and the marker rows. */
+  private async runMarker(lane: Lane): Promise<void> {
+    const r = lane.report;
+    if (!reportsMarkers(this.decl) || !r.reportable || !r.markerDue()) return;
+    const slot = lane.holding.slot;
+    const epoch = lane.holding.epoch;
+    const P = r.position;
+    const stream = outcomeStream(this.decl);
+    let tx;
+    try { tx = await this.store.beginBatch(); } catch (e) { this.log('marker begin failed', { error: String(e) }); this.scheduleMarker(lane); return; }
+    try {
+      const fence = await tx.readFence(this.decl.kind, slot);
+      if (!fence || fence.epoch !== epoch || fence.sessionId !== lane.holding.sessionId) {
+        await tx.rollback().catch(() => {}); tx.close(false);
+        this.loseSlot(slot, 'staleEpoch');                 // a marker is never written by a stale epoch
+        return;
+      }
+      const prev = fence.reportThrough;
+      if (prev !== null && compareHlc(P, prev) <= 0) {
+        await tx.rollback().catch(() => {}); tx.close(false);
+        r.firstMarkerPending = false;
+        r.due = r.due.filter((d) => compareHlc(d.ts, prev) > 0);
+        return;
+      }
+      const ts = await tx.readTs();
+      const ids = new Map<string, Uint8Array>();
+      if (r.firstMarkerPending && stream && tx.readOutcomeIds) {
+        // Rule 7: the first marker after an acquisition lists every covered outcome above prevReportPosition.
+        for (const id of await tx.readOutcomeIds(this.decl.kind, slot, stream.name, prev, P)) ids.set(hex(id), id);
+      }
+      for (const d of r.due) {
+        if (d.pending && compareHlc(d.ts, P) <= 0 && (prev === null || compareHlc(d.ts, prev) > 0)) ids.set(hex(d.pending), d.pending);
+      }
+      const markers = markerChunks({ slot, generation: 0, epoch, reportPosition: P, prevReportPosition: prev }, [...ids.values()],
+        this.o.testing?.markerChunkMax ?? REPORT.markerChunkMax);
+      const outbox: import('./store/types.ts').OutboxRowWrite[] = [];
+      const publish: OutboxMessage[] = [];
+      let seq = fence.markerSeq;
+      if (stream) {
+        for (const m of markers) {
+          seq += 1n;
+          const headers: Record<string, string> = {
+            partition: '', stream: stream.name, stream_seq: seq.toString(), generation: '0', epoch: epoch.toString(), ts,
+            kind: '0', schema_v: '1', key_id: hex(this.sealer.keyId(stream.topic)), slot: String(slot), report_through: P,
+          };
+          const value = this.sealer.seal(encodeMarker(m), markerSealContext(this.decl.kind, slot, stream.name, seq, epoch));
+          const key = slotKeyBytes(slot);
+          outbox.push({ slot, partition: new Uint8Array(), stream: stream.name, streamSeq: seq, n: 0, topic: stream.topic, msgKey: key,
+            headers: encodeJson(headers), payload: value, generation: 0, epoch, ifAbsent: false });
+          publish.push({ topic: stream.topic, key, headers: { ...headers, partition: Buffer.alloc(0) }, value });
+        }
+      }
+      await tx.write(this.decl.kind, { ts, log: [], outbox, heads: [], projections: [], slotUpdate: { slot, reportThrough: P, markerSeq: seq } });
+      await tx.commit(this.o.testing?.commitBackstopMs ?? PARAMS.commitBackstopMs);
+      tx.close(false);
+      r.firstMarkerPending = false;
+      r.due = r.due.filter((d) => compareHlc(d.ts, P) > 0);
+      this.markersWritten.push(...markers);
+      this.directPublish(publish);
+    } catch (e) {
+      // Not known to be written: the next marker re-reads report_through, so the chain stays whole.
+      if (isRetryable(e)) await tx.rollback().catch(() => {});
+      tx.close(!isRetryable(e));
+      this.log('marker transaction failed; retrying', { slot, error: String(e) });
+      this.scheduleMarker(lane);
+    }
+  }
+
+  /** Markers this process wrote, in order (tests). */
+  readonly markersWritten: import('./api.ts').ReportMarker[] = [];
+
+  /**
+   * Holder side of a read lease (C01 §3.4). A status reader asks with its applied-through position and its
+   * send time; the lease ends 400 ms after the send and must end inside the holder's view.
+   */
+  grantReadLease(req: { slot: SlotNo; readerId: string; appliedThrough: HlcTs; sendMonotonic: MonotonicNs }): LeaseAnswer {
+    const lane = this.lanes.get(req.slot);
+    if (!lane || lane.released) return { granted: false, reason: 'notHolder' };
+    return lane.report.grant(req.slot, req, this.session.viewEndsAt(), this.leaseValid(req.slot).valid);
+  }
+
+  /** A status reader's push channel (heartbeat every 100 ms). */
+  attachReader(readerId: string, channel: ReaderChannel): void {
+    this.readers.set(readerId, channel);
+  }
+
+  detachReader(readerId: string): void {
+    this.readers.delete(readerId);
+    for (const l of this.lanes.values()) { l.report.applied.delete(readerId); l.report.leases.delete(readerId); }
   }
 
   /** Free-slot acquisition and acquisition by expiry (RFC-006 §4.2), then catch-up and onAcquire. */
@@ -337,14 +561,16 @@ export class CockroachOwnerRuntime implements OwnerRuntime {
     }
     if (acquired.length === 0) return;
     // Catch-up: a high-priority present-time read; it pushes any open transaction of the old holder.
-    await this.store.withReadTx('present', async () => undefined);
-    for (const a of acquired) this.newLane(a.slot, a.epoch);
+    // Its timestamp is the initial report position (C01 §3.1, AI-33-2).
+    const catchUp = await this.retryUntilAnswered(() => this.store.resolutionRead(
+      this.decl.kind, this.session.shard, this.session.sessionId, acquired.map((a) => a.slot), []));
+    for (const a of acquired) this.newLane(a.slot, a.epoch, catchUp.tRes);
     for (const a of acquired) {
-      this.log('acquired', { slot: a.slot, epoch: a.epoch.toString() });
+      this.log('acquired', { slot: a.slot, epoch: a.epoch.toString(), catchUp: catchUp.tRes });
+      try { await this.rebuildFences(a.slot); } catch (e) { this.log('fence rebuild failed', { slot: a.slot, error: String(e) }); }
       await this.hooks?.onAcquire(a.slot, a.epoch, 'expiry');
-      // TODO(I1b, C01 §3.4): onReportable after read_lease + ε, with the report position at the catch-up read.
       const lane = this.lanes.get(a.slot);
-      if (lane) this.pump(lane);
+      if (lane) { this.startReporting(lane, catchUp.tRes, true); this.pump(lane); }
     }
   }
 
@@ -368,8 +594,9 @@ export class CockroachOwnerRuntime implements OwnerRuntime {
         l.holding.sessionId = this.session.sessionId;
         l.holding.stopsVersion = null;
       }
-      await this.retryUntilAnswered(() => this.store.resolutionRead(this.decl.kind, this.session.shard, this.session.sessionId, [...keptSlots.keys()], []));
-      // TODO(I1b, C01 §3.1 step 4): report position = T_res; the read_lease + ε reporting wait.
+      const read = await this.retryUntilAnswered(() => this.store.resolutionRead(this.decl.kind, this.session.shard, this.session.sessionId, [...keptSlots.keys()], []));
+      // Step 4: report position = T_res, then the read_lease + ε reporting wait (C01 §3.1).
+      for (const l of lanes) if (keptSlots.has(l.holding.slot)) this.startReporting(l, read.tRes, true);
       for (const [slot, epoch] of keptSlots) await this.hooks?.onAcquire(slot, epoch, 'rehome');
     } finally {
       for (const l of lanes) if (l.gate === gate) l.gate = null;
@@ -388,8 +615,9 @@ export class CockroachOwnerRuntime implements OwnerRuntime {
       const row = read.slots.get(l.holding.slot);
       if (!row || row.epoch !== l.holding.epoch || row.sessionId !== this.session.sessionId) this.loseSlot(l.holding.slot, 'taken');
     }
-    if (read.sessionRevoked) await this.rehome();
-    // TODO(I1b, C01 §3.1 step 4): report position = T_res, then onReportable without a further wait.
+    if (read.sessionRevoked) { await this.rehome(); return; }
+    // Step 4: report position = T_res, then onReportable without a further wait (C01 §3.1).
+    for (const l of lanes) if (!l.released) this.startReporting(l, read.tRes, false);
   }
 
   private async waitIdle(lanes: Lane[]): Promise<void> {
@@ -400,6 +628,7 @@ export class CockroachOwnerRuntime implements OwnerRuntime {
     const lane = this.lanes.get(slot);
     if (!lane || lane.released) return;
     lane.released = true;
+    if (lane.reportableTimer) clearTimeout(lane.reportableTimer);
     this.lanes.delete(slot);
     for (const q of lane.queue.splice(0)) q.resolve({ r: 'StaleEpoch' });
     for (const [k, t] of this.timers) {
@@ -407,6 +636,61 @@ export class CockroachOwnerRuntime implements OwnerRuntime {
     }
     this.log('slot released', { slot, reason });
     this.hooks?.onRelease(slot, reason);
+  }
+
+  // ---------------- rebuild support (C01 §3.1, R47-24) ----------------
+
+  /**
+   * A partition's log rows from `fromSeq`, by (partition, seq) across the slots it lived in, with payload and
+   * audit opened (C01 §3.1 "Rebuilding a partition"). For replay on takeover, Ambiguous reload and adopt.
+   */
+  async readLog(partition: PartitionKey, fromSeq: Seq = 1n): Promise<OpenedLogRow[]> {
+    if (!this.store.readLogRows) throw new Error('the store cannot read log rows');
+    const t = tableNames(this.decl.kind);
+    const rows = await this.store.readLogRows(this.decl.kind, partition, fromSeq);
+    return rows.map((r) => {
+      const ctx = { ownerKind: this.decl.kind, table: t.log, primaryKey: { slot: r.slot, partition: r.partition, seq: r.seq }, seqOrVersion: r.seq, epoch: r.epoch };
+      let payload = decodeJson(this.sealer.open(r.payload, { ...ctx, rowKind: `entry:${r.kind}` }));
+      let senderFence: OpenedLogRow['senderFence'];
+      if (payload !== null && typeof payload === 'object' && PAYLOAD_KEY in (payload as Record<string, unknown>)) {
+        const env = payload as Record<string, unknown>;
+        senderFence = env[FENCE_KEY] as OpenedLogRow['senderFence'];
+        payload = env[PAYLOAD_KEY];
+      }
+      const audit = decodeJson(this.sealer.open(r.audit, { ...ctx, rowKind: 'audit' }));
+      const emits = (decodeJson(r.emits) as Array<[string, string]>).map(([s, n]) => [s, BigInt(n)] as [string, StreamSeq]);
+      return {
+        slot: r.slot, partition: r.partition, seq: r.seq, generation: r.generation, epoch: r.epoch, kind: r.kind, schemaV: r.schemaV,
+        ts: r.ts, identity: r.identity, emits, retention: r.retention, payload, audit, chain: r.chain, ...(senderFence ? { senderFence } : {}),
+      };
+    });
+  }
+
+  /** The partitions the slot serves: heads that name it and are adopted (C01 §3.2). For onAcquire rebuilds. */
+  async listPartitions(slot: SlotNo): Promise<PartitionKey[]> {
+    if (!this.store.listPartitions) throw new Error('the store cannot list partitions');
+    return this.store.listPartitions(this.decl.kind, slot);
+  }
+
+  /** R47-24: rebuild the admitCommand high-water marks from the log of the slot's partitions. */
+  private async rebuildFences(slot: SlotNo): Promise<void> {
+    if (!this.store.listPartitions || !this.store.readLogRows) return;
+    for (const p of await this.store.listPartitions(this.decl.kind, slot)) {
+      for (const row of await this.readLog(p)) if (row.senderFence) this.recordFence(row.senderFence, row.senderFence);
+    }
+  }
+
+  /**
+   * Publish a declared non-log message (e.g. a watermark) on its topic with the holder's producer (the
+   * stream ACL of C01 §2.5). The caller must hold the partition's slot with a valid lease. Key = partition.
+   */
+  async publishMessage(name: string, partition: PartitionKey, value: Uint8Array, headers: Record<string, string> = {}): Promise<void> {
+    const m = this.decl.messages?.find((x) => x.name === name);
+    if (!m) throw new Error(`message ${name} is not declared by ${this.decl.kind}`);
+    const slot = slotOfPartition(partition, this.decl.slotCount);
+    if (!this.leaseValid(slot).valid) throw new Error(`slot ${slot} is not held with a valid lease`);
+    await this.publisher.publish([{ topic: m.topic, key: partition, value,
+      headers: { ...headers, partition: Buffer.from(partition), kind: 'message', epoch: this.epoch(slot).toString() } }]);
   }
 
   // ---------------- leases, fences, time ----------------
@@ -425,7 +709,8 @@ export class CockroachOwnerRuntime implements OwnerRuntime {
     return this.generations.get(hex(partition)) ?? 0;
   }
 
-  /** C01 §3.8, R47-24. TODO(I1b, R47-24): rebuild the high-water marks from the log on onAcquire and onAdopt. */
+  /** C01 §3.8, R47-24: the high-water marks are rebuilt from the log before onAcquire (rebuildFences).
+   *  TODO(I3, R47-24): the same on onAdopt. */
   admitCommand(sender: { kind: OwnerKind; partition: PartitionKey }, fence: WriterFence):
     { admit: true } | { admit: false; recorded: WriterFence } {
     const recorded = this.fences.get(`${sender.kind}|${hex(sender.partition)}`);
@@ -447,16 +732,17 @@ export class CockroachOwnerRuntime implements OwnerRuntime {
     return this.lastTiming;
   }
 
-  /** Liveness only, never decides an outcome (A8). TODO(I1b, RFC-006 §6.2): owner-host offset check. */
+  /** Liveness only, never decides an outcome (A8). TODO(S-PLAT-I1 rest, RFC-006 §6.2): owner-host offset check. */
   now(): { ts: HlcTs; boundMs: number } {
     return { ts: hlcFromWallMs(Date.now()), boundMs: PARAMS.epsilonMs };
   }
 
   // ---------------- positions (TODO I1b) ----------------
 
-  /** TODO(I1b, C01 §3.4): report position; undefined until onReportable, which I1a never fires. */
-  reportPosition(_slot: SlotNo): HlcTs | undefined {
-    return undefined;
+  /** C01 §3.4: undefined until onReportable. */
+  reportPosition(slot: SlotNo): HlcTs | undefined {
+    const lane = this.lanes.get(slot);
+    return lane && lane.report.reportable ? lane.report.position : undefined;
   }
 
   onReport(handler: (slot: SlotNo, p: HlcTs) => void): void {
@@ -473,27 +759,32 @@ export class CockroachOwnerRuntime implements OwnerRuntime {
     return this.store.followerRead(fn);
   }
 
-  /** Approximated by follower_read_timestamp(). TODO(I1b, C01 §2.4): the closed timestamp proper. */
+  /** Approximated by follower_read_timestamp(). TODO(S-PLAT-I1 rest, C01 §2.4): the closed timestamp proper. */
   async closedTimestamp(): Promise<HlcTs> {
     return (await this.store.followerRead(async () => undefined)).servedAt;
   }
 
   // ---------------- feeds (TODO I1b) ----------------
 
-  subscribe(_topic: string, _from: FeedCheckpoint, _gate: 'committed' | 'reported', _handler: (e: FeedEvent) => Promise<void>): void {
-    throw new NotInThisIncrement('subscribe — TODO(I1b, C01 §3.5 consumer runtime with gap fill)');
+  private feeds(what: string): FeedConsumerRuntime {
+    if (!this.consumer) throw new Error(`${what} needs OwnerRuntimeOptions.feeds (the consumer runtime's bus)`);
+    return this.consumer;
   }
 
-  onResolved(_topic: string, _handler: (destinationPartition: number, R: HlcTs) => void): void {
-    throw new NotInThisIncrement('onResolved — TODO(I1b, C01 §3.6 closure emitter)');
+  subscribe(topic: string, from: FeedCheckpoint, gate: 'committed' | 'reported', handler: (e: FeedEvent) => Promise<void>): void {
+    this.feeds('subscribe').subscribe(topic, from, gate, handler);
   }
 
-  onClosed(_handler: (link: PartitionKey, t: HlcTs, feedSeq: StreamSeq) => void): void {
-    throw new NotInThisIncrement('onClosed — TODO(I1b, C01 §3.6 closure emitter)');
+  onResolved(topic: string, handler: (destinationPartition: number, R: HlcTs) => void): void {
+    this.feeds('onResolved').onResolved(topic, handler);
   }
 
-  onMarker(_topic: 'account.outcome.v1', _handler: (m: ReportMarker) => Promise<void>): void {
-    throw new NotInThisIncrement('onMarker — TODO(I1b, C01 §3.4 report markers)');
+  onClosed(handler: (link: PartitionKey, t: HlcTs, feedSeq: StreamSeq) => void): void {
+    this.feeds('onClosed').onClosed(handler);
+  }
+
+  onMarker(topic: 'account.outcome.v1', handler: (m: ReportMarker) => Promise<void>): void {
+    this.feeds('onMarker').onMarker(topic, handler);
   }
 
   // ---------------- timers (C01 §3.7) ----------------
@@ -522,8 +813,14 @@ export class CockroachOwnerRuntime implements OwnerRuntime {
 
   // ---------------- routing (fixed map, C01 §3.8) ----------------
 
-  /** TODO(I1b, C01 §3.8): placement cache refreshed by the feed and by refusals; holderHint and readers. */
+  /** C01 §3.8: the account kind routes by the slot-map feed; other kinds by their fixed slot count.
+   *  TODO(I3, C01 §3.8): cache refresh by STALE_EPOCH, MOVED and MOVING answers; holderHint and readers. */
   route(kind: OwnerKind, partition: PartitionKey): RouteInfo {
+    if (kind === 'account' && this.o.slotMap?.current()) {
+      const a = this.slotOf(partition);
+      return { slot: a.slot, generation: kind === this.decl.kind ? this.generation(partition) : 0,
+        epoch: kind === this.decl.kind ? this.epoch(a.slot) : 0n, readers: [], mapVersion: a.mapVersion };
+    }
     const count = kind === this.decl.kind ? this.decl.slotCount : this.o.routeSlotCounts?.[kind];
     if (count === undefined) throw new Error(`no slot count for kind ${kind} (fixed map of I1a)`);
     const slot = slotOfPartition(partition, count);
@@ -532,6 +829,8 @@ export class CockroachOwnerRuntime implements OwnerRuntime {
 
   /** Fixed map: headDecides always false in I1 (plan §3). */
   slotOf(account: PartitionKey): SlotOfAnswer {
+    const fromFeed = this.o.slotMap?.slotOf(account);
+    if (fromFeed) return fromFeed;
     const count = this.decl.kind === 'account' ? this.decl.slotCount : this.o.routeSlotCounts?.['account'];
     if (count === undefined) throw new Error('no account slot count (fixed map of I1a)');
     return { slot: slotOfPartition(account, count), mapVersion: 1n, headDecides: false };
