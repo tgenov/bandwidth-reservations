@@ -1,3 +1,23 @@
-node_modules
+# deps / build
+node_modules/
+dist/
+*.tsbuildinfo
+coverage/
+
+# test tooling
 reports/
 .stryker-tmp/
+
+# python tools
+__pycache__/
+*.pyc
+
+# claude code (local only; agents/ and skills/ stay tracked)
+.claude/worktrees/
+.claude/settings.local.json
+
+# env / os / logs
+.env
+.env.*
+.DS_Store
+*.log
