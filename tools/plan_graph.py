@@ -92,8 +92,49 @@ def short(t, n=38):
     return t if len(t) <= n else t[: n - 1] + "…"
 
 
+WAVE0 = "2026-10-19"
+COLOR = {"S-PLAT": "#e8eaed", "S-SEC": "#fde2e2", "S-LINK": "#e6f5e6",
+         "S-ACCT+MONEY": "#e3f0fb", "S-RATE": "#fff3d6"}
+
+
+def waves(incs, edges, done):
+    """Earliest wave of each increment: done = 0; else 1 + the latest wave it needs."""
+    preds = {i: set() for i in incs}
+    for a, b in edges:
+        preds[b].add(a)
+    wave = {}
+
+    def w(i, seen=()):
+        if i in wave:
+            return wave[i]
+        if i in seen:
+            raise SystemExit(f"cycle at {i}")
+        if i in done:
+            wave[i] = 0
+        else:
+            wave[i] = 1 + max((w(p, seen + (i,)) for p in preds[i]), default=0)
+        return wave[i]
+
+    for i in incs:
+        w(i)
+    return wave, preds
+
+
+def critical_path(wave, preds):
+    end = max(wave, key=lambda i: (wave[i], i))
+    path = [end]
+    while preds[path[-1]]:
+        nxt = max(preds[path[-1]], key=lambda p: (wave[p], p))
+        if wave[nxt] == 0:
+            break
+        path.append(nxt)
+    return list(reversed(path))
+
+
 def render(incs, edges, done, parts):
     slices = ["S-PLAT", "S-SEC", "S-LINK", "S-ACCT+MONEY", "S-RATE"]
+    wave, preds = waves(incs, edges, done)
+    crit = critical_path(wave, preds)
     cross = {}
     for a, b in edges:
         sa, sb = slice_of(a), slice_of(b)
@@ -111,8 +152,31 @@ def render(incs, edges, done, parts):
     for (a, b), n in sorted(cross.items()):
         out.append(f"  {node_id(a)} -- {n} --> {node_id(b)}")
     out += ["  classDef started fill:#e6f5e6,stroke:#27ae60",
-            "  class " + ",".join(node_id(s) for s in slices if ndone[s]) + " started", "```", "",
-            "## 2. Increments", "",
+            "  class " + ",".join(node_id(s) for s in slices if ndone[s]) + " started", "```", ""]
+    nw = max(wave.values())
+    out += ["## 2. Waves (planning view)", "",
+            f"Each increment is placed in the earliest wave in which every increment it needs is "
+            f"done. Wave 0 is delivered. There are {nw} waves after the delivered work. The chart "
+            f"draws one wave as one week from {WAVE0}; that pace is a placeholder, the order is what "
+            f"the graph proves. Red bars are the critical path ({len(crit)} increments): "
+            + " → ".join(crit) + ".", "", "```mermaid", "gantt",
+            "  title Delivery waves (one bar per increment)", "  dateFormat YYYY-MM-DD",
+            "  axisFormat W%W", "  tickInterval 1week"]
+    import datetime
+    base = datetime.date.fromisoformat(WAVE0)
+    for s in slices:
+        out.append(f"  section {s}")
+        for i in sorted((i for i in incs if slice_of(i) == s), key=lambda x: (wave[x], x)):
+            start = base + datetime.timedelta(weeks=wave[i] - 1)
+            tags = "done, " if wave[i] == 0 else ("crit, " if i in crit else "")
+            label = f"{i} {short(incs[i]['title'], 34)}".replace(":", " ").replace(";", ",")
+            out.append(f"  {label} :{tags}{start.isoformat()}, 7d")
+    out += ["```", "", "| Wave | " + " | ".join(slices) + " |", "|---|" + "---|" * len(slices)]
+    for k in range(0, nw + 1):
+        row = [", ".join(sorted((i for i in incs if wave[i] == k and slice_of(i) == s),
+                                key=lambda x: x)) or "—" for s in slices]
+        out.append(f"| {k if k else '0 (done)'} | " + " | ".join(row) + " |")
+    out += ["", "## 3. Increments", "",
             "Green: delivered. Bold border: on the critical path to the walking skeletons of every "
             "slice and the money path (S-PLAT-I1, MONEY-I2, AM-I5, AM-I6). Lanes are slices.", "",
             "```mermaid", "flowchart TB"]
@@ -133,7 +197,7 @@ def render(incs, edges, done, parts):
     key = [i for i in ("S-PLAT-I1", "MONEY-I2", "AM-I5", "AM-I6") if i in incs]
     out.append("  classDef key stroke-width:3px")
     out.append("  class " + ",".join(node_id(i) for i in key) + " key")
-    out += ["```", "", "## 3. Cross-slice dependencies", "",
+    out += ["```", "", "## 4. Cross-slice dependencies", "",
             "| Provider increment | Consumer increment | Part |", "|---|---|---|"]
     for a, b in sorted(edges, key=lambda e: (slice_of(e[0]), e[0], e[1])):
         if slice_of(a) != slice_of(b):
