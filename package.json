@@ -5,13 +5,21 @@
   "workspaces": [
     "platform/runtime",
     "platform/migrate",
-    "platform/examples/canary"
+    "platform/examples/canary",
+    "slices/sec/iam-lib",
+    "slices/sec/key-service",
+    "slices/sec/identity-owner",
+    "slices/sec/edge-auth",
+    "slices/sec/audit",
+    "slices/sec/test-owner"
   ],
   "scripts": {
     "test": "node --test --test-concurrency=1 test/*.test.ts",
     "typecheck:platform": "tsc --noEmit -p platform",
     "test:platform": "node --test --test-concurrency=1 'platform/*/test/*.test.ts' 'platform/examples/*/test/*.test.ts'",
     "test:platform:integration": "node --test --test-concurrency=1 'platform/*/test/integration/*.test.ts' 'platform/examples/*/test/integration/*.test.ts'",
+    "typecheck:sec": "tsc --noEmit -p slices/sec",
+    "test:sec": "node --test --test-concurrency=1 'slices/sec/*/test/*.test.ts' 'slices/sec/test/*.test.ts'",
     "dev:up": "docker compose -f platform/dev/docker-compose.yml up -d --wait",
     "dev:down": "docker compose -f platform/dev/docker-compose.yml down -v"
   },

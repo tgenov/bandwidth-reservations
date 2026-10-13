@@ -1,0 +1,16 @@
+{
+  "name": "@share/key-service",
+  "version": "0.1.0-i1",
+  "description": "S-SEC minimal key service: identity_record certificates and the key-certification stream (I1, dev root only)",
+  "private": true,
+  "type": "module",
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "scripts": {
+    "test": "node --test --test-concurrency=1 'test/*.test.ts'"
+  },
+  "dependencies": {
+    "@share/iam-lib": "0.1.0-i1"
+  }
+}

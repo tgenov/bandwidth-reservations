@@ -1,0 +1,17 @@
+{
+  "name": "@share/iam-lib",
+  "version": "0.1.0-i1",
+  "description": "S-SEC C1/C2 library: C08 v1.2 types, principal context, decide, certificates, chain reference (I1)",
+  "private": true,
+  "type": "module",
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "scripts": {
+    "test": "node --test --test-concurrency=1 'test/*.test.ts'",
+    "golden": "node src/golden.ts --write"
+  },
+  "dependencies": {
+    "@share/owner-runtime": "1.0.0-alpha.1"
+  }
+}

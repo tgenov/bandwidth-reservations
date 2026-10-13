@@ -1,0 +1,175 @@
+{
+  "contract": "C08 v1.2",
+  "test": "P-01 (S-SEC I1 part)",
+  "encoding": {
+    "signed_bytes": "UTF-8(domain) || E(JCS(object without its signature field)); E(x) = U32BE(len) || x",
+    "jcs": "RFC 8785; bigint as decimal string; bytes as base64url without padding; undefined fields absent",
+    "chain_entry_kind": "int16 written as two's-complement U16"
+  },
+  "seeds": {
+    "certificationRoot": "0101010101010101010101010101010101010101010101010101010101010101",
+    "identityRecordKey": "0202020202020202020202020202020202020202020202020202020202020202"
+  },
+  "public_keys": {
+    "certificationRoot": "8a88e3dd7409f195fd52db2d3cba5d72ca6709bf1d94121bf3748801b40f6f5c",
+    "identityRecordKey": "8139770ea87d175f56a35466c34c7ecccb8d8a91b4ee37a25df60f5b8fc9b394"
+  },
+  "jcs": [
+    {
+      "name": "key_order_and_nesting",
+      "text": "{\"1\":1e+21,\"a\":{\"c\":0,\"d\":[true,null,\"x\"]},\"b\":1,\"é\":\"é\"}",
+      "hex": "7b2231223a31652b32312c2261223a7b2263223a302c2264223a5b747275652c6e756c6c2c2278225d7d2c2262223a312c22c3a9223a22c3a9227d"
+    },
+    {
+      "name": "bigint_and_bytes",
+      "text": "{\"committed_at\":\"1700000000000000\",\"sig\":\"AP8QIA\"}",
+      "hex": "7b22636f6d6d69747465645f6174223a2231373030303030303030303030303030222c22736967223a22415038514941227d"
+    },
+    {
+      "name": "escapes_and_numbers",
+      "text": "{\"n\":[1.5,0.000001,123456789012345680000,-7],\"s\":\"line\\nquote\\\"\\u0001 \"}",
+      "hex": "7b226e223a5b312e352c302e3030303030312c3132333435363738393031323334353638303030302c2d375d2c2273223a226c696e655c6e71756f74655c225c7530303031e280a8227d"
+    }
+  ],
+  "certificate": {
+    "cert": {
+      "epoch": "3",
+      "key_id": "identity-7-epoch-3",
+      "key_service_sig": "9tbzA6AqfXAGOBExB9_Pmq0PuKnBmgFpRRZt_Bi6mFUe9JZ1btp2n8symYFmTpXPc0E5WCLeWRMb40Fbp4peDw",
+      "not_after": "1700086400000000",
+      "not_before": "1700000000000000",
+      "owner_kind": "identity",
+      "public_key": "gTl3Dqh9F19Wo1Rmw0x-zMuNipG07jeiXfYPW4_Js5Q",
+      "purpose": "identity_record",
+      "slot": 7
+    },
+    "signing_input_hex": "73686172652d6b65792d636572742d7631000000e27b2265706f6368223a2233222c226b65795f6964223a226964656e746974792d372d65706f63682d33222c226e6f745f6166746572223a2231373030303836343030303030303030222c226e6f745f6265666f7265223a2231373030303030303030303030303030222c226f776e65725f6b696e64223a226964656e74697479222c227075626c69635f6b6579223a2267546c3344716839463139576f31526d7730782d7a4d754e69704730376a65695866595057345f4a733551222c22707572706f7365223a226964656e746974795f7265636f7264222c22736c6f74223a377d",
+    "key_service_sig_hex": "f6d6f303a02a7d700638113107dfcf9aad0fb8a9c19a016945166dfc18ba98551ef496756eda769fcb329981664e95cf7341395822de59131be3415ba78a5e0f"
+  },
+  "key_record": {
+    "unsigned": {
+      "committed_at": "1700000001000000",
+      "epoch": "3",
+      "identity_slot": 7,
+      "key_id": "00112233445566778899aabbccddeeff",
+      "limits": {
+        "key_inflight_limit_mbps": null,
+        "key_rate_limit_per_s": 50,
+        "key_spend_limit_micro_usd": "5000000000"
+      },
+      "probe": false,
+      "status": "active",
+      "tenant": {
+        "account": "b1",
+        "kind": "account"
+      },
+      "version": 1
+    },
+    "signing_input_hex": "73686172652d6b65792d7265636f72642d7631000001317b22636f6d6d69747465645f6174223a2231373030303030303031303030303030222c2265706f6368223a2233222c226964656e746974795f736c6f74223a372c226b65795f6964223a223030313132323333343435353636373738383939616162626363646465656666222c226c696d697473223a7b226b65795f696e666c696768745f6c696d69745f6d627073223a6e756c6c2c226b65795f726174655f6c696d69745f7065725f73223a35302c226b65795f7370656e645f6c696d69745f6d6963726f5f757364223a2235303030303030303030227d2c2270726f6265223a66616c73652c22737461747573223a22616374697665222c2274656e616e74223a7b226163636f756e74223a226231222c226b696e64223a226163636f756e74227d2c2276657273696f6e223a317d",
+    "sig_hex": "afc08d8127829711a7a2448ecb39e0cc7a2e8e9df8aaf680b065d8c82a5dea1520afe27c763d2169bf5c5497b58b33f759143d7fda7bee1fcfba17d19389c50b"
+  },
+  "edge_record": {
+    "unsigned": {
+      "body": {
+        "key_id": "00112233445566778899aabbccddeeff",
+        "kind": "agent_key",
+        "limits": {
+          "key_inflight_limit_mbps": null,
+          "key_rate_limit_per_s": 50,
+          "key_spend_limit_micro_usd": "5000000000"
+        },
+        "probe": false,
+        "status": "active",
+        "tenant": {
+          "account": "b1",
+          "kind": "account"
+        },
+        "verifier_sha256": "CQkJCQkJCQkJCQkJCQkJCQkJCQkJCQkJCQkJCQkJCQk"
+      },
+      "committed_at": "1700000001000000",
+      "epoch": "3",
+      "identity_slot": 7,
+      "position": "1",
+      "version": 1
+    },
+    "signing_input_hex": "73686172652d656467652d7265636f72642d76310000019c7b22626f6479223a7b226b65795f6964223a223030313132323333343435353636373738383939616162626363646465656666222c226b696e64223a226167656e745f6b6579222c226c696d697473223a7b226b65795f696e666c696768745f6c696d69745f6d627073223a6e756c6c2c226b65795f726174655f6c696d69745f7065725f73223a35302c226b65795f7370656e645f6c696d69745f6d6963726f5f757364223a2235303030303030303030227d2c2270726f6265223a66616c73652c22737461747573223a22616374697665222c2274656e616e74223a7b226163636f756e74223a226231222c226b696e64223a226163636f756e74227d2c2276657269666965725f736861323536223a2243516b4a43516b4a43516b4a43516b4a43516b4a43516b4a43516b4a43516b4a43516b4a43516b4a43516b227d2c22636f6d6d69747465645f6174223a2231373030303030303031303030303030222c2265706f6368223a2233222c226964656e746974795f736c6f74223a372c22706f736974696f6e223a2231222c2276657273696f6e223a317d",
+    "sig_hex": "ed5a9dd7dd58b5e95a52692e10c2ef9d0dc0173b1281cf883e1f064afeb71c532377014db6f09918837bcfc2d2fdaebee57c5966626e08d494c10179c93e4604"
+  },
+  "heartbeat": {
+    "unsigned": {
+      "epoch": "3",
+      "head": "1",
+      "identity_slot": 7,
+      "sent_at": "1700000002000000"
+    },
+    "signing_input_hex": "73686172652d656467652d6865617274626561742d7631000000477b2265706f6368223a2233222c2268656164223a2231222c226964656e746974795f736c6f74223a372c2273656e745f6174223a2231373030303030303032303030303030227d",
+    "sig_hex": "207b77facd88d325473627869d09f76267a91306337b34bc20d8de3906648c0761b72a8c12dd6ca3b5a642841cbcf5bce6e7f0aea143e21d8cae9588e086a40c"
+  },
+  "chain": {
+    "genesis": {
+      "kindName": "iam",
+      "partition": "6163636f756e742f6231",
+      "chain": "46d57085009af2a07e2e2fea8600fb8b53e6f8f023128a5b61c8ce5fd4a8a5b0"
+    },
+    "links": [
+      {
+        "row": {
+          "kindName": "iam",
+          "partition": "6163636f756e742f6231",
+          "seq": "1",
+          "slot": 7,
+          "generation": 0,
+          "epoch": "3",
+          "entryKind": 1,
+          "schemaV": 1,
+          "identity": "69737375653a3030313132323333343435353636373738383939616162626363646465656666",
+          "emits": "5b5d",
+          "retention": 0,
+          "keyId": "6465763a69616d5f6c6f67",
+          "audit": "010203",
+          "payload": "040506"
+        },
+        "chain": "39e115a4123b27fdd6a40933a8ab6712d4fadd7e22f6ed884b7aff554964bd4a"
+      },
+      {
+        "row": {
+          "kindName": "iam",
+          "partition": "6163636f756e742f6231",
+          "seq": "2",
+          "slot": 7,
+          "generation": 0,
+          "epoch": "3",
+          "entryKind": 2,
+          "schemaV": 1,
+          "identity": "7265766f6b653a3030313132323333343435353636373738383939616162626363646465656666",
+          "emits": "5b5d",
+          "retention": 0,
+          "keyId": "6465763a69616d5f6c6f67",
+          "audit": "010203",
+          "payload": "040506"
+        },
+        "chain": "b5932451ea88fb886ed659b9cd53913a6c5e68f3fdeb138818812b8620b2b782"
+      },
+      {
+        "row": {
+          "kindName": "iam",
+          "partition": "6163636f756e742f6231",
+          "seq": "3",
+          "slot": 12,
+          "generation": 1,
+          "epoch": "1",
+          "entryKind": -1,
+          "schemaV": 1,
+          "identity": "74616b656f766572",
+          "emits": "5b5d",
+          "retention": 0,
+          "keyId": "6465763a69616d5f6c6f67",
+          "audit": "010203",
+          "payload": "040506"
+        },
+        "chain": "337abe0a73d7a74c9ebf1669b6d0b976e80b05e373a262c69f36a72cb6035808",
+        "note": "after a move: slot 12, generation 1, epoch 1"
+      }
+    ]
+  }
+}
