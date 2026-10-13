@@ -1,0 +1,20 @@
+{
+  "name": "@share/account-owner",
+  "version": "0.1.0-am.1",
+  "description": "The account owner kind (S-ACCT + S-MONEY, AM-I1): booking module (RFC-002) and the C05 funds-and-standing module (RFC-004 Part A)",
+  "private": true,
+  "type": "module",
+  "exports": {
+    ".": "./src/index.ts",
+    "./testing": "./testing/index.ts"
+  },
+  "scripts": {
+    "test": "node --test --test-concurrency=1 'test/*.test.ts'"
+  },
+  "dependencies": {
+    "@share/owner-runtime": "1.0.0-alpha.1"
+  },
+  "devDependencies": {
+    "@share/owner-migrate": "1.0.0-alpha.1"
+  }
+}

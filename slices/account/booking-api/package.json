@@ -1,0 +1,17 @@
+{
+  "name": "@share/booking-api",
+  "version": "0.1.0-am.1",
+  "description": "Minimal C10 v1.0.0 booking API (book and status) in front of the account owner (AM-I1)",
+  "private": true,
+  "type": "module",
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "scripts": {
+    "test": "node --test --test-concurrency=1 'test/*.test.ts'"
+  },
+  "dependencies": {
+    "@share/account-owner": "0.1.0-am.1",
+    "@share/owner-runtime": "1.0.0-alpha.1"
+  }
+}
