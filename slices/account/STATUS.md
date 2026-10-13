@@ -90,14 +90,13 @@ The work is not committed.
 |---|---|---|---|
 | 1 | C06 CT-L1 (all rows), CT-L2, CT-L3 (usage batch), CT-L4, CT-L6, CT-L10 | Met | `money/test/usage.test.ts` (`C06 CT-L1` ×4, `CT-L2`, `CT-L3`, `CT-L4 (1)` … `(4)`, `CT-L5` ×2, `CT-L6`, `CT-L7` ×2, `CT-L10`); `money/test/contract.c06.test.ts` (`runC06ProviderSuite` on the real ledger: CT-L1 ×2, CT-L4 ×3, CT-L5 ×2, CT-L6) |
 | 2 | C06 CT-C1 on every CT-R fixture | Met | `usage.test.ts` `C06 CT-C1 … usage fixtures …` (each batch also three times); `settlement.test.ts` `C06 CT-C1 …` (reservation fixtures) |
-| 3 | B13 "Order independence", "Per-line dedup", "Cost-line amendments", "Batch kinds" and "Usage batches whole" | Met | `money/test/usage.property.test.ts`: `P4-S38 B13: Order independence …`, `P4-S57 B13: Per-line dedup …`, `P4-S116 B13: Cost-line amendments …`, `P3-S61 B13: Batch kinds and Usage batches whole …` |
+| 3 | B13 "Order independence", "Per-line dedup", "Cost-line amendments", "Batch kinds" and "Usage batches whole" | Met | `money/test/usage.property.test.ts`: `P4-S38 B13: Order independence …`, `C06 CT-L5 B13: Per-line dedup …`, `P4-S116 B13: Cost-line amendments …`, `P3-S61 B13: Batch kinds and Usage batches whole …` |
 | 4 | §B2 worked examples for M6 … M13 and M23 (P4-S41, P4-S42, P4-S56, P4-S75, P4-S85, P4-S89, P4-S110, P4-S115, P4-S116) | Met | `usage.test.ts` (one test for each scenario, exact micro-USD amounts) |
 | 5 | P4-S99 against the catalogue double: the second "C1" moves no money | Met | `usage.test.ts` `P4-S99 …` |
 | 6 | Measurement: usage lines posted within `max_lateness` + 120 s of their minute's end at p99 (X2-S13); a refused usage batch costs one gated cycle (est. 2.5 s, R4-B11) | **Manual proof owed** | `money/test/integration/usage-measure.test.ts` (`MONEY_MEASURE=1 npm run measure`, by hand on a quiet dev cell). Written, not run: local testing is contract and double based only. A person runs it and records the result here |
 
 Scenarios with a passing test in `test:account`: P4-S30, P4-S37, P4-S38, P4-S39, P4-S41, P4-S42, P4-S56, P4-S74,
-P4-S75, P4-S77, P4-S84, P4-S85, P4-S89, P4-S99, P4-S110, P4-S115, P4-S116 (all 17 of the plan). Also P4-S57 and
-P3-S61 (B13 property tests).
+P4-S75, P4-S77, P4-S84, P4-S85, P4-S89, P4-S99, P4-S110, P4-S115, P4-S116 (all 17 of the plan). Also P3-S61 (B13 property test). P4-S57 stays with MONEY-I27 (review 71 TR-15).
 
 ### Money invariants and their property tests (MONEY-I3)
 
@@ -107,23 +106,54 @@ reference). Each property test is seeded; a failure names its seed.
 | Invariant | Property test |
 |---|---|
 | Late traffic in any order, partly repeated, gives the balances of delivery in order; a late-traffic amendment never debits a party (P4-S38, P4-S39); every movement and the ledger sum to zero (P4-S28) | `usage.property.test.ts` `P4-S38 B13: Order independence …` |
-| Each line key is posted once, at its first accepted content, after crashes and re-composed batches; a changed line moves nothing | `P4-S57 B13: Per-line dedup …` |
+| Each line key is posted once, at its first accepted content, after crashes and re-composed batches; a changed line moves nothing | `C06 CT-L5 B13: Per-line dedup …` |
+| In own mode (M7, M8, M9) the buyer holds −T_final; a supplier's fault debt is max(0, held_f − split(T_new)_f); no supplier gains on its own fault; Share bears the rest | `P4-S42 B13: Corrections in own mode …` |
 | A supplier's holding of a cost line falls only by its own fault; Share never pays a party twice for one total; Share's costs equal what the suppliers hold | `P4-S116 B13: Cost-line amendments …` |
 | A usage batch with a conflict, a sequence gap, an invalid line or more than 5,000 lines posts nothing; a reservation batch posts every good line; a duplicate never refuses a batch | `P3-S61 B13: Batch kinds and Usage batches whole …` |
 | The reported deviation of each party equals Σ (split(T)_i − T·w_i / W) over the final line totals | `deviation.test.ts` `P4-S37 … for random originals and late traffic` |
 
 Each was shown once to fail when the code is broken on purpose (2026-10-13): (a) M23 lets a supplier's holding
 fall without its own fault: `P4-S116 B13` and two example tests fail; (b) M6 uses `split(Δ)` in normal mode:
-`P4-S38 B13` and `P4-S37` fail; (c) the ledger posts a usage batch partly: `P4-S57 B13`, `P3-S61 B13` and six
+`P4-S38 B13` and `P4-S37` fail; (c) the ledger posts a usage batch partly: `C06 CT-L5 B13`, `P3-S61 B13` and six
 CT-L4, CT-L5, CT-L6 tests fail. The code was restored after each run.
+
+### Review 71 (test review, INADEQUATE): fixes
+
+The fixes add tests only. No code defect was found: the abandon-up posting (`templates.ts`, TR-3) pays each
+supplier `split(newTotal)_i − split(priorTotal)_i`, as RFC-004 §B2 "Abandon posting" states. Each mutant below was
+put in by hand, `npm run -s test:account` was run, and the file was restored (2026-10-13).
+
+| Finding | Fix | Mutant now killed by |
+|---|---|---|
+| TR-1 (Blocker) | `usage.test.ts` `P4-S42 a correction caused by supplier a that lands below a's split in own mode …` (R31: 8 → 7 → 27 → 26) | `templates.ts` M9 `d = posted − target`: this test and `P4-S42 B13` |
+| TR-2 (Blocker) | `C06 CT-L1 each other invalid row …`: `newTotal` −50 and `priorTotal` −10 after a posted 100; balances unchanged | remove `a negative total` |
+| TR-3 (Blocker) | `C06 CT-L10 an abandon-up posting pays the suppliers only the increase …`: entries A 15, B 17, C 11, `SH:costs` −43; B:b1 −100 | abandon-up `prev` = 0 |
+| TR-4 (Major) | `C06 CT-L1 each row …`: `quarantine_attribution`, `corrected_record`, `price_correction`, `superseding_record`, `re_rate` up (M6) | each reason removed from `UP_USAGE` (5 mutants) |
+| TR-5 (Major) | `C06 CT-L1 each other invalid row …`: refusals at `templates.ts` 74, 87, 96, 98, 99 (route and weights version), 102, 112 | each guard removed (7 mutants) |
+| TR-6 (Major) | `C06 CT-L1 the ledger refuses a usage request with two sequences of one line key …` (on the port) | `decide.ts` C06 D2 check removed |
+| TR-7 (Major) | `C06 CT-L6 a usage line whose split mode or explicit shares are not the template's …`; the template's shares post | `split.mode` check removed; `explicitShares` check removed |
+| TR-8 (Major) | `settlement.test.ts`: template refusal in a usage batch (`LINE_INVALID`), batch kind `refund`, no line-state reader (`POST_FAILED`), `refused_batch` for a reservation batch (`UNEXPECTED_ANSWER`, held) | each of the four branches removed |
+| TR-9 (Major) | `C06 CT-L2 a late POL-07 cut of 1,200 to 600 in own mode posts M7 …`: exact entries, mode `own` | M7 downward shares reversed: this test and `P4-S42 B13` |
+| TR-10 (Major) | `usage.property.test.ts` `P4-S42 B13: Corrections in own mode …` (20 seeds; R1, R31, R4; M6, M7 up and down, M8, M9) against an oracle with `refSplit` | TR-1 mutant (shown once) |
+| TR-11 (Major) | `tools/mutation/money.stryker.json`: `templates.ts` and `deviation.ts` added to `mutate`. Stryker not run (a person runs it) | n/a |
+| TR-12 (Minor) | Test renamed (`… and the batches behind it wait in order`). The fixed tick wait stays: it is a must-not check | open in part |
+| TR-13 (Minor) | Exact reason and detail asserted | detail text changed |
+| TR-14 (Minor) | `c06.ts` header, this file and `ISSUES.md` corrected; the C06 double gap names its owner (S-RATE) | n/a |
+| TR-15 (Minor) | `P4-S57 B13` renamed `C06 CT-L5 B13`; P4-S57 stays with MONEY-I27 | n/a |
+| TR-16 (Minor) | M23 mode `own` asserted in `P4-S116`; cost-line amendment of amount 0 and downward `re_rate` with cause supplier in CT-L1. The own-mode fraction in `P4-S37` is open | M23 mode, `templates.ts` 104, 124 |
+
+Observation (not a finding of review 71): on an in-batch D2 refusal the ledger reports `ledgerPostedTotal`,
+`ledgerLastSeq` and `ledgerPosition` of the earlier sequence in the same refused batch, not of the posted state.
+The TR-6 test does not assert these fields. To be decided by the C06 owner.
 
 ### Changes outside the slice (MONEY-I3)
 
-1. `contracts/suites/test/contract.c06.test.ts`: the C06 PENDING real-provider entry (MONEY-I3) is removed. The
-   real ledger runs `runC06ProviderSuite` and `runC06ReservationSuite` in `money/test/contract.c06.test.ts`.
+1. `contracts/suites/test/contract.c06.test.ts`: the C06 PENDING real-provider entry (MONEY-I3) is replaced by an
+   export check. The real ledger runs `runC06ProviderSuite` and `runC06ReservationSuite` in
+   `money/test/contract.c06.test.ts`.
 2. `contracts/suites/ISSUES.md`: CS-9 (new), CS-7 (MONEY-I3 state), the C06 row removed from "Known provider
    gaps", and a C06 row in "Known double gaps" (the rate slice's settlement double does not run
-   `runC06ReservationSuite`; S-RATE adds its PENDING entry).
+   `runC06ReservationSuite`; owner S-RATE, review 71 TR-14).
 3. No change in `platform/`.
 
 ### Design issues (MONEY-I3)
@@ -133,6 +163,7 @@ CT-L4, CT-L5, CT-L6 tests fail. The code was restored after each run.
 | D-13 | C06 §8; RFC-000 §2 (home of a movement) | A usage batch of cost lines only (M12, M13, M23) touches no buyer account. The request alone does not name the home partition of the movement | Settlement names the buyer account it routed by (`PostCall.account`); the movement is in the by-buyer view of the causing buyer, whose balance it does not touch | C06 minor version: name the home account on the posting port |
 | D-14 | C06 §8, V63-2; CS-7 | It is not stated if a refused usage batch takes a sequence of the partition log | `refused_batch` is the recorded answer of the `movementRef` (a projection row) and writes no log entry, so it takes no sequence | C06 erratum together with D-6 and CS-7 |
 | D-15 | C06 §2; `runC06ProviderSuite` (CS-9) | The suite credits the whole charge to one supplier, but C06 §2 needs a positive commission weight | The subject route has weights 10⁹ : 1, so the commission gets 0 of every suite amount | Contract owner: state the weights of the suite subject, or let the suite build its entries from a split |
+| D-16 | C06 §8 (D2: two sequences of one line key in one batch) | When the ledger refuses the second sequence, the refusal reports the earlier sequence's state, with a `ledgerPosition` that was never committed. Found during review 71 fixes; the TR-6 test does not assert these fields | None | Contract owner: state what a D2 refusal reports (no position, or the last committed one) |
 
 D-1 … D-12 (MONEY-I2) are still open.
 

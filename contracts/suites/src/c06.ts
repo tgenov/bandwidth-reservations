@@ -3,10 +3,9 @@
  * the subset that rating's I1 output reaches (usage originals, mapping row M5, usage batches). Tests come
  * from C06 "Conformance tests", provider side RFC-004 (CT-L1, CT-L4, CT-L5, CT-L6).
  *
- * `runC06ProviderSuite` (usage batches) runs against the settlement double of the rate slice; the real
- * provider of usage batches comes in S-MONEY MONEY-I3 and has a registered PENDING entry.
- * `runC06ReservationSuite` (reservation batches: CT-L1 reservation rows, CT-L3, CT-L4 (1), CT-L5, CT-L6) runs
- * against the real ledger and settlement of MONEY-I2.
+ * `runC06ProviderSuite` (usage batches) runs against the settlement double of the rate slice and against the
+ * real ledger and settlement (S-MONEY MONEY-I3). `runC06ReservationSuite` (reservation batches: CT-L1
+ * reservation rows, CT-L3, CT-L4 (1), CT-L5, CT-L6) runs against the real ledger and settlement (MONEY-I2).
  *
  * The types are copied from C06 "Schema" (the subset that the tests use).
  */

@@ -9,13 +9,13 @@ import assert from 'node:assert/strict';
 import { encodeJson, utf8 } from '@share/owner-runtime';
 import {
   LEDGER_ENTRY, TOPIC, ledgerPartitionOfBuyer, ledgerRows, recordOf,
-  type ChargeLine, type LineAck, type MovementPosted, type PostLine, type PostMovementRequest, type PostingAck, type StoredMovement,
+  type ChargeLine, type LedgerAnswer, type LineAck, type MovementPosted, type PostCall, type PostLine, type PostMovementRequest, type PostingAck, type StoredMovement,
 } from '../src/index.ts';
 import {
-  CatalogueCorrectionsDouble, MINUTE_0, chargeLine, ctrUsageBatches, reservationBatch, reservationLine, usageBatch, usageRef,
+  CatalogueCorrectionsDouble, MINUTE_0, chargeLine, ctrUsageBatches, moneyWorld, reservationBatch, reservationLine, usageBatch, usageRef,
   type MoneyWorld,
 } from '../testing/index.ts';
-import { R1_V2, balancesOf, lastEntries, movementsOf, nextId, original, resAmend, resRef, usage, usageWorld } from './support-usage.ts';
+import { R1_V2, R31, R4, balancesOf, lastEntries, movementsOf, nextId, original, resAmend, resRef, usage, usageWorld } from './support-usage.ts';
 
 const M1 = '2026-10-12T09:01:00Z';
 const pk = (account: string): Uint8Array => utf8(ledgerPartitionOfBuyer(account));
@@ -65,6 +65,9 @@ test('C06 CT-L1 each row of the settlement mapping table posts the movement that
     ['reservation, re_rate down, cause share', res1500, () => resAmend('b1', 'r-1', 1, 1_500n, 1_400n, { reason: 're_rate', cause: { kind: 'share' } }), 'M8'],
     ['usage, late_traffic up, normal mode', async (w) => { await usage(w, 'b1', [usageLine('b1', 'R1', 0n, 100n)]); },
       () => usageLine('b1', 'R1', 100n, 150n, {}, 1), 'M6'],
+    ...(['quarantine_attribution', 'corrected_record', 'price_correction', 'superseding_record', 're_rate'] as const).map((reason, i): Case =>
+      [`usage, ${reason} up, normal mode`, async (w) => { await usage(w, 'b1', [usageLine('b1', 'R1', 0n, 100n)]); },
+        () => usageLine('b1', 'R1', 100n, 150n, { reason, triggerRef: `t-${i}` }, 1), 'M6']),
     ['usage, late_traffic up, own mode', own, () => usageLine('b1', 'R1', 9_000n, 9_500n, {}, 2), 'M7'],
     ['usage, attribution_reversed down, cause share', async (w) => { await usage(w, 'b1', [usageLine('b1', 'R1', 0n, 100n)]); },
       () => usageLine('b1', 'R1', 100n, 0n, { reason: 'attribution_reversed', cause: { kind: 'share' } }, 1), 'M8'],
@@ -117,12 +120,96 @@ test('C06 CT-L1 an invalid combination in a usage batch refuses the batch whole:
   }
 });
 
+test('C06 CT-L1 each other invalid row of the mapping table refuses the usage batch whole after a posted line: invalid for the line, batch_refused for the others, nothing moves', async () => {
+  const post100 = async (w: MoneyWorld): Promise<void> => { await usage(w, 'b1', [usageLine('b1', 'R1', 0n, 100n)]); };
+  const res1500 = async (w: MoneyWorld): Promise<void> => { await original(w, 'b1', 'r-1', 1_500n); };
+  const excess10k = async (w: MoneyWorld): Promise<void> => { await usage(w, 'b1', [excess('b1', 0n, 10_000n, 0)]); };
+  const none = async (): Promise<void> => {};
+  const noRoute = (drop: 'route' | 'weightsVersion'): ChargeLine => {
+    const l = usageLine('b1', 'R1', 0n, 100n);
+    delete l[drop];
+    return l;
+  };
+  const cases: Array<[string, (w: MoneyWorld) => Promise<void>, () => ChargeLine]> = [
+    ['a negative newTotal', post100, () => usageLine('b1', 'R1', 100n, -50n, { reason: 'price_correction', cause: { kind: 'share' } }, 1)],
+    ['a negative priorTotal', post100, () => usageLine('b1', 'R1', -10n, 100n, {}, 1)],
+    ['a usage line with a reservation SourceRef', none, () => chargeLine('b1', resRef('r-7'), 'usage', 0n, 100n)],
+    ['reason original on a cost-line amendment', excess10k, () => excess('b1', 10_000n, 12_000n, 1, { reason: 'original' })],
+    ['a Share-borne fee with payer account', none, () => chargeLine('b1', { kind: 'fee', reservation: 'r-1', feeId: 'f-2' }, 'share_borne_fee', 0n, 70n, { payee: P, payer: 'account' })],
+    ['a payee on a usage line', none, () => usageLine('b1', 'R1', 0n, 100n, { payee: P })],
+    ['a usage line with no route', none, () => noRoute('route')],
+    ['a usage line with no weights version', none, () => noRoute('weightsVersion')],
+    ['a cost line with payer account', none, () => excess('b1', 0n, 10_000n, 0, { payer: 'account' })],
+    ['a usage original with payer share and no abandon', none, () => usageLine('b1', 'R1', 0n, 100n, { payer: 'share' })],
+    ['a cost-line amendment with amount 0', excess10k, () => excess('b1', 10_000n, 10_000n, 1)],
+    ['a downward reservation re_rate with cause supplier', res1500, () => resAmend('b1', 'r-1', 1, 1_500n, 1_400n, { reason: 're_rate', cause: { kind: 'supplier', supplier: 'A' } })],
+  ];
+  for (const [name, setup, make] of cases) {
+    const w = await usageWorld();
+    await setup(w);
+    const before = balancesOf(w);
+    const posted = movementsOf(w).length;
+    const acks = await usage(w, 'b1', [usageLine('b1', 'R2', 0n, 7n), make()]);
+    assert.deepEqual(outcomes(acks), [['excluded', 'batch_refused'], ['excluded', 'invalid']], name);
+    assert.deepEqual(w.settlement.alerts.map((a) => a.code), ['LINE_INVALID'], name);
+    assert.equal(movementsOf(w).length, posted, `${name}: nothing posted`);
+    assert.deepEqual(balancesOf(w), before, `${name}: no balance changed`);
+  }
+});
+
 test('C06 CT-L1 two sequences of one line key in one usage batch refuse the batch whole', async () => {
   const w = await usageWorld();
   await usage(w, 'b1', [usageLine('b1', 'R1', 0n, 100n)]);
   const acks = await usage(w, 'b1', [usageLine('b1', 'R1', 100n, 150n, {}, 1), usageLine('b1', 'R1', 150n, 170n, {}, 2)]);
   assert.deepEqual(outcomes(acks), [['excluded', 'batch_refused'], ['excluded', 'invalid']]);
   assert.equal(w.balances().get('B:b1'), -100n);
+});
+
+/** A usage world whose posting port keeps a copy of each call, to take settlement's port lines. */
+async function capturingWorld(): Promise<{ w: MoneyWorld; calls: PostCall[] }> {
+  const calls: PostCall[] = [];
+  const w = await moneyWorld({ port: (l) => ({ post: async (c: PostCall) => { calls.push(structuredClone(c)); return l.post(c); } }) });
+  for (const x of [R31, R4, R1_V2]) w.weights.apply(x);
+  return { w, calls };
+}
+
+test('C06 CT-L1 the ledger refuses a usage request with two sequences of one line key whole, also when settlement did not refuse it first', async () => {
+  const src = await capturingWorld();
+  await usage(src.w, 'b1', [usageLine('b1', 'R1', 0n, 100n)]);
+  await usage(src.w, 'b1', [usageLine('b1', 'R1', 100n, 150n, {}, 1)]);
+  await usage(src.w, 'b1', [usageLine('b1', 'R1', 150n, 170n, {}, 2)]);
+  const [seq1, seq2] = [src.calls[1]!.request.lines[0]!, src.calls[2]!.request.lines[0]!];
+  const w = await usageWorld();
+  await usage(w, 'b1', [usageLine('b1', 'R1', 0n, 100n)]);
+  const before = balancesOf(w);
+  const id = nextId();
+  const a = await w.post('b1', { movementRef: id, cause: 'c', currency: 'USD', batch: { id, kind: 'usage', lineCount: 2 }, lines: [seq1, seq2] });
+  assert.deepEqual(a.result === 'refused_batch' ? a.lines.map((l) => [l.lineRef, l.problem]) : a, [[usageRef('b1', 'R1', MINUTE_0, 2), 'invalid']]);
+  assert.deepEqual(balancesOf(w), before);
+  assert.equal(movementsOf(w).length, 1);
+});
+
+test('C06 CT-L6 a usage line whose split mode or explicit shares are not the template\'s is refused whole on the port; the template\'s shares post', async () => {
+  const src = await capturingWorld();
+  await usage(src.w, 'b1', [usageLine('b1', 'R1', 0n, 100n)]);
+  await usage(src.w, 'b1', [usageLine('b1', 'R1', 100n, 90n, { reason: 'price_correction', cause: { kind: 'share' } }, 1)]);
+  const m8 = src.calls[1]!.request.lines[0]!;
+  assert.deepEqual([m8.kind, m8.split], ['M8', { route: 'R1', weightsVersion: 'w1', mode: 'own' }]);
+  const shares = [{ party: 'A', amount: '30' }, { party: 'B', amount: '33' }, { party: 'C', amount: '22' }, { party: 'commission', amount: '15' }];
+  const w = await usageWorld();
+  await usage(w, 'b1', [usageLine('b1', 'R1', 0n, 100n)]);
+  const send = async (split: NonNullable<PostLine['split']>) => {
+    const id = nextId();
+    return w.post('b1', { movementRef: id, cause: 'c', currency: 'USD', batch: { id, kind: 'usage', lineCount: 1 }, lines: [{ ...m8, split }] });
+  };
+  const problems = (a: LedgerAnswer): unknown => (a.result === 'refused_batch' ? a.lines.map((l) => [l.lineRef, l.problem, l.ledgerPostedTotal, l.ledgerLastSeq]) : a);
+  const refused = [[usageRef('b1', 'R1', MINUTE_0, 1), 'invalid', '100', 0]];
+  assert.deepEqual(problems(await send({ route: 'R1', weightsVersion: 'w1', mode: 'normal' })), refused, 'mode normal');
+  assert.deepEqual(problems(await send({ route: 'R1', weightsVersion: 'w1', mode: 'own', explicitShares: shares.map((x, i) => (i === 0 ? { ...x, amount: '31' } : x)) })), refused, 'A + 1');
+  assert.equal(w.balances().get('B:b1'), -100n);
+  const ok = await send({ route: 'R1', weightsVersion: 'w1', mode: 'own', explicitShares: shares });
+  assert.equal(ok.result, 'committed');
+  assert.deepEqual(lastEntries(w), [['B:b1 10', 'SH:corrections -10']]);
 });
 
 test('C06 CT-L1 in a reservation batch an abandoned original posts as M12 beside the originals; an amendment is excluded invalid', async () => {
@@ -153,6 +240,18 @@ test('C06 CT-L2 a late POL-07 cut of 1,500 to 900 posts M6: B:b1 +600, A −180,
   assert.deepEqual([line.kind, line.amount, line.postedTotal, line.reason, line.lateCut, line.cause, line.split],
     ['M6', '-600', '900', 'late_pol07_cut', LATE_CUT, undefined, { route: 'R1', weightsVersion: 'w1', mode: 'normal' }]);
   assert.deepEqual(balancesOf(w), { 'B:b1': '-900', 'S:A:earn': '270', 'S:B:earn': '300', 'S:C:earn': '195', 'SH:commission': '135' });
+});
+
+test('C06 CT-L2 a late POL-07 cut of 1,200 to 600 in own mode posts M7 −split(600): B:b1 +600, A −180, B −200, C −130, commission −90', async () => {
+  const w = await usageWorld();
+  await original(w, 'b1', 'r-1', 1_500n);
+  await usage(w, 'b1', [resAmend('b1', 'r-1', 1, 1_500n, 1_200n, { reason: 'price_correction', cause: { kind: 'share' } })]);
+  const acks = await usage(w, 'b1', [resAmend('b1', 'r-1', 2, 1_200n, 600n, { reason: 'late_pol07_cut', lateCut: LATE_CUT })]);
+  assert.deepEqual(outcomes(acks), [['posted', 'false']]);
+  assert.deepEqual(lastEntries(w), [['B:b1 600', 'S:A:earn -180', 'S:B:earn -200', 'S:C:earn -130', 'SH:commission -90']]);
+  const line = movementsOf(w).at(-1)!.lines[0]!;
+  assert.deepEqual([line.kind, line.split?.mode], ['M7', 'own']);
+  assert.deepEqual(balancesOf(w), { 'B:b1': '-600', 'S:A:earn': '270', 'S:B:earn': '300', 'S:C:earn': '195', 'SH:commission': '135', 'SH:corrections': '-300' });
 });
 
 // ---------------- C06 CT-L3: size ----------------
@@ -262,7 +361,7 @@ test('C06 CT-L6 an amendment past the next sequence, a wrong priorTotal, entries
   const amend: PostLine = { kind: 'M6', lineRef: usageRef('b1', 'R1', M1, 1), lineKind: 'usage', payer: 'account', reason: 'late_traffic', amendmentSeq: 1,
     priorTotal: '0', newTotal: '5', split: { route: 'R1', weightsVersion: 'w1', mode: 'normal' }, entries: [{ ledgerAccount: 'B:b1', amount: '-5' }, { ledgerAccount: 'S:B:earn', amount: '5' }] };
   const r = await port([amend]);
-  assert.equal(r.result, 'refused', 'movementRef ≠ batch id is a movement-level refusal');
+  assert.deepEqual(r, { result: 'refused', reason: 'invalid', detail: 'a charge-line movement carries one batch, with movementRef = batch id' }, 'movementRef ≠ batch id is a movement-level refusal');
   const id = nextId();
   const r2 = await w.post('b1', { movementRef: id, cause: 'c', currency: 'USD', batch: { id, kind: 'usage', lineCount: 1 }, lines: [amend] });
   assert.deepEqual(r2, { result: 'refused_batch', lines: [{ lineRef: usageRef('b1', 'R1', M1, 1), problem: 'out_of_sequence' }] }, 'an amendment whose predecessor is not posted');
@@ -326,6 +425,15 @@ test('C06 CT-L10 an abandon posting of a usage line, a fee and a reservation ori
   assert.deepEqual(balancesOf(w), { 'S:A:earn': '3450', 'S:B:earn': '3833', 'S:C:earn': '2492', 'S:P:earn': '500', 'SH:costs': '-10275' });
 });
 
+test('C06 CT-L10 an abandon-up posting pays the suppliers only the increase split(150) − split(100): A 15, B 17, C 11 from Share\'s costs; no commission; B not charged again', async () => {
+  const w = await usageWorld();
+  await usage(w, 'b1', [usageLine('b1', 'R1', 0n, 100n)]);
+  const acks = await usage(w, 'b1', [usageLine('b1', 'R1', 100n, 150n, { payer: 'share', abandon: { actionId: 'a-2' }, triggerRef: 'a-2' }, 1)]);
+  assert.deepEqual(outcomes(acks), [['posted', 'false']]);
+  assert.deepEqual(lastEntries(w), [['S:A:earn 15', 'S:B:earn 17', 'S:C:earn 11', 'SH:costs -43']]);
+  assert.deepEqual(balancesOf(w), { 'B:b1': '-100', 'S:A:earn': '45', 'S:B:earn': '50', 'S:C:earn': '33', 'SH:commission': '15', 'SH:costs': '-43' });
+});
+
 // ---------------- C06 CT-C1: the CT-R usage fixtures ----------------
 
 test('C06 CT-C1 settlement consumes the CT-R usage fixtures (CT-R6, CT-R9, CT-R10, CT-R12, CT-R13) and the posted amounts equal the golden ledger, also when each batch comes three times', async () => {
@@ -364,6 +472,18 @@ test('P4-S42 a correction caused by supplier A from 100.000000 to 60.000000 USD 
   assert.deepEqual(lastEntries(w), [['B:b1 40000000', 'S:A:debt -12000000', 'SH:corrections -28000000']]);
   assert.deepEqual(balancesOf(w), { 'B:b1': '-60000000', 'S:A:debt': '-12000000', 'S:A:earn': '30000000', 'S:B:earn': '33330000', 'S:C:earn': '21670000',
     'SH:commission': '15000000', 'SH:corrections': '-28000000' });
+});
+
+test('P4-S42 a correction caused by supplier a that lands below a\'s split in own mode gives a no credit: B:b1 +1, Share bears 1 (R31: 8 → 7 → 27 → 26)', async () => {
+  const w = await usageWorld();
+  await usage(w, 'b1', [usageLine('b1', 'R31', 0n, 8n)]);
+  await usage(w, 'b1', [usageLine('b1', 'R31', 8n, 7n, { reason: 'price_correction', cause: { kind: 'share' } }, 1)]);
+  await usage(w, 'b1', [usageLine('b1', 'R31', 7n, 27n, {}, 2)]);
+  assert.deepEqual(lastEntries(w), [['B:b1 -20', 'S:a:earn 3', 'S:b:earn 9', 'SH:commission 8']]);
+  await usage(w, 'b1', [usageLine('b1', 'R31', 27n, 26n, { reason: 'price_correction', cause: { kind: 'supplier', supplier: 'a' } }, 3)]);
+  assert.deepEqual(lastEntries(w), [['B:b1 1', 'SH:corrections -1']]);
+  assert.deepEqual(movementsOf(w).at(-1)!.kinds, ['M9']);
+  assert.deepEqual(balancesOf(w), { 'B:b1': '-26', 'S:a:earn': '4', 'S:b:earn': '13', 'SH:commission': '11', 'SH:corrections': '-2' });
 });
 
 test('P4-S56 excess carried of 10,000 micro-USD on R1 pays A, B and C 3,000, 3,333 and 2,167 from Share\'s costs; no commission share; b1 not debited', async () => {
@@ -459,7 +579,7 @@ test('P4-S116 a cost Share paid is final: a superseding record by Share\'s expor
     await usage(w, 'b1', [excess('b1', 10_000n, 5_000n, 1, { cause })]);
     assert.deepEqual(lastEntries(w), entries);
     const l = movementsOf(w).at(-1)!.lines[0]!;
-    assert.deepEqual([l.kind, l.nil, l.postedTotal], ['M23', nil, '5000']);
+    assert.deepEqual([l.kind, l.nil, l.postedTotal, l.split?.mode], ['M23', nil, '5000', 'own']);
     assert.deepEqual(balancesOf(w), expected);
   }
 });

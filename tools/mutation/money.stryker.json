@@ -12,7 +12,9 @@
     "slices/account/money/src/money.ts",
     "slices/account/money/src/ledger/accounts.ts",
     "slices/account/money/src/ledger/decide.ts",
-    "slices/account/money/src/settlement/settlement.ts"
+    "slices/account/money/src/ledger/templates.ts",
+    "slices/account/money/src/settlement/settlement.ts",
+    "slices/account/money/src/settlement/deviation.ts"
   ],
   "concurrency": 6,
   "timeoutMS": 30000,

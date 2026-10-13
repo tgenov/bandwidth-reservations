@@ -214,7 +214,7 @@ test('should exclude invalid a zero-amount original, an amendment, a cost line, 
   assert.equal(w.balances().get('B:b1'), -10n, 'only the first r-7 posts');
 });
 
-test('should keep one usage batch of an account in flight and start the next when it is answered, while reservation batches go on', async () => {
+test('should keep one usage batch of an account in flight and start the next when it is answered, and the batches behind it wait in order', async () => {
   let gate: GatePort | undefined;
   const w = await moneyWorld({ port: (l) => (gate = new GatePort(l)) });
   const u = (id: string, minute: string) => usageBatch(id, 'b1', [chargeLine('b1', usageRef('b1', 'R1', minute), 'usage', 0n, 100n)]);
@@ -258,4 +258,54 @@ test('should publish settlement\'s own exclusions before the batch offset is com
   assert.deepEqual(w.commits, [{ partition: 0, next: 1n }]);
   const [mv] = w.events<MovementPosted>(TOPIC.movements);
   assert.deepEqual(mv!.event.batch, { id: 'rating-1:0:3:0', kind: 'reservation' });
+});
+
+test('should refuse a usage batch whole with LINE_INVALID when the template of a line cannot post it (an abandon posting whose split pays no supplier)', async () => {
+  const w = await moneyWorld();
+  w.weights.apply({ entityType: 'split_weights', route: 'RZ', weightsVersion: 'wz', effectiveFrom: MINUTE_0, announcedAt: '0.0000000000',
+    legs: [{ link: 'LZ', supplier: 'Z', weight: 1 }], commissionWeight: 100 });
+  const b = usageBatch('rating-1:0:20:0', 'b1', [
+    chargeLine('b1', usageRef('b1', 'R1', MINUTE_0), 'usage', 0n, 100n),
+    chargeLine('b1', usageRef('b1', 'RZ', MINUTE_0), 'usage', 0n, 1n, { route: 'RZ', weightsVersion: 'wz', payer: 'share', abandon: { actionId: 'a-z' } }),
+  ]);
+  const acks = await w.settle(b);
+  assert.deepEqual(acks.map((a) => [a.outcome, a.outcome === 'excluded' ? a.reason : '']), [['excluded', 'batch_refused'], ['excluded', 'invalid']]);
+  assert.deepEqual(w.settlement.alerts.map((a) => [a.code, a.detail]),
+    [['LINE_INVALID', 'line 1: the split pays no supplier: the posting moves nothing; the batch is refused whole']]);
+  assert.equal(w.events(TOPIC.movements).length, 0);
+  assert.equal(w.balances().size, 0);
+});
+
+test('should exclude every line of a batch whose kind is not reservation or usage as invalid, with a LINE_INVALID alert, and post nothing', async () => {
+  const w = await moneyWorld();
+  const b = usageBatch('rating-1:0:21:0', 'b1', [chargeLine('b1', usageRef('b1', 'R1', MINUTE_0), 'usage', 0n, 100n)]);
+  const odd = { ...b, batch: { ...b.batch, kind: 'refund' as unknown as 'usage' } };
+  const acks = await w.settle(odd);
+  assert.deepEqual(acks.map((a) => [a.outcome, a.outcome === 'excluded' ? a.reason : '']), [['excluded', 'invalid']]);
+  assert.deepEqual(w.settlement.alerts.map((a) => [a.code, a.detail]), [['LINE_INVALID', 'batch kind refund']]);
+  assert.equal(w.events(TOPIC.movements).length, 0);
+});
+
+test('should alert POST_FAILED, acknowledge nothing and post nothing when settlement has no reader of the ledger line states for a usage amendment', async () => {
+  const calls: PostCall[] = [];
+  const w = await moneyWorld({ port: (l) => ({ post: async (c: PostCall) => { calls.push(c); return l.post(c); } }), settlement: { lineStates: undefined } });
+  const b = usageBatch('rating-1:0:22:0', 'b1', [chargeLine('b1', usageRef('b1', 'R1', MINUTE_0, 1), 'usage', 100n, 150n)]);
+  const acks = await w.settle(b);
+  assert.deepEqual(acks, []);
+  assert.deepEqual(w.settlement.alerts.map((a) => [a.code, a.detail]), [['POST_FAILED', 'settlement has no reader of the ledger line states']]);
+  assert.deepEqual(calls, [], 'nothing reached the ledger');
+  assert.deepEqual(w.commits, []);
+});
+
+test('should hold a reservation batch with UNEXPECTED_ANSWER and acknowledge nothing when the ledger answers refused_batch', async () => {
+  let port: ScriptedPort | undefined;
+  const w = await moneyWorld({ port: (l) => (port = new ScriptedPort(l)) });
+  port!.answer('b1', { result: 'refused_batch', lines: [] });
+  const b = one('rating-1:0:23:0', 'b1', 'r-1');
+  await w.settle(b);
+  assert.deepEqual(w.settlement.alerts.map((a) => [a.code, a.detail]), [['UNEXPECTED_ANSWER', 'refused_batch for a reservation batch']]);
+  assert.deepEqual(w.acksFor(b.batch.id), []);
+  assert.equal(w.settlement.isHeld('b1'), true);
+  assert.deepEqual(w.commits, []);
+  assert.equal(w.balances().size, 0);
 });

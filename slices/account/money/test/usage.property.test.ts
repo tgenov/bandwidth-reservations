@@ -1,7 +1,7 @@
 /**
  * Money invariants of MONEY-I3 over random input, against oracles that share no code with the provider
  * (engineering.md §2; RFC-004 §B13): order independence of late traffic (P4-S38, P4-S39), per-line dedup after
- * crashes and re-composed batches (P4-S57), cost-line amendments (P4-S115, P4-S116), batch kinds and whole usage
+ * crashes and re-composed batches (C06 CT-L5), corrections in own mode (P4-S42), cost-line amendments (P4-S115, P4-S116), batch kinds and whole usage
  * batches (P3-S61, X2-S13), and the sum to zero of every movement and of the ledger (P4-S28). Seeded: a failure
  * names its seed.
  */
@@ -9,11 +9,11 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { utf8 } from '@share/owner-runtime';
 import {
-  LEDGER_ENTRY, ledgerPartitionOfBuyer, type ChargeLine, type ChargeLineBatch, type LineAck, type StoredMovement,
+  LEDGER_ENTRY, ledgerPartitionOfBuyer, type ChargeLine, type ChargeLineBatch, type LineAck, type SplitWeights, type StoredMovement,
 } from '../src/index.ts';
-import { chargeLine, reservationBatch, reservationLine, usageBatch, usageRef, weightsFixture, type MoneyWorld } from '../testing/index.ts';
+import { MINUTE_0, chargeLine, reservationBatch, reservationLine, usageBatch, usageRef, weightsFixture, type MoneyWorld } from '../testing/index.ts';
 import { int, rng, seedNote, seeds } from './support.ts';
-import { refSplit, usageWorld } from './support-usage.ts';
+import { R31, R4, refSplit, usageWorld } from './support-usage.ts';
 
 const W = weightsFixture();
 const ROUTES: Array<[string, string]> = [['R1', 'w1'], ['R2', 'w2'], ['RP', 'wp']];
@@ -109,7 +109,7 @@ test('P4-S38 B13: Order independence: late traffic delivered in any order, partl
   }
 });
 
-test('P4-S57 B13: Per-line dedup: batches re-composed after injected settlement crashes post every line once; a changed line is excluded and reported, and moves nothing', async () => {
+test('C06 CT-L5 B13: Per-line dedup: batches re-composed after injected settlement crashes post every line once; a changed line is excluded and reported, and moves nothing', async () => {
   for (const seed of seeds(15, 401)) {
     const r = rng(seed);
     const w = await usageWorld();
@@ -267,5 +267,110 @@ test('P3-S61 B13: Batch kinds and Usage batches whole: a usage batch with a conf
     }
     assert.deepEqual(nonZero(w.balances()), nonZero(want), `${seedNote(seed)}: balances differ from the good lines`);
     assertZeroSum(w, seed);
+  }
+});
+
+interface CorrKey { kind: 'usage' | 'reservation'; name: string; route: string; wv: string; minute: string; seq: number; total: bigint; own: boolean; held: Map<string, bigint> }
+
+test('P4-S42 B13: Corrections in own mode: random chains of upward, Share-borne and supplier-fault amendments and late POL-07 cuts (M6, M7, M8, M9) give the oracle\'s balances; no supplier gains on its own fault; Share bears the rest', async () => {
+  const routes: Array<[string, string, Pick<SplitWeights, 'legs' | 'commissionWeight'>]> = [['R1', 'w1', W.find('R1', 'w1')!], ['R31', 'w31', R31], ['R4', 'w4', R4]];
+  for (const seed of seeds(20, 501)) {
+    const r = rng(seed);
+    const w = await usageWorld();
+    const want = new Map<string, bigint>();
+    const add = (account: string, v: bigint): void => { want.set(account, (want.get(account) ?? 0n) + v); };
+    const keys: CorrKey[] = [];
+    for (let i = 0; i < int(r, 2, 5); i++) {
+      const resv = r() < 0.35;
+      // R31 (weights 31, 76, 70) gives a small party few units of a small amount: it is the most frequent usage route.
+      const [route, wv] = resv ? routes[0]! : routes[r() < 0.5 ? 1 : int(r, 0, routes.length - 1)]!;
+      keys.push({ kind: resv ? 'reservation' : 'usage', name: `k-${i}`, route, wv, minute: minute(i), seq: -1, total: 0n, own: false, held: new Map() });
+    }
+    const weightsOf = (k: CorrKey) => routes.find(([route]) => route === k.route)![2];
+    const ref = (k: CorrKey, seq: number): ChargeLine['sourceRef'] =>
+      (k.kind === 'usage' ? usageRef('b1', k.route, k.minute, seq) : { kind: 'reservation', reservation: k.name, minute: MINUTE_0, seq });
+    let n = 0;
+    for (const k of keys.filter((x) => x.kind === 'reservation')) {
+      k.total = BigInt(int(r, 1, 60));
+      await w.settle(reservationBatch(`rating-1:0:${seed}-r-${n++}:0`, 'b1', MINUTE_0, [reservationLine('b1', k.name, MINUTE_0, k.total)]));
+      k.seq = 0;
+      k.held = refSplit(k.total, weightsOf(k));
+      add('B:b1', -k.total);
+      for (const [p, s] of k.held) add(accountOf(p), s);
+    }
+    for (let round = 0; round < 30; round++) {
+      const lines: ChargeLine[] = [];
+      for (const k of keys) {
+        if (r() < 0.4) continue;
+        const ws = weightsOf(k);
+        const extra = { route: k.route, weightsVersion: k.wv, ...(k.kind === 'reservation' ? { reservation: k.name } : {}) };
+        if (k.seq < 0) {
+          k.total = BigInt(int(r, 1, 60));
+          lines.push(chargeLine('b1', ref(k, 0), 'usage', 0n, k.total, extra));
+          k.seq = 0;
+          k.held = refSplit(k.total, ws);
+          add('B:b1', -k.total);
+          for (const [p, s] of k.held) add(accountOf(p), s);
+          continue;
+        }
+        // Upward steps are as frequent as all downward ones, so own-mode holdings drift from split(T).
+        const downs = k.kind === 'reservation' ? ['share', 'fault', 'cut'] : ['share', 'fault'];
+        const op = k.total === 0n || r() < 0.5 ? 'up' : downs[int(r, 0, downs.length - 1)]!;
+        const prior = k.total;
+        // Small steps are more frequent: they find the parts where Webster's split(a) + split(b) ≠ split(a + b).
+        const down = r() < 0.9 ? BigInt(int(r, 1, Math.min(2, Number(prior)))) : BigInt(int(r, 1, Number(prior)));
+        const next = op === 'up' ? prior + BigInt(r() < 0.5 ? int(r, 1, 2) : int(r, 1, 40)) : prior - down;
+        const delta = next - prior;
+        const seq = k.seq + 1;
+        const suppliers = [...k.held.keys()].filter((p) => p !== 'commission');
+        // Half of the faults fall on the supplier that holds least against its split of the new total: that finds d = 0.
+        const lag = (p: string): bigint => refSplit(next, ws).get(p)! - k.held.get(p)!;
+        const f = r() < 0.5 ? suppliers.reduce((x, y) => (lag(y) > lag(x) ? y : x)) : suppliers[int(r, 0, suppliers.length - 1)]!;
+        const over: Partial<ChargeLine> = op === 'up' ? { reason: k.kind === 'usage' ? 'late_traffic' : 're_rate' }
+          : op === 'share' ? { reason: 'price_correction', cause: { kind: 'share' } }
+            : op === 'fault' ? { reason: 'price_correction', cause: { kind: 'supplier', supplier: f } }
+              : { reason: 'late_pol07_cut', lateCut: { link: 'L2', reduction: `red-${seed}-${n}-${k.name}`, extensionChunk: 2 } };
+        lines.push(chargeLine('b1', ref(k, seq), k.kind, prior, next, { ...extra, ...over }));
+        // The oracle: RFC-004 §B2 M6 … M9 with what each party holds from the line.
+        add('B:b1', -delta);
+        if (op === 'up' || op === 'cut') {
+          const change = new Map<string, bigint>();
+          if (!k.own) {
+            const a = refSplit(next, ws);
+            const b = refSplit(prior, ws);
+            for (const [p, s] of a) change.set(p, s - b.get(p)!);
+          } else {
+            for (const [p, s] of refSplit(delta < 0n ? -delta : delta, ws)) change.set(p, delta < 0n ? -s : s);
+          }
+          for (const [p, c] of change) { k.held.set(p, k.held.get(p)! + c); add(accountOf(p), c); }
+        } else if (op === 'share') {
+          add('SH:corrections', delta);
+          k.own = true;
+        } else {
+          const target = refSplit(next, ws).get(f)!;
+          const held = k.held.get(f)!;
+          const d = held > target ? held - target : 0n;
+          k.held.set(f, held - d);
+          add(`S:${f}:debt`, -d);
+          add('SH:corrections', delta + d);
+          k.own = true;
+        }
+        k.total = next;
+        k.seq = seq;
+      }
+      if (lines.length === 0) continue;
+      const acks = await w.settle(usageBatch(`rating-1:0:${seed}-u-${n++}:0`, 'b1', lines));
+      assert.ok(acks.every((a) => a.outcome === 'posted'), `${seedNote(seed)}: ${JSON.stringify(acks.filter((a) => a.outcome !== 'posted'))}`);
+    }
+    assert.deepEqual(nonZero(w.balances()), nonZero(want), `${seedNote(seed)}: the balances differ from the oracle`);
+    assert.equal(w.balances().get('B:b1') ?? 0n, -keys.reduce((a, k) => a + (k.seq < 0 ? 0n : k.total), 0n), `${seedNote(seed)}: the buyer holds −Σ T_final`);
+    assertZeroSum(w, seed);
+    for (const mv of allMovements(w)) for (const l of mv.lines) {
+      const c = l.cause;
+      if (c?.kind !== 'supplier') continue;
+      const own = l.entries.filter((e) => e.ledgerAccount.startsWith(`S:${c.supplier}:`));
+      assert.ok(own.every((e) => BigInt(e.amount) < 0n), `${seedNote(seed)}: ${c.supplier} gains on its own fault: ${JSON.stringify(l.entries)}`);
+      assert.ok(l.entries.every((e) => !e.ledgerAccount.startsWith('S:') || e.ledgerAccount.startsWith(`S:${c.supplier}:`)), `${seedNote(seed)}: another supplier moves on a fault correction`);
+    }
   }
 });
