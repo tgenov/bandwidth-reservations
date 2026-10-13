@@ -85,6 +85,32 @@ revoked and does nothing when the process has a newer session.
     session; without row-level security (CockroachDB 24.3, the dev cell) the restore role gets no write grant (fail closed).
 11. **`MOVE_CUTOVER` raiser**: placement raises it from its coordinator; the episode needs placement's own log (C01 §2.10).
 
+## Review 76 (test review, INADEQUATE): fixes
+
+Each listed mutant was applied by hand, `npm run -s test:platform` was run, and the file was restored. `git diff
+platform/runtime/src` holds one change only: the injected monotonic clock of the report position
+(`testing.reportMonotonic`, engineering.md §5). No code defect was found: the TR-5 and TR-6 guards were correct, but no
+test covered them.
+
+| ID | Status | Test (file) | Mutant result |
+|---|---|---|---|
+| TR-1 | Fixed (2 clauses); schema-lint clause open | `C01 CP-13 a moved partition's old rows open in B by key_id …`, `C01 CP-13 a row copied to another key, sequence or epoch fails to open` (`moves.test.ts`); suite `CP-13 a moved partition's old rows open in B …` (runtime and double) | B's payloads, audit and readLog asserted exactly. No lint of clear columns exists in `platform/migrate` (open) |
+| TR-2 | Fixed | `C01 CP-5 B's report position does not pass …`: stepped `reportMonotonic`, held at T0 + 400 ms − 1 ns, passes at T0 + 400 ms | `waitMs − 50`: killed (assertion) |
+| TR-3 | Fixed | `C01 CP-5 a displacement marker written before the move is found after adopt and after a takeover of B (P1-S78)`; suite CP-5 (both subjects) | — |
+| TR-4 | Fixed | `C01 CP-6 adopt re-reads the stops of X …` (`stops-split.test.ts`) | M4: killed |
+| TR-5 | Fixed (test); no code defect | `should keep the local hold when another stop of the partition (another detection_ref) opens and resumes` (C08 §J, C-11, R46-12: only the stop with the report's detection_ref, then its resume, lifts the hold) | M7: killed |
+| TR-6 | Fixed (test); no code defect | `should commit one adopt and refuse the other when adopt is called twice at once` | `head.adopted` guard removed: killed |
+| TR-7 | Fixed | suite CP-5: A's log is `[a1, a2]` before adopt; B's log `[a1, a2, b1]`; seqFrom = 3 + `platformEntries` (2 runtime, 0 double) | — |
+| TR-8 | Fixed | the scheduler honours `ms`: `delays() = [1000]`, no page at 999 ms, page at 1000 ms | `schedule(maxMs * 10)`: killed |
+| TR-9 | Fixed | `should read an adopted partition at P_grant when adoptTs is below P_grant (R47-17)` | `adopt ?? pGrant`: killed |
+| TR-10 | Fixed | `pg-moves-slotmap.test.ts` (29 tests, scripted pg double): `pendingMovesFrom`, `readReportThrough`, every `PgSlotMapStore` method and its transaction loop | `l.slot <> $1`, `h.adopted`, no AS OF SYSTEM TIME: killed |
+| TR-11 | Partly fixed | Fault mix: every draw at the top of each iteration; 30 % of the calls for a moved partition go to its former holder (A), and none commits. The paused holder of slot 4 gets no call (its lane waits forever with no live lease) | — |
+| TR-12 | Fixed | exact `{ r: 'Stopped', detectionRef }` in the stop tests | `detectionRef` → empty: killed |
+| TR-13 | Fixed | suite CP-5: `timerKeys` = `['deadline']` before `moveOut`, `[]` after (both subjects) | double line 259 removed: killed |
+| TR-14 | Fixed | bounded waits that name the fence rule: `until(fencesPushed === 1, 3 s)` in `moves.test.ts`, `within(move, 3 s)` in `faultmix-moves.test.ts` | M2, M3, M8: killed by these assertions in 3 s. Other move tests still reach their 20 s timeout |
+| TR-15 | Fixed | CP-7 with a move: both slots are reportable before the move; `s.p !== undefined` asserted | — |
+| TR-16 | Fixed | CP-5 first test: the head at the `onMovedOut` call is `[B, unadopted]` | not run (needs a reorder of `applyCommitted`) |
+
 ## Remaining work
 
 - Manual proof owed / deferred (orchestrator decision): the integration files above on the dev cell (exits 1 to 3); DT-41 on

@@ -94,6 +94,23 @@ test('C01 CP-6 across a move: a stop between moved and done fences both slots, s
   committed(await b.append({ partition: X, entries: [entry('b1')] }));
 });
 
+test('C01 CP-6 adopt re-reads the stops of X: a stop seen only at A\'s slot after moved makes adopt answer Stopped', T, async () => {
+  const store = new MemoryStore();
+  store.seedSlots(STOPK.kind, 5);
+  const a = await stopRuntime(store, [0, 1, 2, 3]);
+  const b = await stopRuntime(store, [4]);
+  committed(await a.append({ partition: X, entries: [entry('a1')] }));
+  await b.prepareAdopt({ partition: X, from: SX, to: 4, generation: 1 });
+  committed(await a.moveOut(X, 4, 1));
+  assert.deepEqual(await b.append({ partition: X, entries: [entry('b0')] }), { r: 'Moving' }, 'B now knows X as not stopped at its stops_version');
+  const bVersion = store.slotRow(STOPK.kind, 4)?.stopsVersion;
+  store.stopPartition(STOPK.kind, SX, X, REF);
+  assert.equal(store.slotRow(STOPK.kind, 4)?.stopsVersion, bVersion, 'B\'s stops_version does not change');
+  assert.deepEqual(await b.adopt(X), { r: 'Stopped', detectionRef: REF });
+  assert.equal(store.heads.get(`${STOPK.kind}|${hex(X)}`)?.adopted, false);
+  assert.deepEqual(store.log.filter((l) => hex(l.partition) === hex(X)).map((l) => l.kind), [1, -1]);
+});
+
 test('C01 CP-6 a head-chain mismatch holds the partition locally, sends integrity_report once, and only audit\'s stop and resume lift the hold', T, async () => {
   const store = new MemoryStore();
   store.seedSlots(STOPK.kind, 4);
@@ -121,15 +138,37 @@ test('C01 CP-6 a head-chain mismatch holds the partition locally, sends integrit
 test('should keep the local hold when the stops change but audit has not stopped the partition (no stop of its own)', T, async () => {
   const store = new MemoryStore();
   store.seedSlots(STOPK.kind, 4);
-  const rt = await stopRuntime(store, [0, 1, 2, 3], { integrityReport: async () => ({ detectionRef: REF }) });
+  let accepted = 0;
+  const rt = await stopRuntime(store, [0, 1, 2, 3], { integrityReport: async () => { accepted += 1; return { detectionRef: REF }; } });
   committed(await rt.append({ partition: X, entries: [entry('a1')] }));
   const head = store.heads.get(`${STOPK.kind}|${hex(X)}`);
   assert.ok(head);
   store.heads.set(`${STOPK.kind}|${hex(X)}`, { ...head, chain: new Uint8Array(32) });
-  assert.equal((await rt.append({ partition: X, entries: [entry('a2')] })).r, 'Stopped');
+  assert.deepEqual(await rt.append({ partition: X, entries: [entry('a2')] }), { r: 'Stopped', detectionRef: new Uint8Array() });
+  await until(() => accepted === 1, 5_000, 'integrity_report accepted');
   store.stopPartition(STOPK.kind, SX, utf8('another'), utf8('det-2'));     // a stops_version change for another partition
   store.heads.set(`${STOPK.kind}|${hex(X)}`, head);
-  assert.equal((await rt.append({ partition: X, entries: [entry('a3')] })).r, 'Stopped');
+  assert.deepEqual(await rt.append({ partition: X, entries: [entry('a3')] }), { r: 'Stopped', detectionRef: REF });
+});
+
+test('should keep the local hold when another stop of the partition (another detection_ref) opens and resumes (C08 §J, R46-12)', T, async () => {
+  const store = new MemoryStore();
+  store.seedSlots(STOPK.kind, 4);
+  let accepted = 0;
+  const rt = await stopRuntime(store, [0, 1, 2, 3], { integrityReport: async () => { accepted += 1; return { detectionRef: REF }; } });
+  committed(await rt.append({ partition: X, entries: [entry('a1')] }));
+  const head = store.heads.get(`${STOPK.kind}|${hex(X)}`);
+  assert.ok(head);
+  store.heads.set(`${STOPK.kind}|${hex(X)}`, { ...head, chain: new Uint8Array(32) });
+  assert.deepEqual(await rt.append({ partition: X, entries: [entry('a2')] }), { r: 'Stopped', detectionRef: new Uint8Array() });
+  await until(() => accepted === 1, 5_000, 'integrity_report accepted');
+  const OTHER = utf8('det-other');
+  store.stopPartition(STOPK.kind, SX, X, OTHER);
+  assert.deepEqual(await rt.append({ partition: X, entries: [entry('a3')] }), { r: 'Stopped', detectionRef: OTHER });
+  store.resumePartition(STOPK.kind, SX, X);
+  store.heads.set(`${STOPK.kind}|${hex(X)}`, head);
+  assert.deepEqual(await rt.append({ partition: X, entries: [entry('a4')] }), { r: 'Stopped', detectionRef: REF });
+  assert.deepEqual(store.log.filter((l) => hex(l.partition) === hex(X)).map((l) => Buffer.from(l.identity).toString()), ['a1']);
 });
 
 // ---------------- splitting, holder side (C01 §3.8, CP-10) ----------------

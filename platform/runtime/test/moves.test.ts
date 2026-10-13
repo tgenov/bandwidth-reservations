@@ -4,9 +4,10 @@
  */
 import { afterEach, test } from 'node:test';
 import assert from 'node:assert/strict';
-import type { AppendResult, HlcTs, OpenedLogRow, OwnerDeclaration, OwnerHooks, PartitionKey, SlotNo } from '../src/index.ts';
+import type { AppendResult, HlcTs, MonotonicNs, OpenedLogRow, OwnerDeclaration, OwnerHooks, PartitionKey, Sealer, SlotNo } from '../src/index.ts';
 import {
-  CockroachOwnerRuntime, ManualLoad, PLATFORM_ENTRY, chainGenesis, chainNext, compareHlc, hex, slotOfPartition, utf8, type MoveInbox,
+  CockroachOwnerRuntime, DevSealer, ManualLoad, PLATFORM_ENTRY, chainGenesis, chainNext, compareHlc, hex, hlcBefore, openLogRow, slotOfPartition,
+  utf8, type MoveInbox,
 } from '../src/index.ts';
 import { MemoryStore } from '../testing/index.ts';
 import { Closers, until } from './support.ts';
@@ -33,20 +34,21 @@ const closers = new Closers();
 const T = { timeout: 20_000 };
 afterEach(() => closers.closeAll());
 
-interface Events { list: string[]; hooks: OwnerHooks }
+interface Events { list: string[]; hooks: OwnerHooks; atMovedOut?: (p: PartitionKey) => void }
 function events(name: string): Events {
   const list: string[] = [];
-  return {
+  const ev: Events = {
     list,
     hooks: {
       async onAcquire(slot, _e, how) { list.push(`${name}:acquire:${slot}:${how}`); },
       onRelease(slot, why) { list.push(`${name}:release:${slot}:${why}`); },
       onReportable() {},
-      onMovedOut(p) { list.push(`${name}:movedOut:${Buffer.from(p).toString()}`); },
+      onMovedOut(p) { list.push(`${name}:movedOut:${Buffer.from(p).toString()}`); ev.atMovedOut?.(p); },
       async onAdopt(p, g) { list.push(`${name}:adopt:${Buffer.from(p).toString()}:${g}`); },
       async onNotification() {},
     },
   };
+  return ev;
 }
 
 interface World { store: MemoryStore; inbox: Map<SlotNo, MoveInbox> }
@@ -58,16 +60,17 @@ function world(decl: OwnerDeclaration): World {
 
 async function runtime(w: World, decl: OwnerDeclaration, slots: SlotNo[], ev: Events, extra: {
   postAcquisitionWaitMs?: number; adoptReportWaitMs?: number; fenceReadAfterMs?: number; prewarm?: (p: PartitionKey, rows: OpenedLogRow[]) => void;
+  reportMonotonic?: () => MonotonicNs; sealer?: Sealer;
 } = {}): Promise<CockroachOwnerRuntime> {
   const rt = new CockroachOwnerRuntime({
-    declaration: decl, store: w.store, slots, load: new ManualLoad(),
+    declaration: decl, store: w.store, slots, load: new ManualLoad(), ...(extra.sealer ? { sealer: extra.sealer } : {}),
     moves: {
       peer: (_kind, slot) => w.inbox.get(slot),
       ...(extra.prewarm ? { prewarm: extra.prewarm } : {}),
       fenceReadAfterMs: extra.fenceReadAfterMs ?? 60_000,
     },
     testing: { sessionTimings: FAST, commitBackstopMs: 1_000, postAcquisitionWaitMs: extra.postAcquisitionWaitMs ?? 10,
-      adoptReportWaitMs: extra.adoptReportWaitMs ?? 10 },
+      adoptReportWaitMs: extra.adoptReportWaitMs ?? 10, ...(extra.reportMonotonic ? { reportMonotonic: extra.reportMonotonic } : {}) },
   });
   closers.add(() => rt.stop());
   await rt.start(ev.hooks);
@@ -104,10 +107,13 @@ async function prepared(decl = DECL, extraA: Parameters<typeof runtime>[4] = {},
 
 test('C01 CP-5 MOVING in A between moved and adopt, MOVED(B, g+1) once adopted; no entry of X commits in B before adopt; onMovedOut after the moved commit, onAdopt after the adopt commit', T, async () => {
   const { w, a, b, evA, evB } = await prepared();
+  const headAtHook: Array<[SlotNo | undefined, boolean | undefined]> = [];
+  evA.atMovedOut = (p) => { const h = w.store.heads.get(`${DECL.kind}|${hex(p)}`); headAtHook.push([h?.slot, h?.adopted]); };
   assert.deepEqual(await b.append({ partition: X, entries: [entry('early')] }), { r: 'Moved', slot: SA, generation: 0 },
     'before moved, B sends X back to A');
   const moved = committed(await a.moveOut(X, B, 1));
   assert.deepEqual(evA.list.filter((e) => e.includes('movedOut')), ['A:movedOut:hot-link-x']);
+  assert.deepEqual(headAtHook, [[B, false]], 'onMovedOut runs after the moved commit: the head already names B, unadopted');
   const h = headOf(w, DECL, X);
   assert.deepEqual([h.slot, h.generation, h.adopted, h.ts], [B, 1, false, moved.ts]);
   assert.deepEqual(await a.append({ partition: X, entries: [entry('a3')] }), { r: 'Moving' });
@@ -153,6 +159,7 @@ test('C01 CP-5 adopt never commits before owner_slot(kind, A).report_through ≥
   });
   const moved = committed(await a.moveOut(X, B, 1));
   const adopting = b.adopt(X);
+  await until(() => b.moveStats.fencesPushed === 1, 3_000, 'A pushes its marker report_through ≥ ts(moved) to B, and B accepts it (no fence read for 60 s)');
   committed(await adopting);
   assert.equal(checked.length, 1);
   const [through] = checked[0] as [HlcTs | null, HlcTs];
@@ -181,18 +188,48 @@ test('should adopt at once with no fence when the kind has no markers (no status
 });
 
 test('C01 CP-5 B\'s report position does not pass an entry of X before read_lease + ε after adopt', T, async () => {
-  const WAIT = 400;
-  const { a, b } = await prepared(DECL, {}, { adoptReportWaitMs: WAIT });
+  const WAIT_NS = 400n * 1_000_000n;
+  const T0 = 1_000_000_000_000n;
+  let now = T0;
+  const { a, b } = await prepared(DECL, {}, { adoptReportWaitMs: 400, reportMonotonic: () => now });
   committed(await a.moveOut(X, B, 1));
-  const seen: Array<{ p: HlcTs; at: number }> = [];
-  b.onReport((slot, p) => { if (slot === B) seen.push({ p, at: performance.now() }); });
+  let advances = 0;
+  b.attachReader('probe', { apply: async (_s, through) => { advances += 1; return through; } });
+  const seen: Array<{ p: HlcTs; at: MonotonicNs }> = [];
+  b.onReport((slot, p) => { if (slot === B) seen.push({ p, at: now }); });
   const adopt = committed(await b.adopt(X));
-  const adoptedAt = performance.now();
   const e = committed(await b.append({ partition: X, entries: [entry('b1')] }));
+  const cap = hlcBefore(adopt.ts);
+  await until(() => b.reportPosition(B) === cap, 5_000, 'B reports up to just below the adopt');
+  const stepTo = async (t: MonotonicNs): Promise<void> => {
+    now = t;
+    const n = advances;
+    await until(() => advances >= n + 2, 5_000, 'two advances of B\'s report position at the stepped time');
+  };
+  await stepTo(T0 + WAIT_NS - 1n);
+  assert.equal(b.reportPosition(B), cap, 'held 1 ns before read_lease + ε after the adopt commit');
+  await stepTo(T0 + WAIT_NS);
   await until(() => { const p = b.reportPosition(B); return p !== undefined && compareHlc(p, e.ts) >= 0; }, 5_000, 'B reports b1');
-  for (const s of seen) {
-    if (compareHlc(s.p, adopt.ts) >= 0) assert.ok(s.at - adoptedAt >= WAIT - 5, `P ${s.p} passed adopt ${s.at - adoptedAt} ms after the adopt commit`);
-  }
+  const passed = seen.filter((s) => compareHlc(s.p, adopt.ts) >= 0);
+  assert.ok(passed.length > 0);
+  assert.deepEqual([...new Set(passed.map((s) => s.at))], [T0 + WAIT_NS], 'P passes the adopt only when the hold ends');
+});
+
+test('C01 CP-5 a displacement marker written before the move is found after adopt and after a takeover of B (P1-S78)', T, async () => {
+  const { w, a, b } = await prepared();
+  const link = X;
+  const request = new Uint8Array([...utf8('acct'), 0, 0, 0, 0, 0, 0, 0, 7]);
+  const read = { kind: 'displacementRead' as const, link, request, attempt: 1, lockTimeoutMs: 10, label: 'd' };
+  w.store.displacement.set(`${hex(link)}|${hex(request)}`, { attempt: 2 });
+  committed(await a.moveOut(X, B, 1));
+  committed(await b.adopt(X));
+  assert.deepEqual(await b.append({ partition: X, conditions: [read], entries: [entry('e5-b')] }),
+    { r: 'ConditionFailed', which: 'd', displacement: { attempt: 2, row: { attempt: 2 } } });
+  await b.stop();
+  const c = await runtime(w, DECL, [B], events('C'));
+  assert.deepEqual(await c.append({ partition: X, conditions: [read], entries: [entry('e5-c')] }),
+    { r: 'ConditionFailed', which: 'd', displacement: { attempt: 2, row: { attempt: 2 } } });
+  assert.deepEqual(logOf(w, X).map((l) => Buffer.from(l.identity).toString()), ['a1', 'a2', 'moved:1', 'adopt:1']);
 });
 
 test('C01 CP-5 after a move and a takeover of the new slot, a decision committed before the move still fails rowAbsent', T, async () => {
@@ -217,6 +254,7 @@ test('C01 CP-5 A\'s holder killed after moved: the successor pushes its first ma
   a.pauseRenewalsForTest();                         // killed: no renewal, no marker
   const evA2 = events('A2');
   const a2 = await runtime(w, DECL, [SA], evA2);
+  await until(() => b.moveStats.fencesPushed === 1, 3_000, 'the successor of A pushes its first marker (≥ ts(moved)) to B (V59-7)');
   committed(await adopting);
   assert.equal(b.moveStats.fencesPushed, 1, 'the successor pushed its first marker');
   assert.equal(b.moveStats.fencesRead, 0);
@@ -250,6 +288,43 @@ test('should give the pre-warm hook X\'s rows by (partition, seq) at prepare, an
   committed(await b.adopt(X));
   assert.deepEqual(got, ['1', '2', '3'], 'platform entries are not given to the owner; each owner row once');
   assert.deepEqual(order, ['prewarm', 'prewarm'], 'at prepare, then the rows above them at adopt');
+  assert.deepEqual(evB.list.filter((e) => e.includes('adopt:')), ['B:adopt:hot-link-x:1']);
+});
+
+test('C01 CP-13 a moved partition\'s old rows open in B by key_id: B\'s own sealer opens the payload and the audit that A sealed', T, async () => {
+  const warmed: OpenedLogRow[] = [];
+  const { w, a, b } = await prepared(DECL, { sealer: new DevSealer() }, { sealer: new DevSealer(), prewarm: (_p, rows) => { warmed.push(...rows); } });
+  committed(await a.append({ partition: X, entries: [entry('a3')] }));
+  committed(await a.moveOut(X, B, 1));
+  committed(await b.adopt(X));
+  committed(await b.append({ partition: X, entries: [entry('b1')] }));
+  assert.deepEqual(warmed.map((r) => r.payload), [{ id: 'a1' }, { id: 'a2' }, { id: 'a3' }]);
+  assert.deepEqual(warmed.map((r) => r.audit), [AUDIT, AUDIT, AUDIT]);
+  assert.deepEqual((await b.readLog(X)).map((r) => [r.seq, r.slot, r.payload]),
+    [[1n, SA, { id: 'a1' }], [2n, SA, { id: 'a2' }], [3n, SA, { id: 'a3' }], [6n, B, { id: 'b1' }]]);
+  assert.deepEqual(logOf(w, X).map((l) => Buffer.from(l.keyId).toString()), Array(6).fill(`dev:${DECL.kind}_log`));
+});
+
+test('C01 CP-13 a row copied to another key, sequence or epoch fails to open', T, async () => {
+  const { w } = await prepared();
+  const row = logOf(w, X)[0];
+  assert.ok(row);
+  const sealer = new DevSealer();
+  assert.deepEqual(openLogRow(DECL, sealer, row).payload, { id: 'a1' });
+  const fails = { message: 'Unsupported state or unable to authenticate data' };
+  assert.throws(() => openLogRow(DECL, new DevSealer('another-key'), row), fails);
+  assert.throws(() => openLogRow(DECL, sealer, { ...row, seq: 2n }), fails);
+  assert.throws(() => openLogRow(DECL, sealer, { ...row, epoch: row.epoch + 1n }), fails);
+  assert.throws(() => openLogRow({ ...DECL, kind: 'mother' }, sealer, row), fails);
+});
+
+test('should commit one adopt and refuse the other when adopt is called twice at once', T, async () => {
+  const { w, a, b, evB } = await prepared();
+  committed(await a.moveOut(X, B, 1));
+  const [r1, r2] = await Promise.all([b.adopt(X), b.adopt(X)]);
+  assert.deepEqual([r1.r, r2.r].sort(), ['Committed', 'ConditionFailed']);
+  assert.deepEqual([r1, r2].find((r) => r.r === 'ConditionFailed'), { r: 'ConditionFailed', which: 'adopt' });
+  assert.deepEqual(logOf(w, X).map((l) => l.kind), [1, 1, PLATFORM_ENTRY.moved, PLATFORM_ENTRY.adopt]);
   assert.deepEqual(evB.list.filter((e) => e.includes('adopt:')), ['B:adopt:hot-link-x:1']);
 });
 

@@ -29,13 +29,20 @@ function hooks(): OwnerHooks {
   return { async onAcquire() {}, onRelease() {}, onReportable() {}, onMovedOut() {}, async onAdopt() {}, async onNotification() {} };
 }
 
-/** A scheduler the test fires by hand. */
-function manualScheduler(): Scheduler & { fire(): void; pending(): number } {
-  let jobs: Array<{ fn: () => void; live: boolean }> = [];
+/** A scheduler on a stepped clock: `advance(ms)` runs the jobs that are due; `delays()` gives each job's delay. */
+function manualScheduler(): Scheduler & { advance(ms: number): void; pending(): number; delays(): number[] } {
+  let now = 0;
+  const delays: number[] = [];
+  let jobs: Array<{ fn: () => void; live: boolean; at: number }> = [];
   return {
-    schedule(_ms, fn) { const j = { fn, live: true }; jobs.push(j); return { cancel: () => { j.live = false; } }; },
-    fire() { for (const j of jobs) if (j.live) { j.live = false; j.fn(); } jobs = []; },
+    schedule(ms, fn) { delays.push(ms); const j = { fn, live: true, at: now + ms }; jobs.push(j); return { cancel: () => { j.live = false; } }; },
+    advance(ms) {
+      now += ms;
+      for (const j of jobs) if (j.live && j.at <= now) { j.live = false; j.fn(); }
+      jobs = jobs.filter((j) => j.live);
+    },
     pending() { return jobs.filter((j) => j.live).length; },
+    delays() { return [...delays]; },
   };
 }
 
@@ -129,7 +136,10 @@ test('should raise MOVE_CUTOVER (a page) when the partition is Moving longer tha
   const moving = coord.move({ kind: 'link', partition: X, from: 1, to: 9 });
   await until(() => adoptAnswer !== undefined, 5_000, 'adopt asked');
   assert.equal(sched.pending(), 1);
-  sched.fire();
+  assert.deepEqual(sched.delays(), [1_000]);
+  sched.advance(999);
+  assert.equal(alerts.length, 0, 'no page before move_cutover_max');
+  sched.advance(1);
   assert.deepEqual(alerts, [{ alertKind: 'MOVE_CUTOVER', severity: 'page', reasonCode: 'MOVING_OVER_MAX', entities: [{ type: 'link', id: X }],
     detail: { kind: 'link', from: 1, to: 9, generation: 1, maxMs: 1_000 } }]);
   adoptAnswer?.({ r: 'Committed', seqFrom: 3n, seqTo: 3n, ts: '2.0000000000' as never, streamSeqs: {} });
@@ -137,7 +147,9 @@ test('should raise MOVE_CUTOVER (a page) when the partition is Moving longer tha
   const quick = new MoveCoordinator({ store: new MemoryMoveStore(), scheduler: sched, alert: (a) => alerts.push(a),
     holders: { ...holders, adopt: async () => ({ r: 'Committed', seqFrom: 3n, seqTo: 3n, ts: '2.0000000000' as never, streamSeqs: {} }) } });
   await quick.move({ kind: 'link', partition: X, from: 1, to: 9 });
+  assert.deepEqual(sched.delays(), [1_000, 1_000]);
   assert.equal(sched.pending(), 0, 'the watchdog is cancelled when adopt commits in time');
+  sched.advance(1_000);
   assert.equal(alerts.length, 1);
 });
 

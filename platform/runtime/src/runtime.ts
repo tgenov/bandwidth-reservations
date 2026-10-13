@@ -127,6 +127,11 @@ export interface OwnerRuntimeOptions {
     markerChunkMax?: number;
     /** read_lease + ε after an adopt commit (C01 §3.3 step 6); default 500 ms. */
     adoptReportWaitMs?: number;
+    /**
+     * The monotonic clock of the report position: the step-6 hold and the read lease ends (engineering.md §5: a test
+     * steps it). Default `process.hrtime.bigint`.
+     */
+    reportMonotonic?: () => MonotonicNs;
   };
 }
 
@@ -682,7 +687,7 @@ export class CockroachOwnerRuntime implements OwnerRuntime {
       } else {
         // C01 §3.3 step 6 (R47-16): no report of an entry of X until read_lease + ε after the adopt commit.
         const waitMs = this.o.testing?.adoptReportWaitMs ?? REPORT.postAcquisitionWaitMs;
-        lane.report.holds.push({ cap: hlcBefore(plan.ts), untilMonotonic: process.hrtime.bigint() + BigInt(Math.round(waitMs * 1e6)) });
+        lane.report.holds.push({ cap: hlcBefore(plan.ts), untilMonotonic: this.reportNow() + BigInt(Math.round(waitMs * 1e6)) });
         this.placed.set(hex(m.partition), lane.holding.slot);
         for (const [id, ch] of this.readers) {
           try { ch.adopted?.(lane.holding.slot, m.partition, plan.ts); } catch (e) { this.log('reader adopt push failed', { reader: id, error: String(e) }); }
@@ -808,6 +813,11 @@ export class CockroachOwnerRuntime implements OwnerRuntime {
     if (reportsMarkers(this.decl) && lane.report.markerDue()) this.scheduleMarker(lane);
   }
 
+  /** The monotonic time of the report position (C01 §3.3 step 6, §3.4). */
+  private reportNow(): MonotonicNs {
+    return this.o.testing?.reportMonotonic?.() ?? process.hrtime.bigint();
+  }
+
   /** advance() without waiting for it: a failure is logged, and the next heartbeat tries again (C01 §3.4). */
   private advanceSoon(lane: Lane): void {
     this.advance(lane).catch((e: unknown) => this.log('report advance failed', { slot: lane.holding.slot, error: String(e) }));
@@ -826,7 +836,7 @@ export class CockroachOwnerRuntime implements OwnerRuntime {
       } catch { /* that reader's lease holds P back until it ends */ }
     }));
     if (lane.released || lane.report !== r || !this.session.leaseLive()) return;
-    const p = r.target(process.hrtime.bigint());
+    const p = r.target(this.reportNow());
     if (compareHlc(p, r.position) > 0) this.setPosition(lane, p);
     else if (reportsMarkers(this.decl) && r.markerDue()) this.scheduleMarker(lane);
   }

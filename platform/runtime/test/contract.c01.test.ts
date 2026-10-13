@@ -55,8 +55,10 @@ runC01ProviderSuite('real runtime', async (): Promise<C01Subject> => {
     putDisplacementMarker: (link, request, attempt) => { store.displacement.set(`${hex(link)}|${hex(request)}`, { attempt }); },
     restartNext: (n) => { store.faults.commits = Array<'retry'>(n).fill('retry'); },
     events,
+    timerKeys: (p) => rt.timerKeys(p),
     moves: {
-      target: { runtime: b, slot: TARGET, events: bEvents },
+      target: { runtime: b, slot: TARGET, events: bEvents, readLog: (p, from) => b.readLog(p, from) },
+      platformEntries: 2,
       moveOut: async (p) => {
         const from = rt.slotFor(p);
         await b.prepareAdopt({ partition: p, from, to: TARGET, generation: rt.generation(p) + 1 });
@@ -90,8 +92,10 @@ runC01ProviderSuite('runtime double', async (): Promise<C01Subject> => {
     putDisplacementMarker: (link, request, attempt) => rt.putDisplacementMarker(link, request, attempt),
     restartNext: (n) => { rt.scriptRestarts(n); },
     events,
+    timerKeys: (p) => rt.timersOf(p).map((t) => t.key),
     moves: {
-      target: { runtime: b, slot: TARGET, events: bEvents },
+      target: { runtime: b, slot: TARGET, events: bEvents, readLog: (p, from) => b.readLog(p, from) },
+      platformEntries: 0,
       moveOut: async (p) => {
         b.prepareAdopt({ partition: p, from: slotOfPartition(p, DECL.slotCount), to: TARGET, generation: rt.generation(p) + 1 });
         rt.moveOut(p, TARGET);

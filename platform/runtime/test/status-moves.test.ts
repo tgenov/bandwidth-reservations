@@ -49,3 +49,14 @@ test('C01 CP-5 a reader of B reads an adopted partition at max(P_grant, adoptTs)
   await r.leasedRead(utf8('plain'), [{ table: 'account_request', key: { account: X } }]);
   assert.ok(sql[1]?.includes(`with_min_timestamp('${ceilMicrosLiteral(P_GRANT as HlcTs)}'`), sql[1]);
 });
+
+test('should read an adopted partition at P_grant when adoptTs is below P_grant (R47-17)', T, async () => {
+  const { reader: r, channel, sql } = setup();
+  const EARLY = hlc('1799999999000000000.0000000000');
+  channel().movedOut?.(3, X, EARLY);
+  channel().adopted?.(3, X, EARLY);
+  assert.deepEqual(await r.leasedRead(X, [{ table: 'account_request', key: { account: X } }]), [{ v: 1 }]);
+  assert.equal(sql.length, 1);
+  assert.ok(sql[0]?.includes(`with_min_timestamp('${ceilMicrosLiteral(P_GRANT)}'`), sql[0]);
+  assert.equal(sql[0]?.includes(ceilMicrosLiteral(EARLY)), false);
+});

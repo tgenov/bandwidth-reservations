@@ -41,6 +41,13 @@ function cluster(decl: OwnerDeclaration, store: MemoryStore, o: { publisher?: ()
   return { bySlot, make, coordinator: new MoveCoordinator({ store: moves, holders }), moves };
 }
 
+/** `p`, or a failure that names `what` when it does not settle in `ms` (a broken fence fails here, not at the test timeout). */
+async function within<T>(p: Promise<T>, ms: number, what: string): Promise<T> {
+  let timer: NodeJS.Timeout | undefined;
+  const late = new Promise<never>((_r, reject) => { timer = setTimeout(() => reject(new Error(`not within ${ms} ms: ${what}`)), ms); });
+  try { return await Promise.race([p, late]); } finally { clearTimeout(timer); }
+}
+
 type LogRow = MemoryStore['log'][number];
 function rowsOf(store: MemoryStore, p: PartitionKey): LogRow[] {
   return store.log.filter((l) => hex(l.partition) === hex(p)).sort((a, b) => (a.seq < b.seq ? -1 : 1));
@@ -73,6 +80,7 @@ function checkPartition(rows: LogRow[], what: string): void {
 const MIX: OwnerDeclaration = { kind: 'fmix', slotCount: 4, entryKinds: [{ kind: 1, name: 'e', schemaVersions: [1], retention: 'ops' }], projections: [], streams: [] };
 
 test('C01 CP-1 with moves and stops in the fault mix: across seeded load, lost COMMIT answers, stops, resumes, moves and a takeover of a target slot, every partition has one writer per generation, seq contiguous, ts strictly increasing, and nothing commits while stopped (DT-08 with moves)', T, async () => {
+  let staleSent = 0;
   for (const seed of [7, 1984, 31337]) {
     const rnd = rng(seed);
     const store = new MemoryStore();
@@ -88,13 +96,16 @@ test('C01 CP-1 with moves and stops in the fault mix: across seeded load, lost C
     const committed = new Map<string, number>();
     const closedBefore: Array<{ id: string; closed: HlcTs }> = [];
     let tookOver = false;
+    // The holders that moved a partition out: a call sent to them must never commit (one writer per generation).
+    const formerHolders = new Map<string, CockroachOwnerRuntime[]>();
+    const stale: Array<{ id: string; r: AppendResult['r'] }> = [];
     for (let i = 0; i < 90; i++) {
-      const p = ps[Math.floor(rnd() * ps.length)] as PartitionKey;
+      // Every draw at the top of the iteration: the draw sequence does not depend on the outcomes.
+      const [pick, x, op, toDraw, staleDraw] = [rnd(), rnd(), rnd(), rnd(), rnd()];
+      const p = ps[Math.floor(pick * ps.length)] as PartitionKey;
       const k = hex(p);
-      const x = rnd();
       if (x < 0.06) store.faults.commits.push('ambiguousCommitted');
       else if (x < 0.12) store.faults.commits.push('ambiguousNotCommitted');
-      const op = rnd();
       if (op < 0.08 && !stopped.has(k)) {
         const at = store.stopPartition(MIX.kind, [0, 1, 2, 3, 4, 5], p, utf8(`det-${i}`));
         stopped.set(k, { at });
@@ -106,11 +117,20 @@ test('C01 CP-1 with moves and stops in the fault mix: across seeded load, lost C
         if (open) open.to = to;
       } else if (op < 0.2 && !stopped.has(k) && (where.get(k) ?? 0) < 4) {
         store.faults.commits.splice(0);                // a move step answered Ambiguous is not part of this mix
-        const to = rnd() < 0.5 ? 4 : 5;
+        const to = toDraw < 0.5 ? 4 : 5;
+        const from = where.get(k) as SlotNo;
+        const source = c.bySlot.get(from) as CockroachOwnerRuntime;
         try {
-          await c.coordinator.move({ kind: MIX.kind, partition: p, from: where.get(k) as SlotNo, to });
+          await c.coordinator.move({ kind: MIX.kind, partition: p, from, to });
           where.set(k, to);
+          formerHolders.set(k, [...(formerHolders.get(k) ?? []), source]);
         } catch (e) { if (!(e instanceof MoveError)) throw e; }
+      } else if (staleDraw < 0.3 && (formerHolders.get(k) ?? []).length > 0) {
+        const former = (formerHolders.get(k) ?? [])[0] as CockroachOwnerRuntime;
+        const id = `stale${seed}-${i}`;
+        const r = await former.append({ partition: p, entries: [{ kind: 1, schemaV: 1, identity: utf8(id), audit: AUDIT, payload: { id } }] }, { slot: slotOfPartition(p, 4) });
+        stale.push({ id, r: r.r });
+        assert.ok(['Moving', 'Moved', 'Stopped', 'Ambiguous', 'Retry'].includes(r.r), `seed ${seed} op ${i}: a former holder answered ${r.r}`);
       } else {
         const rt = c.bySlot.get(where.get(k) as SlotNo) as CockroachOwnerRuntime;
         const id = `s${seed}-${i}`;
@@ -140,6 +160,8 @@ test('C01 CP-1 with moves and stops in the fault mix: across seeded load, lost C
       }
     }
     const ids = store.log.map((l) => Buffer.from(l.identity).toString());
+    for (const { id, r } of stale) assert.equal(ids.includes(id), false, `seed ${seed}: ${id} sent to a former holder (${r}) never commits`);
+    staleSent += stale.length;
     for (const id of committed.keys()) assert.equal(ids.filter((x) => x === id).length, 1, `seed ${seed}: ${id} committed exactly once`);
     for (const { id, closed } of closedBefore) {
       const row = store.log.find((l) => Buffer.from(l.identity).toString() === id) as LogRow;
@@ -148,6 +170,7 @@ test('C01 CP-1 with moves and stops in the fault mix: across seeded load, lost C
     assert.ok(store.log.some((l) => l.kind === PLATFORM_ENTRY.adopt), `seed ${seed}: the mix moved at least one partition`);
     await closers.closeAll();
   }
+  assert.ok(staleSent > 0, 'the mix sent at least one call to a former holder');
 });
 
 // ---------------- CP-7 and CP-7a with moves, a stop and a takeover ----------------
@@ -188,7 +211,8 @@ test('C01 CP-7a with moves, a stop and a takeover: per slot the markers chain wi
     assert.equal(r.r, 'Committed');
     await lastMarker(a, SX, (r as Extract<AppendResult, { r: 'Committed' }>).ts);
   }
-  await c.coordinator.move({ kind: REP.kind, partition: X, from: SX, to: 4 });
+  await within(c.coordinator.move({ kind: REP.kind, partition: X, from: SX, to: 4 }), 3_000,
+    'the move: A\'s marker for moved (report_through ≥ ts(moved)) reaches B and B adopts');
   const rb = await b.append({ partition: X, entries: [repEntry('b1')] });
   assert.equal(rb.r, 'Committed');
   await lastMarker(b, 4, (rb as Extract<AppendResult, { r: 'Committed' }>).ts);
@@ -223,10 +247,17 @@ test('C01 CP-7 with a move: A\'s readers apply moved before A\'s report position
   const seen: Array<{ who: string; p: HlcTs | undefined; ts: HlcTs }> = [];
   a.attachReader('ra', { apply: async (_s, t) => t, movedOut: (_s, _p, ts) => { seen.push({ who: 'A', p: a.reportPosition(SX), ts }); } });
   b.attachReader('rb', { apply: async (_s, t) => t, adopted: (_s, _p, ts) => { seen.push({ who: 'B', p: b.reportPosition(4), ts }); } });
-  assert.equal((await a.append({ partition: X, entries: [repEntry('x0')] })).r, 'Committed');
-  await c.coordinator.move({ kind: REP.kind, partition: X, from: SX, to: 4 });
+  const x0 = await a.append({ partition: X, entries: [repEntry('x0')] });
+  assert.equal(x0.r, 'Committed');
+  await until(() => { const p = a.reportPosition(SX); return p !== undefined && compareHlc(p, (x0 as Extract<AppendResult, { r: 'Committed' }>).ts) >= 0; }, 5_000, 'A reports x0');
+  await until(() => b.reportPosition(4) !== undefined, 5_000, 'B is reportable');
+  await within(c.coordinator.move({ kind: REP.kind, partition: X, from: SX, to: 4 }), 3_000,
+    'the move: A\'s marker for moved (report_through ≥ ts(moved)) reaches B and B adopts');
   assert.deepEqual(seen.map((s) => s.who), ['A', 'B']);
-  for (const s of seen) assert.ok(s.p === undefined || compareHlc(s.p, s.ts) < 0, `${s.who}: the reader learns ${s.ts} before P passes it (P ${s.p})`);
+  for (const s of seen) {
+    assert.ok(s.p !== undefined, `${s.who}: the slot is reportable when the reader learns ${s.ts}`);
+    assert.equal(compareHlc(s.p, s.ts), -1, `${s.who}: the reader learns ${s.ts} before P passes it (P ${s.p})`);
+  }
   const rb = await b.append({ partition: X, entries: [repEntry('b1')] });
   assert.equal(rb.r, 'Committed');
   await until(() => { const p = b.reportPosition(4); return p !== undefined && compareHlc(p, (rb as Extract<AppendResult, { r: 'Committed' }>).ts) >= 0; }, 5_000, 'B reports b1');

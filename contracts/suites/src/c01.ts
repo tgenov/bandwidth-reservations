@@ -45,14 +45,21 @@ export interface C01Subject extends Closable {
   restartNext(n: number): void;
   /** The subject's hook calls, in order: `movedOut:<hex>`, `adopt:<hex>:<generation>` (S-PLAT-I3). */
   events: string[];
+  /** The keys of the partition's armed timers in the subject (C01 §3.7). */
+  timerKeys(partition: PartitionKey): string[];
   /**
    * The move protocol (C01 §3.3), from the subject (slot A) to a target slot B of the same kind held by `target`.
    * `moveOut` runs steps 1 to 3 (B prepared, `moved` committed in A); `adopt` runs steps 4 and 5 in B.
    */
   moves: {
-    target: { runtime: OwnerRuntime; slot: SlotNo; events: string[] };
+    target: { runtime: OwnerRuntime; slot: SlotNo; events: string[]; readLog(partition: PartitionKey, fromSeq?: Seq): Promise<C01LogRow[]> };
     moveOut(partition: PartitionKey): Promise<void>;
     adopt(partition: PartitionKey): Promise<void>;
+    /**
+     * The seqs that one move takes in the partition's log: 2 for a provider that writes the `moved` and `adopt`
+     * entries (C01 §3.3), 0 for a double that writes neither. `readLog` leaves them out.
+     */
+    platformEntries: number;
   };
   /** Placement's integrity stop and resume of a partition (C01 §2.6, §3.2), enforced at the subject's slot fence. */
   stops: {
@@ -243,20 +250,52 @@ export function runC01ProviderSuite(name: string, make: SubjectFactory<C01Subjec
 
   t('CP-5', 'MOVING in A between moved and adopt, MOVED(B, g+1) once adopted; no entry commits in B before adopt; onMovedOut after moved, onAdopt after adopt; seq continues in B', async (s) => {
     const hx = Buffer.from(P).toString('hex');
-    committed(await s.runtime.append({ partition: P, entries: [entry('a1'), entry('a2')] }));
+    const a2 = committed(await s.runtime.append({ partition: P, entries: [entry('a1'), entry('a2')] }));
     const B = s.moves.target;
+    s.runtime.timer(P, 'deadline', asTs('99999999999999999999.0000000000'));
+    assert.deepEqual(s.timerKeys(P), ['deadline']);
     await s.moves.moveOut(P);
     assert.deepEqual(s.events.filter((e) => e.startsWith('movedOut:')), [`movedOut:${hx}`]);
+    assert.deepEqual(s.timerKeys(P), [], 'moved cancels the partition\'s timers (C01 §3.7)');
     assert.deepEqual(await s.runtime.append({ partition: P, entries: [entry('a3')] }), { r: 'Moving' });
     assert.deepEqual(await B.runtime.append({ partition: P, entries: [entry('b0')] }, { slot: B.slot }), { r: 'Moving' });
     assert.deepEqual(B.events.filter((e) => e.startsWith('adopt:')), []);
+    assert.deepEqual(identities(await s.readLog(P)), ['a1', 'a2'], 'nothing of the partition commits between moved and adopt');
     await s.moves.adopt(P);
     assert.deepEqual(B.events.filter((e) => e.startsWith('adopt:')), [`adopt:${hx}:1`]);
     assert.deepEqual(await s.runtime.append({ partition: P, entries: [entry('a4')] }), { r: 'Moved', slot: B.slot, generation: 1 });
     const r = committed(await B.runtime.append({ partition: P, entries: [entry('b1', { emit: true })] }, { slot: B.slot }));
-    assert.ok(r.seqFrom > 2n, `seq continues in B: ${r.seqFrom}`);
+    const seqB1 = a2.seqTo + 1n + BigInt(s.moves.platformEntries);
+    assert.deepEqual([r.seqFrom, r.seqTo], [seqB1, seqB1], 'seq continues in B');
+    const log = await B.readLog(P);
+    assert.deepEqual(identities(log), ['a1', 'a2', 'b1']);
+    assert.deepEqual(log.map((l) => l.seq), [1n, 2n, seqB1]);
     assert.deepEqual(r.streamSeqs['counter'], [1n, 1n]);
     assert.equal(B.runtime.generation(P), 1);
+  });
+
+  t('CP-5', 'a displacement marker written before the move is found in B after adopt (P1-S78), and nothing commits', async (s) => {
+    const link = bytes('L-moved');
+    const request = new Uint8Array([...bytes('acct'), 0, 0, 0, 0, 0, 0, 0, 5]);
+    committed(await s.runtime.append({ partition: P, entries: [entry('a1')] }));
+    s.putDisplacementMarker(link, request, 2);
+    await s.moves.moveOut(P);
+    await s.moves.adopt(P);
+    const B = s.moves.target;
+    const r = await B.runtime.append({ partition: P, entries: [entry('e5')],
+      conditions: [{ kind: 'displacementRead', link, request, attempt: 1, lockTimeoutMs: 10, label: 'd' }] }, { slot: B.slot });
+    assert.deepEqual(r.r === 'ConditionFailed' ? [r.which, r.displacement?.attempt] : r, ['d', 2]);
+    assert.deepEqual(identities(await B.readLog(P)), ['a1']);
+  });
+
+  t('CP-13', 'a moved partition\'s old rows open in B: B reads the payloads that A committed', async (s) => {
+    const payload = { op: 'hold', n: 7n, raw: new Uint8Array([9, 8]) };
+    committed(await s.runtime.append({ partition: P, entries: [entry('a1', { payload }), entry('a2')] }));
+    await s.moves.moveOut(P);
+    await s.moves.adopt(P);
+    const log = await s.moves.target.readLog(P);
+    assert.deepEqual(log.map((l) => l.payload), [payload, { id: 'a2' }]);
+    assert.deepEqual(identities(log), ['a1', 'a2']);
   });
 
   t('CP-6', 'Stopped(detectionRef) while an integrity stop is open: nothing of the partition commits, another partition commits, resume lifts it', async (s) => {
