@@ -1,0 +1,30 @@
+{
+  "$schema": "../../node_modules/@stryker-mutator/core/schema/stryker-schema.json",
+  "testRunner": "command",
+  "commandRunner": {
+    "command": "node --test --test-concurrency=1 --test-skip-pattern=\"the module reads no clock\" \"slices/account/*/test/*.test.ts\""
+  },
+  "coverageAnalysis": "off",
+  "inPlace": true,
+  "disableTypeChecks": false,
+  "mutate": [
+    "slices/account/owner/src/funds/module.ts"
+  ],
+  "concurrency": 6,
+  "timeoutMS": 15000,
+  "timeoutFactor": 2,
+  "reporters": [
+    "clear-text",
+    "progress",
+    "html",
+    "json"
+  ],
+  "htmlReporter": {
+    "fileName": "reports/mutation/account.html"
+  },
+  "jsonReporter": {
+    "fileName": "reports/mutation/account.json"
+  },
+  "tempDirName": ".stryker-tmp",
+  "cleanTempDir": true
+}
