@@ -7,11 +7,12 @@ export { chainGenesis, chainNext, type ChainRow } from './chain.ts';
 export { DevSealer, type Sealer, type SealContext } from './sealer.ts';
 export { validateDeclaration, validTopic, assertDeclaration, assertIdentifier, projectionKeyColumns, tableNames } from './declaration.ts';
 export { rowId } from './rowref.ts';
-export { PARAMS } from './params.ts';
+export { OVERLOAD, PARAMS } from './params.ts';
+export { LaneCostModel, SlotAdmission, expectedSojournMs, type AdmissionState, type Random } from './overload.ts';
 export { hex, fromHex, utf8, bytesEqual, encodeJson, decodeJson } from './bytes.ts';
 export {
   CockroachOwnerRuntime, NotInThisIncrement, SlotGroupError, type SlotGroupErrorCode, type OwnerRuntimeOptions, type MoveOptions, type MoveInbox,
-  type ReportFence, type IntegrityReport, type AckSplittingRequest, type ListPartitionsAnswer,
+  type ReportFence, type IntegrityReport, type AckSplittingRequest, type ListPartitionsAnswer, type OverloadStats,
 } from './runtime.ts';
 export { PLATFORM_ENTRY, isPlatformEntry, type PlatformOp, type IntegrityHold } from './batch/attempt.ts';
 export { PgStore, C02_DISPLACEMENT, pgFeedSeqReader, type PgStoreOptions, type DisplacementBinding } from './store/pg.ts';

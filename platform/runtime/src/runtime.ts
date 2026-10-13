@@ -14,7 +14,8 @@ import { compareHlc, hlcBefore, hlcFromWallMs, hlcToWallMs } from './hlc.ts';
 import { systemClock, type WallClock } from './clock.ts';
 import { home, slotOfPartition } from './home.ts';
 import { EventLoopMonitor, type LoadMonitor } from './load.ts';
-import { DEFAULT_SESSION_TIMINGS, PARAMS, type SessionTimings } from './params.ts';
+import { DEFAULT_SESSION_TIMINGS, OVERLOAD, PARAMS, type SessionTimings } from './params.ts';
+import { LaneCostModel, SlotAdmission, expectedSojournMs, type AdmissionState, type Random } from './overload.ts';
 import { MemoryPublisher, type Publisher } from './publisher.ts';
 import { DevSealer, type Sealer } from './sealer.ts';
 import { Session, sessionShard } from './session.ts';
@@ -120,8 +121,15 @@ export interface OwnerRuntimeOptions {
     sessionTimings?: Partial<SessionTimings>;
     commitBackstopMs?: number;
     abandonBeforeCommitMs?: number;
-    /** The monotonic clock (ms) of the abandon budget of each batch (C01 §7); default `performance.now`. */
+    /**
+     * The monotonic clock (ms) of the abandon budget of each batch (C01 §7) and of overload control (RFC-006 §4.7
+     * rule 5: sojourn, fit window, shed ticks); default `performance.now`.
+     */
     batchNowMs?: () => number;
+    /** The uniform random source of `retryAfterMs` (RFC-006 §4.7 rule 5a); default `Math.random`. A test seeds it. */
+    random?: Random;
+    /** False turns rule 5 (5a, 5b, 5c) off: the runtime as before erratum 7.1, the control of §22.1. Default on. */
+    overloadControl?: boolean;
     onDecide?: () => void;
     /** read_lease + ε after an acquisition (C01 §3.1); default 500 ms. */
     postAcquisitionWaitMs?: number;
@@ -172,6 +180,10 @@ export type ListPartitionsAnswer =
   | { refused: 'NOT_ACKED' | 'NOT_OWNER' };
 
 interface Queued extends PendingCall {
+  /** Monotonic ms when the call was queued; a call put back after an abandon keeps it (RFC-006 §4.7 rule 5c). */
+  enqueuedAt: number;
+  /** Entries as counted for slot_batch_max_entries (a decide call counts 1). */
+  entries: number;
   resolve(r: AppendResult): void;
   reject(e: Error): void;
 }
@@ -200,6 +212,41 @@ interface Lane {
   pendingFences: Array<{ to: SlotNo; ts: HlcTs }>;
   /** C01 §3.8: the map version whose splitting state of this slot the holder applied and acknowledged. */
   splitAcked?: MapVersion;
+  /** RFC-006 §4.7 rule 5a: admission control of the slot's one queue. */
+  admission: SlotAdmission;
+  /** RFC-006 §4.7 rule 5b: the cost model of each lane, [first, second]. */
+  cost: [LaneCostModel, LaneCostModel];
+  /** The entries in `queue` (5a `q`). */
+  queuedEntries: number;
+  /** Abandons, and fresh attempts after an abandon (RFC-006 §4.7 monitoring). */
+  abandons: number;
+  freshAfterAbandon: number;
+}
+
+/** Overload control of one slot (RFC-006 §4.7 rule 5 "Monitoring"; the §16 alarms and DT-50 read it). */
+export interface OverloadStats {
+  state: AdmissionState;
+  /** Monotonic ms of the entry while overloaded (the "slot overloaded" alarm: more than 60 s, 5 min). */
+  overloadedSinceMs: number | undefined;
+  /** Entries plus releases, and the monotonic time of the latest. */
+  stateChanges: number;
+  lastChangeMs: number | undefined;
+  /** `Overloaded` answers of rule 5a at once and deferred to the next tick, and calls queued ("owner ignores retryAfterMs"). */
+  shedAtOnce: number;
+  shedDeferred: number;
+  admitted: number;
+  /** The latest sojourn sample and the expected sojourn now. */
+  lastSojournMs: number;
+  expectedSojournMs: number;
+  abandons: number;
+  freshAfterAbandon: number;
+  /** Per lane [first, second]: `F̂`, `ĉ`, `n_cap`, the samples in the window, regime resets and probe takes. */
+  lanes: Array<{ fHatMs: number | undefined; cHatMs: number | undefined; nCap: number; samples: number; regimeResets: number; probeTakes: number }>;
+}
+
+/** Entries of one call as slot_batch_max_entries counts them. */
+function entriesOf(call: AppendCall): number {
+  return call.decide ? 1 : Math.max(1, call.entries?.length ?? 0);
 }
 
 function slotKeyBytes(slot: SlotNo): Uint8Array {
@@ -266,6 +313,13 @@ export class CockroachOwnerRuntime implements OwnerRuntime {
   private gaveUp = false;
   private heartbeat: NodeJS.Timeout | undefined;
   private readonly log: (msg: string, fields?: Record<string, unknown>) => void;
+  /** The monotonic clock of overload control and the abandon budget (ms). */
+  private readonly monoMs: () => number;
+  private readonly random: Random;
+  /** RFC-006 §4.7 rule 5 on (default). */
+  private readonly rule5: boolean;
+  /** `Overloaded` answers above shed_answer_burst, delivered together at the next 100 ms tick (§4.7 rule 5a). */
+  private deferredSheds: Array<{ tick: number; deliver: () => void }> = [];
 
   constructor(o: OwnerRuntimeOptions) {
     assertDeclaration(o.declaration);
@@ -279,6 +333,9 @@ export class CockroachOwnerRuntime implements OwnerRuntime {
     this.sealer = o.sealer ?? new DevSealer();
     this.load = o.load ?? new EventLoopMonitor();
     this.log = o.log ?? noop;
+    this.monoMs = o.testing?.batchNowMs ?? (() => performance.now());
+    this.random = o.testing?.random ?? Math.random;
+    this.rule5 = o.testing?.overloadControl !== false;
     const timings = { ...DEFAULT_SESSION_TIMINGS, ...o.testing?.sessionTimings };
     this.session = new Session(this.store, timings,
       { host: o.host ?? hostname(), region: o.region ?? 'r1', facility: o.facility ?? 'r1a', kind: this.decl.kind },
@@ -396,7 +453,10 @@ export class CockroachOwnerRuntime implements OwnerRuntime {
 
   private startHeartbeat(): void {
     // C01 §3.4: push to readers and advance the report position every heartbeat_interval (100 ms).
-    this.heartbeat = setInterval(() => { for (const l of this.lanes.values()) this.advanceSoon(l); }, REPORT.heartbeatMs);
+    this.heartbeat = setInterval(() => {
+      for (const l of this.lanes.values()) this.advanceSoon(l);
+      this.flushSheds(this.monoMs());
+    }, REPORT.heartbeatMs);
     this.heartbeat.unref();
   }
 
@@ -452,6 +512,7 @@ export class CockroachOwnerRuntime implements OwnerRuntime {
     this.localStopped = true;
     for (const t of this.timers.values()) clearTimeout(t.timeout);
     this.timers.clear();
+    this.flushSheds(Infinity);
     this.load.stop();
     await this.publisher.close();
   }
@@ -516,13 +577,74 @@ export class CockroachOwnerRuntime implements OwnerRuntime {
     const lane = this.lanes.get(slot);
     // Precondition (C01 §3.2): the caller holds the slot; a slot not held by this process is lost to it.
     if (!lane || lane.released) return Promise.resolve({ r: 'StaleEpoch' });
-    if (this.load.shedding() || lane.queue.length >= PARAMS.maxQueuedCallsPerSlot) {
-      return Promise.resolve({ r: 'Overloaded', retryAfterMs: PARAMS.overloadedRetryAfterMs });
-    }
+    if (this.load.shedding()) return Promise.resolve({ r: 'Overloaded', retryAfterMs: PARAMS.overloadedRetryAfterMs });
+    // RFC-006 §4.7 rule 5a: the admission check is the first step, before any queueing. The move protocol's calls
+    // and exclusive calls are not shed (R77-20). slot_queue_max is the memory backstop (R77-11).
+    const now = this.monoMs();
+    this.flushSheds(now);
+    const exempt = platform !== undefined || opts.exclusive === true;
+    if (!exempt && ((this.rule5 && lane.admission.overloaded) || lane.queue.length >= PARAMS.slotQueueMax)) return this.shed(lane, now);
     return new Promise<AppendResult>((resolve, reject) => {
-      lane.queue.push({ call, opts, ...(platform ? { platform } : {}), resolve, reject });
+      const q: Queued = { call, opts, ...(platform ? { platform } : {}), enqueuedAt: now, entries: entriesOf(call), resolve, reject };
+      if (this.rule5 && platform !== undefined) {
+        // `moved` and `adopt` go to the head of the queue, after the move calls already there (§4.3, §4.7 rule 5a).
+        const at = lane.queue.findIndex((x) => x.platform === undefined);
+        lane.queue.splice(at < 0 ? lane.queue.length : at, 0, q);
+      } else {
+        lane.queue.push(q);
+      }
+      lane.queuedEntries += q.entries;
+      lane.admission.admitted += 1;
       this.pump(lane);
     });
+  }
+
+  /** An `Overloaded(retryAfterMs)` answer of rule 5a: at once, or at the next 100 ms tick above shed_answer_burst. */
+  private shed(lane: Lane, now: number): Promise<AppendResult> {
+    const cost = lane.cost[0];
+    const r: AppendResult = { r: 'Overloaded', retryAfterMs: lane.admission.retryAfterMs(lane.queuedEntries, (q) => cost.expectedDrainMs(q, now)) };
+    if (lane.admission.answerNow(now)) return Promise.resolve(r);
+    const tick = Math.floor(now / OVERLOAD.shedTickMs);
+    return new Promise<AppendResult>((resolve) => { this.deferredSheds.push({ tick, deliver: () => resolve(r) }); });
+  }
+
+  /** Delivers the deferred `Overloaded` answers of every earlier tick, together. */
+  private flushSheds(now: number): void {
+    if (this.deferredSheds.length === 0) return;
+    const tick = Math.floor(now / OVERLOAD.shedTickMs);
+    const due = this.deferredSheds.filter((d) => d.tick < tick);
+    if (due.length === 0) return;
+    this.deferredSheds = this.deferredSheds.filter((d) => d.tick >= tick);
+    for (const d of due) d.deliver();
+  }
+
+  /** Rule 5a "Expected sojourn" of the slot's queue now. */
+  private expectedSojourn(lane: Lane, now: number): number {
+    let oldest: number | undefined;
+    const drain = lane.cost[0].expectedDrainMs(lane.queuedEntries, now);
+    if (drain === undefined) for (const q of lane.queue) if (oldest === undefined || q.enqueuedAt < oldest) oldest = q.enqueuedAt;
+    return expectedSojournMs(drain, oldest, now);
+  }
+
+  /** Rule 5a release test at a batch end. */
+  private batchEnd(lane: Lane): void {
+    if (this.rule5) { const now = this.monoMs(); lane.admission.release(this.expectedSojourn(lane, now), now); }
+  }
+
+  /** RFC-006 §4.7 rule 5 counters of one held slot; undefined for a slot not held. */
+  overloadStats(slot: SlotNo): OverloadStats | undefined {
+    const lane = this.lanes.get(slot);
+    if (!lane) return undefined;
+    const now = this.monoMs();
+    const a = lane.admission;
+    return {
+      state: a.state, overloadedSinceMs: a.overloadedSinceMs, stateChanges: a.stateChanges, lastChangeMs: a.lastChangeMs,
+      shedAtOnce: a.shedAtOnce, shedDeferred: a.shedDeferred, admitted: a.admitted,
+      lastSojournMs: a.lastSojournMs, expectedSojournMs: this.expectedSojourn(lane, now),
+      abandons: lane.abandons, freshAfterAbandon: lane.freshAfterAbandon,
+      lanes: lane.cost.map((c) => ({ fHatMs: c.fHatMs(now), cHatMs: c.cHatMs(now), nCap: c.nCap(now), samples: c.sampleCount(now),
+        regimeResets: c.regimeResets, probeTakes: c.probeTakes })),
+    };
   }
 
   private pump(lane: Lane): void {
@@ -586,6 +708,9 @@ export class CockroachOwnerRuntime implements OwnerRuntime {
     }).catch((e: unknown) => this.log('batch step failed', { slot: lane.holding.slot, error: String(e) }));
   }
 
+  /** Every fresh attempt after an abandon and the calls it carried (RFC-006 §4.7 rule 5c; DT-50 (3)). */
+  readonly freshAttempts: Array<{ slot: SlotNo; calls: number }> = [];
+
   /** Every batch started, with the other lane's in-flight partitions at that moment (tests check R47-31). */
   readonly batchesStarted: Array<{ slot: SlotNo; lane: 'primary' | 'second'; partitions: string[]; otherInFlight: string[] }> = [];
 
@@ -601,6 +726,13 @@ export class CockroachOwnerRuntime implements OwnerRuntime {
     let entries = 0;
     let bytes = 0;
     let closed = false;
+    // RFC-006 §4.7 rule 5b: at most n_cap entries (the probe now and then); a call with a lower abandon budget sizes
+    // the batch with one fifth of it. Never fewer than 1 call (the floor), never a split call.
+    const now = this.monoMs();
+    const cost = lane.cost[which === 'primary' ? 0 : 1];
+    const defaultBudget = this.o.testing?.abandonBeforeCommitMs ?? PARAMS.abandonBeforeCommitMs;
+    let cap = this.rule5 ? cost.takeCap(now) : PARAMS.slotBatchMaxEntries;
+    let capBound = false;
     for (const q of lane.queue) {
       const k = hex(q.call.partition);
       const special = q.opts.exclusive === true || q.opts.firstStatement !== undefined;
@@ -610,30 +742,107 @@ export class CockroachOwnerRuntime implements OwnerRuntime {
         if (out.length === 0) { out.push(q); closed = true; } else { rest.push(q); skip.add(k); closed = true; }
         continue;
       }
-      const n = q.call.decide ? 1 : Math.max(1, q.call.entries?.length ?? 0);
+      const n = q.entries;
       const b = q.call.entries ? encodeJson(q.call.entries.map((e) => e.payload)).byteLength : 0;
-      if (out.length > 0 && (entries + n > PARAMS.slotBatchMaxEntries || bytes + b > PARAMS.slotBatchMaxBytes)) { rest.push(q); closed = true; continue; }
+      const budget = q.opts.abandonBeforeCommitMs;
+      const qCap = this.rule5 && budget !== undefined && budget < defaultBudget ? Math.min(cap, cost.nCap(now, budget / OVERLOAD.lowBudgetDivisor)) : cap;
+      if (out.length > 0 && (entries + n > Math.min(PARAMS.slotBatchMaxEntries, qCap) || bytes + b > PARAMS.slotBatchMaxBytes)) {
+        rest.push(q); closed = true; capBound = true; continue;
+      }
+      cap = qCap;
       entries += n; bytes += b;
       out.push(q);
     }
     lane.queue = rest;
+    lane.queuedEntries = rest.reduce((a, q) => a + q.entries, 0);
+    if (this.rule5 && out.length > 0) {
+      cost.noteTake(capBound);
+      // Rule 5a: the sojourn sample of this take (the youngest call taken; 0 when the take empties the queue), then
+      // the release test, but not at the take that entered.
+      const youngest = Math.max(...out.map((q) => q.enqueuedAt));
+      if (!lane.admission.sample(now, rest.length === 0 ? 0 : now - youngest)) lane.admission.release(this.expectedSojourn(lane, now), now);
+    }
     return out;
   }
 
-  private async runBatch(lane: Lane, calls: Queued[], which: 'primary' | 'second' = 'primary'): Promise<void> {
-    let outcome: BatchOutcome;
+  private async execute(lane: Lane, calls: Queued[], fresh: boolean): Promise<BatchOutcome> {
     try {
-      outcome = await executeBatch(this.store, { decl: this.decl, sealer: this.sealer, holding: lane.holding, onDecide: this.o.testing?.onDecide, ...(this.o.emitFns ? { emitFns: this.o.emitFns } : {}) }, calls, {
+      return await executeBatch(this.store, { decl: this.decl, sealer: this.sealer, holding: lane.holding, onDecide: this.o.testing?.onDecide, ...(this.o.emitFns ? { emitFns: this.o.emitFns } : {}) }, calls, {
         batchRetries: PARAMS.batchRetries,
-        abandonBeforeCommitMs: this.o.testing?.abandonBeforeCommitMs ?? PARAMS.abandonBeforeCommitMs,
+        abandonBeforeCommitMs: this.defaultAbandonMs(),
         commitBackstopMs: this.o.testing?.commitBackstopMs ?? PARAMS.commitBackstopMs,
-        ...(this.o.testing?.batchNowMs ? { nowMs: this.o.testing.batchNowMs } : {}),
+        nowMs: this.monoMs,
+        abandonToCaller: this.rule5,
+        freshAttempt: fresh,
       });
     } catch (e) {
-      outcome = { kind: 'failed', error: e instanceof Error ? e : new Error(String(e)) };
+      return { kind: 'failed', error: e instanceof Error ? e : new Error(String(e)) };
     }
+  }
+
+  private defaultAbandonMs(): number {
+    return this.o.testing?.abandonBeforeCommitMs ?? PARAMS.abandonBeforeCommitMs;
+  }
+
+  /** The batch carries a call with a lower abandon budget than the default (RFC-001's 250 ms). */
+  private loweredBudget(calls: Queued[]): boolean {
+    const d = this.defaultAbandonMs();
+    return calls.some((q) => q.opts.abandonBeforeCommitMs !== undefined && q.opts.abandonBeforeCommitMs < d);
+  }
+
+  /**
+   * RFC-006 §4.7 rule 5b: a batch that reached the COMMIT answer is a sample of its lane, except a batch with an
+   * `exclusive` call or a lower abandon budget, a batch that had a per-tier timeout, and a second-lane deadline batch.
+   * An abandon at the default budget with no per-tier timeout is a censored sample.
+   */
+  private observe(lane: Lane, which: 'primary' | 'second', calls: Queued[], outcome: BatchOutcome): void {
+    if (!this.rule5) return;
+    if (outcome.kind !== 'answered' && !(outcome.kind === 'retry' && outcome.abandoned) && outcome.kind !== 'abandoned') return;
+    if ((outcome.kind === 'answered' || outcome.kind === 'retry') && outcome.tierRetried) return;
+    if (calls.some((q) => q.opts.exclusive === true) || this.loweredBudget(calls)) return;
+    if (which === 'second' && this.secondLaneMode() === 'deadline') return;
+    const n = calls.reduce((a, q) => a + q.entries, 0);
+    const cost = lane.cost[which === 'primary' ? 0 : 1];
+    if (outcome.kind === 'answered') {
+      if (outcome.committedMs !== undefined) cost.observe(n, outcome.committedMs, this.monoMs());
+    } else {
+      cost.censored(n, this.defaultAbandonMs(), this.monoMs());
+    }
+  }
+
+  private async runBatch(lane: Lane, first: Queued[], which: 'primary' | 'second' = 'primary'): Promise<void> {
+    let calls = first;
+    let outcome = await this.execute(lane, calls, false);
+    if (outcome.kind === 'abandoned') {
+      // RFC-006 §4.7 rule 5c (C01 v1): (1) the censored sample updates ĉ; (2) one fresh attempt with only the first
+      // n_cap calls, the others back at the head of the queue in their order with their enqueue times; (3) then answers.
+      lane.abandons += 1;
+      this.observe(lane, which, calls, outcome);
+      if (!this.loweredBudget(calls)) {
+        const cap = lane.cost[which === 'primary' ? 0 : 1].nCap(this.monoMs());
+        let entries = 0;
+        let k = 0;
+        while (k < calls.length && (k === 0 || entries + (calls[k] as Queued).entries <= cap)) { entries += (calls[k] as Queued).entries; k += 1; }
+        const back = calls.slice(k);
+        calls = calls.slice(0, k);
+        lane.queue.unshift(...back);
+        lane.queuedEntries += back.reduce((a, q) => a + q.entries, 0);
+        lane.inFlight[which === 'primary' ? 0 : 1] = new Set(calls.map((q) => hex(q.call.partition)));
+      }
+      lane.freshAfterAbandon += 1;
+      this.freshAttempts.push({ slot: lane.holding.slot, calls: calls.length });
+      outcome = await this.execute(lane, calls, true);
+    }
+    if (outcome.kind === 'retry' && outcome.abandoned) lane.abandons += 1;
+    this.observe(lane, which, calls, outcome);
     this.reportIntegrity(lane);
+    // Rule 5a's release test at the batch end, before any answer of this step (§4.7 rule 5c order).
+    this.batchEnd(lane);
     switch (outcome.kind) {
+      case 'abandoned':
+        // Not reached: a fresh attempt never hands its abandon back.
+        for (const q of calls) q.resolve({ r: 'Retry' });
+        return;
       case 'answered':
         this.lastTiming = outcome.plan.timing;
         this.applyCommitted(lane, outcome.plan, which === 'primary' ? lane.secondRunning : lane.running);
@@ -786,6 +995,8 @@ export class CockroachOwnerRuntime implements OwnerRuntime {
       queue: [], running: false, secondRunning: false, inFlight: [new Set(), new Set()], gate: null, released: false,
       report: new SlotReport(initial), markerWanted: false, reportableTimer: undefined, pushedThrough: initial, unresolved: 0,
       pendingFences: [],
+      admission: new SlotAdmission(this.random), cost: [new LaneCostModel(), new LaneCostModel()], queuedEntries: 0,
+      abandons: 0, freshAfterAbandon: 0,
     };
     this.lanes.set(slot, lane);
     return lane;
@@ -1235,6 +1446,7 @@ export class CockroachOwnerRuntime implements OwnerRuntime {
     if (lane.reportableTimer) clearTimeout(lane.reportableTimer);
     this.lanes.delete(slot);
     for (const q of lane.queue.splice(0)) q.resolve({ r: 'StaleEpoch' });
+    lane.queuedEntries = 0;
     for (const [k, t] of this.timers) {
       if (this.slotFor(t.partition) === slot) { clearTimeout(t.timeout); this.timers.delete(k); }
     }

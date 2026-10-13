@@ -45,6 +45,7 @@ test('should start the batch again on the next tier and commit when the epoch re
   const s = await setup(1);
   const outcome = await executeBatch(s.store, { decl: DECL, sealer: new DevSealer(), holding: s.holding }, s.calls, OPTS);
   assert.equal(outcome.kind, 'answered');
+  assert.equal(outcome.kind === 'answered' && outcome.tierRetried, true, 'a per-tier batch is not a rule 5b sample');
   assert.equal(s.begun(), 2);
   assert.deepEqual(s.log, ['close 1 true', 'close 2 false'], 'the first transaction is discarded with no ROLLBACK');
   assert.equal(s.store.log.length, 1);
@@ -53,7 +54,7 @@ test('should start the batch again on the next tier and commit when the epoch re
 test('should answer retry and write nothing when the epoch read times out on two tiers', async () => {
   const s = await setup(2);
   const outcome = await executeBatch(s.store, { decl: DECL, sealer: new DevSealer(), holding: s.holding }, s.calls, OPTS);
-  assert.deepEqual(outcome, { kind: 'retry', restarts: 0, freshAttempts: 1 });
+  assert.deepEqual(outcome, { kind: 'retry', restarts: 0, freshAttempts: 1, abandoned: false, tierRetried: true });
   assert.equal(s.begun(), 2);
   assert.deepEqual(s.log, ['close 1 true', 'close 2 true']);
   assert.equal(s.store.log.length, 0);

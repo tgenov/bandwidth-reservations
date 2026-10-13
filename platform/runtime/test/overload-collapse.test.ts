@@ -1,195 +1,157 @@
 /**
- * Goodput under overload of the real runtime core (lane, batching, executeBatch) over the in-memory store.
- * The database time of a batch grows with its size; a stepped clock carries it, so no test waits on real time.
- * C01 §3.2 and §7 (abandonBeforeCommitMs), R47-12, RFC-006 §4.7.
+ * DT-50 "Overload recovery" (RFC-006 §22.3 at commit 8462109; §4.7 rule 5, §22.1, AI6-12): goodput under overload
+ * of the real runtime core (lane, batching, executeBatch) over the in-memory store with a deterministic database
+ * time `F` + `c` · `n` and §22.1's caller model. Each case is one deterministic run with a fixed seed.
  */
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import type { AppendResult, EntryInput, OwnerDeclaration, OwnerHooks } from '../src/index.ts';
-import { CockroachOwnerRuntime, ManualLoad, MemoryPublisher, utf8 } from '../src/index.ts';
-import type { BatchTxn, BatchWrites } from '../src/store/types.ts';
-import { MemoryStore } from '../testing/index.ts';
+import { simulate, type SimPhase, type SimRun } from './support.ts';
 
-const DECL: OwnerDeclaration = {
-  kind: 'canary', slotCount: 1,
-  entryKinds: [{ kind: 1, name: 'incremented', schemaVersions: [1], retention: 'ops' }],
-  projections: [],
-  streams: [],
-};
+/** Capacity of the DT-50 (1) database with rule 5b (`C` about 444/s) and the backlog bound at 200 calls/s (0.5 s · λ). */
+const C = 444;
+const BOUND = 100;
 
-const AUDIT = { schema: 'audit.v1', principal: { principal_id: 'internal_service', kind: 'service', tenant: 'share' },
-  decided_at: 'commit', policy_version: 1 } as const;
-const entry = (id: string): EntryInput => ({ kind: 1, schemaV: 1, identity: utf8(id), audit: AUDIT, payload: { id } });
+const linear = (f: number, c: number) => (rows: number): number => f + c * rows;
 
-const HOOKS: OwnerHooks = {
-  async onAcquire() {}, onRelease() {}, onReportable() {}, onMovedOut() {}, async onAdopt() {}, async onNotification() {},
-};
-
-/** Database time of one transaction: a fixed cost plus a cost per log row, charged at the write statement. */
-const BASE_MS = 50;
-const PER_ROW_MS = 2;
-const PARTITIONS = 64;
-
-/** The stepped clock of the simulation, in ms. */
-class SimClock {
-  ms = 0;
-  readonly now = (): number => this.ms;
+function perSecond(r: SimRun): number[] {
+  const out = new Array<number>(Math.ceil(r.endMs / 1_000)).fill(0);
+  for (const c of r.commits) {
+    const s = Math.floor(c.at / 1_000);
+    if (s < out.length) out[s] = (out[s] ?? 0) + c.calls;
+  }
+  return out;
 }
 
-/**
- * The in-memory store with database time: each `write` steps the clock by BASE_MS + PER_ROW_MS × rows, then
- * calls `onTime` so that the calls that arrive in that interval join the lane's queue.
- */
-class SlowStore extends MemoryStore {
-  readonly batchRows: number[] = [];
-  writes = 0;
-  wastedWrites = 0;
-  onTime: () => void = () => {};
-  private readonly clock: SimClock;
-
-  constructor(clock: SimClock) {
-    super();
-    this.clock = clock;
-  }
-
-  override async beginBatch(): Promise<BatchTxn> {
-    const tx = await super.beginBatch();
-    let wrote = false;
-    const write = tx.write.bind(tx);
-    const commit = tx.commit.bind(tx);
-    const rollback = tx.rollback.bind(tx);
-    tx.write = async (kind: string, w: BatchWrites): Promise<void> => {
-      await write(kind, w);
-      wrote = true;
-      this.writes += 1;
-      this.batchRows.push(w.log.length);
-      this.clock.ms += BASE_MS + PER_ROW_MS * w.log.length;
-      this.onTime();
-    };
-    tx.commit = async (backstopMs: number): Promise<void> => { wrote = false; await commit(backstopMs); };
-    tx.rollback = async (): Promise<void> => {
-      if (wrote) this.wastedWrites += 1;
-      wrote = false;
-      await rollback();
-    };
-    return tx;
-  }
+/** §22.1 backlog `B`(t): calls first sent by t less calls committed by t (no caller gives up in these runs). */
+function backlog(r: SimRun, t: number): number {
+  return r.firstSends.filter((x) => x <= t).length - r.commits.filter((c) => c.at <= t).reduce((a, c) => a + c.calls, 0);
 }
 
-interface Phase { untilMs: number; ratePerS: number }
-
-interface LoadReport {
-  offeredPerS: number; committedPerS: number; windowMs: [number, number];
-  calls: number; committed: number; retries: number; overloaded: number; wastedWrites: number; writes: number;
-  meanBatchRows: number; maxBatchRows: number;
+/** `t_e`: the first instant from `fromMs` at which `B` ≤ the bound (B falls only at commits). */
+function drainEnd(r: SimRun, fromMs: number): number | undefined {
+  for (const t of [fromMs, ...r.commits.map((c) => c.at).filter((t) => t >= fromMs)]) if (backlog(r, t) <= BOUND) return t;
+  return undefined;
 }
 
-/**
- * Open-loop load at fixed rates over one slot. A caller re-sends a call at once after `Retry`, and after
- * `retryAfterMs` after `Overloaded`. No call is re-sent after the last phase ends. Goodput is measured over
- * the last `windowMs` of the last phase, by the clock time of each commit.
- */
-async function runLoad(phases: Phase[], windowMs: number): Promise<LoadReport> {
-  const clock = new SimClock();
-  const store = new SlowStore(clock);
-  store.seedSlots(DECL.kind, DECL.slotCount);
-  const rt = new CockroachOwnerRuntime({
-    declaration: DECL, store, slots: [0], publisher: new MemoryPublisher(), load: new ManualLoad(),
-    testing: { batchNowMs: clock.now },
-  });
-  await rt.start(HOOKS);
-  const endMs = phases[phases.length - 1]?.untilMs ?? 0;
-  const windowFrom = endMs - windowMs;
-
-  const arrivals: Array<{ at: number; id: number }> = [];
-  let calls = 0;
-  let from = 0;
-  for (const p of phases) {
-    const gap = 1_000 / p.ratePerS;
-    for (let t = from; t < p.untilMs; t += gap) arrivals.push({ at: t, id: calls++ });
-    from = p.untilMs;
-  }
-  const offeredInWindow = arrivals.filter((a) => a.at >= windowFrom).length;
-
-  const resends: Array<{ at: number; id: number }> = [];
-  let next = 0;
-  let inRuntime = 0;
-  let committed = 0;
-  let retries = 0;
-  let overloaded = 0;
-  let idle: (() => void) | undefined;
-
-  const answer = (id: number, r: AppendResult): void => {
-    inRuntime -= 1;
-    if (r.r === 'Committed') {
-      if (clock.ms >= windowFrom && clock.ms <= endMs) committed += 1;
-    } else if (r.r === 'Retry' || r.r === 'Overloaded') {
-      if (r.r === 'Retry') retries += 1; else overloaded += 1;
-      const at = clock.ms + (r.r === 'Overloaded' ? r.retryAfterMs : 0);
-      if (at < endMs) resends.push({ at, id });
-    } else {
-      throw new Error(`unexpected append result ${r.r}`);
-    }
-    if (inRuntime === 0) idle?.();
-  };
-  const send = (id: number): void => {
-    inRuntime += 1;
-    rt.append({ partition: utf8(`p-${id % PARTITIONS}`), entries: [entry(`c-${id}`)] }).then((r) => answer(id, r), (e: unknown) => { throw e; });
-  };
-  const deliver = (): void => {
-    const upTo = Math.min(clock.ms, endMs);
-    while (next < arrivals.length && (arrivals[next]?.at ?? Infinity) <= upTo) send(arrivals[next++]?.id ?? -1);
-    resends.sort((a, b) => a.at - b.at);
-    while (resends.length > 0 && (resends[0]?.at ?? Infinity) <= upTo) send(resends.shift()?.id ?? -1);
-  };
-  store.onTime = deliver;
-
-  try {
-    for (;;) {
-      deliver();
-      if (inRuntime > 0) {
-        await new Promise<void>((r) => { idle = r; });
-        idle = undefined;
-        continue;
-      }
-      const due = Math.min(arrivals[next]?.at ?? Infinity, ...resends.map((r) => r.at));
-      if (due === Infinity || due >= endMs) break;
-      clock.ms = Math.max(clock.ms, due);
-    }
-  } finally {
-    await rt.stop();
-  }
-  const rows = store.batchRows;
-  return {
-    offeredPerS: (offeredInWindow * 1_000) / windowMs,
-    committedPerS: (committed * 1_000) / windowMs,
-    windowMs: [windowFrom, endMs],
-    calls, committed, retries, overloaded,
-    wastedWrites: store.wastedWrites, writes: store.writes,
-    meanBatchRows: Math.round(rows.reduce((a, b) => a + b, 0) / Math.max(1, rows.length)),
-    maxBatchRows: Math.max(0, ...rows),
-  };
+/** The largest deficit after `te`: calls first sent after `te` less calls committed after `te`, at any instant. */
+function maxDeficit(r: SimRun, te: number): number {
+  const ev = [
+    ...r.firstSends.filter((x) => x > te).map((at) => ({ at, d: 1, o: 0 })),
+    ...r.commits.filter((c) => c.at > te).map((c) => ({ at: c.at, d: -c.calls, o: 1 })),
+  ].sort((a, b) => a.at - b.at || a.o - b.o);
+  let sum = 0;
+  let max = 0;
+  for (const e of ev) { sum += e.d; max = Math.max(max, sum); }
+  return max;
 }
 
-const describe = (r: LoadReport): string =>
-  `offered ${r.offeredPerS}/s, committed ${r.committedPerS}/s in [${r.windowMs[0]} ms, ${r.windowMs[1]} ms]; ` +
-  `abandoned (wasted) transactions ${r.wastedWrites} of ${r.writes}; Retry answers ${r.retries}; Overloaded ${r.overloaded}; ` +
-  `mean batch ${r.meanBatchRows} rows, max ${r.maxBatchRows} rows; calls ${r.calls}`;
+function committedIn(r: SimRun, from: number, to: number): number {
+  return r.commits.filter((c) => c.at >= from && c.at < to).reduce((a, c) => a + c.calls, 0);
+}
+
+function offeredIn(r: SimRun, from: number, to: number): number {
+  return r.firstSends.filter((x) => x >= from && x < to).length;
+}
+
+const abandonsAt = (r: SimRun): number[] => r.writes.filter((w) => w.abandoned).map((w) => w.startMs + w.ms);
+
+function describe(r: SimRun, te?: number): string {
+  const s = r.stats;
+  return `per second ${JSON.stringify(perSecond(r))}; t_e ${te ?? 'none'} ms; deficit after t_e ${te === undefined ? '-' : maxDeficit(r, te)}; ` +
+    `state changes ${s.stateChanges} (last at ${s.lastChangeMs ?? '-'} ms); abandons at ${JSON.stringify(abandonsAt(r))}; ` +
+    `fresh attempts ${JSON.stringify(r.freshAttempts.map((f) => f.calls))}; Retry ${r.retries}; Overloaded ${r.overloaded}; ` +
+    `gave up ${r.gaveUp}; regime resets ${s.lanes[0]?.regimeResets}; seed 1`;
+}
+
+const BURST: SimPhase[] = [{ untilMs: 3_000, ratePerS: 1_000 }, { untilMs: 33_000, ratePerS: 200 }];
+const STEADY: SimPhase[] = [{ untilMs: 33_000, ratePerS: 200 }];
 
 test('should commit the offered rate when the offered rate stays below capacity', { timeout: 60_000 }, async () => {
-  const r = await runLoad([{ untilMs: 20_000, ratePerS: 200 }], 10_000);
-  assert.equal(r.offeredPerS, 200, describe(r));
-  assert.ok(r.committedPerS >= 199, describe(r));
-  assert.equal(r.wastedWrites, 0, describe(r));
+  const r = await simulate({ phases: [{ untilMs: 20_000, ratePerS: 200 }], dbMs: linear(50, 2) });
+  const g = perSecond(r);
+  for (let s = 1; s < 20; s++) assert.ok((g[s] ?? 0) >= 190, `second ${s}: ${describe(r)}`);
+  assert.equal(abandonsAt(r).length, 0, describe(r));
   assert.equal(r.retries, 0, describe(r));
   assert.equal(r.overloaded, 0, describe(r));
+  assert.equal(r.stats.stateChanges, 0, describe(r));
 });
 
-test('should commit the offered rate again after a burst above capacity when the database time grows with the batch size', {
-  timeout: 120_000,
-  todo: 'open defect: metastable overload collapse (abandon before COMMIT, fresh attempt without backoff, Retry without retryAfterMs); fix after the design change',
-}, async () => {
-  const r = await runLoad([{ untilMs: 3_000, ratePerS: 1_000 }, { untilMs: 33_000, ratePerS: 200 }], 10_000);
-  assert.equal(r.offeredPerS, 200, describe(r));
-  assert.ok(r.committedPerS >= 190, `goodput collapsed: ${describe(r)}`);
+test('DT-50 (1) should drain a burst at 5 times the rate and commit 200/s in every second from 12 s', { timeout: 120_000 }, async () => {
+  const r = await simulate({ phases: BURST, dbMs: linear(50, 2) });
+  const g = perSecond(r);
+  const td = ((1_000 - C) * 3) / (C - 200);
+  const te = drainEnd(r, 3_000);
+  assert.ok(te !== undefined && te <= 3_000 + 1.5 * td * 1_000 + 5_000, `drain deadline ${3 + 1.5 * td + 5} s: ${describe(r, te)}`);
+  for (let s = 1; s < 33; s++) assert.notEqual(g[s], 0, `zero goodput in second ${s}: ${describe(r, te)}`);
+  assert.ok(maxDeficit(r, te) <= BOUND, `deficit: ${describe(r, te)}`);
+  assert.deepEqual(abandonsAt(r).filter((t) => t > te), [], describe(r, te));
+  assert.ok(committedIn(r, te, 33_000) >= 0.95 * 200 * (33_000 - te) / 1_000, `mean goodput after t_e: ${describe(r, te)}`);
+  for (let s = 12; s < 33; s++) assert.ok((g[s] ?? 0) >= 190, `second ${s}: ${describe(r, te)}`);
+  assert.ok(r.stats.stateChanges <= 2, describe(r, te));
+  assert.ok((r.stats.lastChangeMs ?? 0) <= te, `a state change after t_e: ${describe(r, te)}`);
+});
+
+test('DT-50 (2) should commit at least 285 a second under a fixed cost of 450 ms, with no state change and no abandon', { timeout: 120_000 }, async () => {
+  const on = await simulate({ phases: [{ untilMs: 33_000, ratePerS: 300 }], dbMs: linear(450, 0.2) });
+  const off = await simulate({ phases: [{ untilMs: 33_000, ratePerS: 300 }], dbMs: linear(450, 0.2), rules: false });
+  const g = perSecond(on);
+  const gOff = perSecond(off);
+  for (let s = 2; s < 33; s++) assert.ok((g[s] ?? 0) >= 285, `second ${s}: ${describe(on)}`);
+  assert.equal(on.stats.stateChanges, 0, describe(on));
+  assert.equal(abandonsAt(on).length, 0, describe(on));
+  assert.equal(on.overloaded, 0, describe(on));
+  assert.equal(on.stats.lanes[0]?.nCap, 2_000, 'the fixed cost never shrinks the batch');
+  const sum = (xs: number[]): number => xs.slice(2).reduce((a, b) => a + b, 0);
+  assert.ok(sum(g) >= sum(gOff), `rules on ${sum(g)} < rules off ${sum(gOff)}: ${describe(on)}; off ${JSON.stringify(gOff)}`);
+  assert.ok(Math.min(...g.slice(2)) >= Math.min(...gOff.slice(2)), `per-second minimum below rules off: ${JSON.stringify(gOff)}`);
+});
+
+test('DT-50 (3) should make one fresh attempt with the first n_cap calls after each abandon in a lease wait and recover after it', { timeout: 120_000 }, async () => {
+  const wait = (rows: number, start: number): number => 50 + 2 * rows + (start >= 10_000 && start < 19_000 ? 19_000 - start : 0);
+  const r = await simulate({ phases: STEADY, dbMs: wait });
+  const writes = r.writes.filter((w) => w.ids.length > 0);
+  const abandoned = abandonsAt(r);
+  assert.ok(abandoned.length > 0, `no abandon: ${describe(r)}`);
+  let fresh = 0;
+  const retryExpected = new Set<string>();
+  for (let i = 0; i < writes.length; i++) {
+    const w = writes[i];
+    if (!w?.abandoned) continue;
+    const f = writes[i + 1];
+    assert.ok(f, describe(r));
+    assert.deepEqual(f.ids, w.ids.slice(0, f.ids.length), `fresh attempt ${fresh} is not a prefix of the abandoned batch`);
+    assert.equal(f.ids.length, r.freshAttempts[fresh]?.calls, describe(r));
+    const rest = w.ids.slice(f.ids.length);
+    const after = writes[i + 2];
+    if (rest.length > 0 && after) assert.deepEqual(after.ids.slice(0, rest.length), rest.slice(0, after.ids.length), 'the other calls are taken next, in their order');
+    if (f.abandoned) for (const id of f.ids) retryExpected.add(id);
+    fresh += 1;
+    i += 1;
+  }
+  assert.equal(fresh, r.freshAttempts.length, describe(r));
+  assert.deepEqual([...r.retryIds].sort(), [...retryExpected].sort(), 'Retry only for the calls of an abandoned fresh attempt');
+  assert.deepEqual(abandoned.filter((t) => t > 19_000), [], describe(r));
+  const e = offeredIn(r, 10_000, 23_000) - committedIn(r, 10_000, 23_000);
+  const td = e / (C - 200);
+  const te = drainEnd(r, 23_000);
+  assert.ok(te !== undefined && te <= 23_000 + 1.5 * td * 1_000 + 5_000, `E ${e}, T_d ${td.toFixed(1)} s: ${describe(r, te)}`);
+  assert.ok(maxDeficit(r, te) <= BOUND, `deficit: ${describe(r, te)}`);
+  const g = perSecond(r);
+  for (let s = 22; s < 33; s++) assert.ok((g[s] ?? 0) >= 190, `second ${s}: ${describe(r, te)}`);
+});
+
+test('DT-50 (3a) should reset the regime at the first slow batch and abandon nothing when the cost per entry is 30 times larger', { timeout: 120_000 }, async () => {
+  const slow = (rows: number, start: number): number => 50 + (start >= 10_000 && start < 20_000 ? 60 : 2) * rows;
+  const r = await simulate({ phases: STEADY, dbMs: slow });
+  assert.ok((r.stats.lanes[0]?.regimeResets ?? 0) >= 1, describe(r));
+  const firstSlow = r.writes.findIndex((w) => w.startMs >= 10_000 && w.ids.length > 0);
+  assert.deepEqual(r.writes.slice(firstSlow + 1).filter((w) => w.ids.length >= 2_000).map((w) => w.startMs), [], 'a batch at the hard cap after the reset');
+  assert.deepEqual(abandonsAt(r), [], describe(r));
+  const e = offeredIn(r, 10_000, 24_000) - committedIn(r, 10_000, 24_000);
+  const td = e / (C - 200);
+  const te = drainEnd(r, 24_000);
+  assert.ok(te !== undefined && te <= 24_000 + 1.5 * td * 1_000 + 5_000, `E ${e}, T_d ${td.toFixed(1)} s: ${describe(r, te)}`);
+  assert.ok(maxDeficit(r, te) <= BOUND, `deficit: ${describe(r, te)}`);
+  const g = perSecond(r);
+  for (let s = 22; s < 33; s++) assert.ok((g[s] ?? 0) >= 190, `second ${s}: ${describe(r, te)}`);
 });
