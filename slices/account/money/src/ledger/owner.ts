@@ -8,7 +8,7 @@ import {
   type AppendResult, type AuditFields, type CommandEnvelope, type DecideResult, type EntryInput, type Epoch, type Generation,
   type OwnerHooks, type OwnerRuntime, type PartitionKey, type ProjectionWrite, type RoutingRefusal, type RowRef, type SlotNo,
 } from '@share/owner-runtime';
-import type { PostMovementRequest, PostMovementResponse } from '../contracts/c06.ts';
+import type { PostMovementRequest, PostMovementResponse, SourceRef } from '../contracts/c06.ts';
 import { DEFAULT_PARTITION_COUNT, ledgerPartitionOfBuyer } from './accounts.ts';
 import {
   decidePost, readsOf,
@@ -16,7 +16,7 @@ import {
   type WeightsSource,
 } from './decide.ts';
 import { LEDGER_DEV_SLOT_COUNT, LEDGER_ENTRY, LEDGER_STREAM, LEDGER_TABLE } from './declaration.ts';
-import { digestOf } from '../money.ts';
+import { digestOf, lineKeyDigest } from '../money.ts';
 
 /** One call of the posting port (C06 §8). The principal is the caller's workload identity, never the body. */
 export interface PostCall {
@@ -24,6 +24,11 @@ export interface PostCall {
   partition: string;
   principal: string;
   request: PostMovementRequest;
+  /**
+   * The buyer account that the caller routed the post by (the home, RFC-000 §2). Settlement names it for each
+   * charge batch: a usage batch of cost lines only touches no buyer account (MONEY-I3 D-13).
+   */
+  account?: string;
   /** C01 §2.4 routed command: the sender's (generation, epoch), checked by `admitCommand` (C01 CC-5). */
   envelope?: CommandEnvelope;
 }
@@ -109,7 +114,7 @@ export class LedgerOwner implements OwnerHooks {
       if (!admit.admit) return { result: 'routing', refusal: { code: 'STALE_SENDER', recorded: admit.recorded } };
       senderFence = { kind: s.kind, partition: s.partition, generation: s.generation, epoch: s.epoch };
     }
-    const { lineKeys, accounts } = readsOf(call.request);
+    const { lineKeys, accounts } = readsOf(call.request, call.account);
     const reads: RowRef[] = [
       ledgerRows.movementRef(pk, String(call.request.movementRef)), ledgerRows.chain(pk),
       ...lineKeys.map((k) => ledgerRows.line(pk, k)), ...accounts.map((a) => ledgerRows.balance(pk, a)),
@@ -120,6 +125,17 @@ export class LedgerOwner implements OwnerHooks {
     } finally {
       this.leave(slot);
     }
+  }
+
+  /**
+   * The ledger's state of one line key, read at the present (a status read of the `ledger_line` projection).
+   * Settlement reads the mode of a line and what each party holds before it posts an amendment (C06 "Charge-line
+   * batches": "settlement knows the mode of the line from the ledger"). Undefined if the ledger has no posting.
+   */
+  async lineState(partition: string, ref: SourceRef): Promise<LineRecord | undefined> {
+    const rows = await this.rt.consistentRead((tx) => tx.query<{ record: unknown }>(
+      `SELECT record FROM ${LEDGER_TABLE.line} WHERE partition = $1 AND line_key = $2`, [utf8(partition), lineKeyDigest(ref)]), 'present');
+    return recordOf<LineRecord>(rows[0]);
   }
 
   private async enter(slot: SlotNo): Promise<void> {
@@ -151,7 +167,7 @@ export class LedgerOwner implements OwnerHooks {
             balance: (a) => recordOf<BalanceRecord>(ctx.read(ledgerRows.balance(pk, a))),
           };
           decision = decidePost({
-            partition: call.partition, principal: call.principal, request: call.request, ts: ctx.ts, seq: head.seq + 1n,
+            partition: call.partition, principal: call.principal, request: call.request, ...(call.account !== undefined ? { account: call.account } : {}), ts: ctx.ts, seq: head.seq + 1n,
             streams: head.streams, generation: head.generation, epoch, weights: this.weights, partitionCount: this.partitionCount,
           }, read);
           return this.writes(pk, decision, call, senderFence);
@@ -187,6 +203,9 @@ export class LedgerOwner implements OwnerHooks {
   private writes(pk: PartitionKey, d: Decision, call: PostCall, senderFence: EntryInput['senderFence']): DecideResult {
     const fence = senderFence ? { senderFence } : {};
     if (d.kind === 'answer') return { entries: [] };
+    // C06 V63-2: a refused usage batch is the recorded answer of its movementRef. It moves nothing and takes no
+    // sequence of the partition log (MONEY-I3 D-14; contracts/suites/ISSUES.md CS-7).
+    if (d.kind === 'refuse_batch') return { entries: [], projections: [this.row(ledgerRows.movementRef(pk, d.record.movementRef), d.record)] };
     if (d.kind === 'refuse') {
       const projections: ProjectionWrite[] = d.record ? [this.row(ledgerRows.movementRef(pk, d.record.movementRef), d.record)] : [];
       const entry: EntryInput = {

@@ -53,14 +53,26 @@ export function mayPost(principal: string, kind: MovementKind): boolean {
   return (POSTING_PRINCIPALS as readonly string[]).includes(principal) && KINDS_OF[principal as PostingPrincipal].includes(kind);
 }
 
-/** The kinds that the ledger posts in MONEY-I2. The other kinds come in later increments. */
-export const KINDS_IN_THIS_INCREMENT: readonly MovementKind[] = ['M1', 'M4'];
+/** The kinds that the ledger posts (MONEY-I2: M1, M4; MONEY-I3: M5 … M13, M23). The other kinds come in later increments. */
+export const KINDS_IN_THIS_INCREMENT: readonly MovementKind[] = ['M1', 'M4', 'M5', 'M6', 'M7', 'M8', 'M9', 'M10', 'M11', 'M12', 'M13', 'M23'];
 
-/** True if an entry of `kind` may touch the account (RFC-004 §B2 templates of the kinds of MONEY-I2). */
+const isBuyer = (a: LedgerAccount): boolean => a.cls === 'buyer';
+const isEarn = (a: LedgerAccount): boolean => a.cls === 'supplier' && a.sub === 'earn';
+const isDebt = (a: LedgerAccount): boolean => a.cls === 'supplier' && a.sub === 'debt';
+const isShare = (a: LedgerAccount, c: ShareCategory): boolean => a.cls === 'share' && a.category === c;
+
+/** True if an entry of `kind` may touch the account (RFC-004 §B1.2 "Validation at append", the §B2 templates). */
 export function classAllowed(kind: MovementKind, a: LedgerAccount): boolean {
-  if (kind === 'M4') return a.cls === 'buyer' || (a.cls === 'supplier' && a.sub === 'earn') || (a.cls === 'share' && a.category === 'commission');
-  if (kind === 'M1') return a.cls === 'buyer' || a.cls === 'external' || (a.cls === 'share' && a.category === 'repayments');
-  return false;
+  switch (kind) {
+    case 'M1': return isBuyer(a) || a.cls === 'external' || isShare(a, 'repayments');
+    case 'M4': case 'M5': case 'M6': case 'M7': return isBuyer(a) || isEarn(a) || isShare(a, 'commission');
+    case 'M8': return isBuyer(a) || isShare(a, 'corrections');
+    case 'M9': return isBuyer(a) || isDebt(a) || isShare(a, 'corrections');
+    case 'M10': return isBuyer(a) || isEarn(a);
+    case 'M11': case 'M12': case 'M13': return isEarn(a) || isShare(a, 'costs');
+    case 'M23': return isEarn(a) || isDebt(a) || isShare(a, 'costs');
+    default: return false;
+  }
 }
 
 /** Ledger partitions (RFC-004 §B1.3, est. 128; SP4 measures). */

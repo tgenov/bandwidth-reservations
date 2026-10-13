@@ -1,7 +1,7 @@
 /** Ledger accounts, posting principals and account classes (RFC-004 §B1.1, §B1.2, §B2). */
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { MOVEMENT_KINDS, classAllowed, isSourceRef, ledgerPartitionOfBuyer, mayPost, parseLedgerAccount, type LedgerAccount } from '../src/index.ts';
+import { MOVEMENT_KINDS, classAllowed, isSourceRef, ledgerPartitionOfBuyer, mayPost, parseLedgerAccount, type LedgerAccount, type MovementKind } from '../src/index.ts';
 
 test('should read each class of ledger account and refuse every other name', () => {
   assert.deepEqual(parseLedgerAccount('B:b1'), { cls: 'buyer', account: 'b1' });
@@ -31,17 +31,22 @@ test('should let each posting principal post only the kinds of RFC-004 §B2 "Pos
   }
 });
 
-test('should allow an M4 to touch only the buyer, supplier earnings and the commission, and an M1 only the buyer, an external account and repayments', () => {
+test('should allow each kind to touch only the account classes of its RFC-004 §B2 template', () => {
   const accounts: Array<[string, LedgerAccount]> = [
     ['B', { cls: 'buyer', account: 'b' }], ['S:earn', { cls: 'supplier', supplier: 's', sub: 'earn' }],
     ['S:debt', { cls: 'supplier', supplier: 's', sub: 'debt' }], ['SH:commission', { cls: 'share', category: 'commission' }],
     ['SH:repayments', { cls: 'share', category: 'repayments' }], ['SH:costs', { cls: 'share', category: 'costs' }],
-    ['X', { cls: 'external', partner: 'p', provider: 'q' }],
+    ['SH:corrections', { cls: 'share', category: 'corrections' }], ['X', { cls: 'external', partner: 'p', provider: 'q' }],
   ];
-  const allowed = (kind: 'M1' | 'M4' | 'M5') => accounts.filter(([, a]) => classAllowed(kind, a)).map(([n]) => n);
-  assert.deepEqual(allowed('M4'), ['B', 'S:earn', 'SH:commission']);
-  assert.deepEqual(allowed('M1'), ['B', 'SH:repayments', 'X']);
-  assert.deepEqual(allowed('M5'), [], 'no kind of a later increment');
+  const allowed = (kind: MovementKind) => accounts.filter(([, a]) => classAllowed(kind, a)).map(([n]) => n);
+  const expected: Partial<Record<MovementKind, string[]>> = {
+    M1: ['B', 'SH:repayments', 'X'],
+    M4: ['B', 'S:earn', 'SH:commission'], M5: ['B', 'S:earn', 'SH:commission'],
+    M6: ['B', 'S:earn', 'SH:commission'], M7: ['B', 'S:earn', 'SH:commission'],
+    M8: ['B', 'SH:corrections'], M9: ['B', 'S:debt', 'SH:corrections'], M10: ['B', 'S:earn'],
+    M11: ['S:earn', 'SH:costs'], M12: ['S:earn', 'SH:costs'], M13: ['S:earn', 'SH:costs'], M23: ['S:earn', 'S:debt', 'SH:costs'],
+  };
+  for (const k of MOVEMENT_KINDS) assert.deepEqual(allowed(k), expected[k] ?? [], k);
 });
 
 test('should give a buyer one home partition in 1 … count', () => {

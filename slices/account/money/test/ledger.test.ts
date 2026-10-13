@@ -154,17 +154,23 @@ test('C06 CT-L4 (4) a request with lines.length ≠ batch.lineCount is refused i
   await assertMovesNothing(w, 'b1');
 });
 
-test('should refuse invalid, with an alert and no record, a kind that this ledger version does not post (MONEY-I3 and later)', async () => {
+test('should refuse invalid, with an alert and no record, a kind that this ledger version does not post (MONEY-I12 and later)', async () => {
   const w = await moneyWorld();
-  const req = m4('m-m5', 'b1', [{ res: 'r-1', amount: 10n }]);
-  req.lines[0]!.kind = 'M5';
-  const a = await w.post('b1', req);
-  assert.deepEqual(a.result === 'refused' ? [a.reason, a.detail] : a, ['invalid', 'kind M5 is not posted by this ledger version (MONEY-I2)']);
-  assert.ok(w.ledger.alerts.some((x) => x.code === 'KIND_NOT_IN_MONEY_I2'));
-  assert.equal(w.rt.row(ledgerRows.movementRef(pk('b1'), 'm-m5')), undefined, 'the refusal is not the recorded answer of the movementRef');
+  const req: PostMovementRequest = {
+    movementRef: 'prov:txn-9:completed', cause: 'invoice payment', currency: 'USD',
+    lines: [{ kind: 'M2', entries: [{ ledgerAccount: 'X:partner:prov', amount: '-10' }, { ledgerAccount: 'B:b1', amount: '10' }] }],
+  };
+  const a = await w.post('b1', req, 'payments');
+  assert.deepEqual(a.result === 'refused' ? [a.reason, a.detail] : a, ['invalid', 'kind M2 is not posted by this ledger version (MONEY-I3)']);
+  assert.ok(w.ledger.alerts.some((x) => x.code === 'KIND_NOT_IN_THIS_VERSION'));
+  assert.equal(w.rt.row(ledgerRows.movementRef(pk('b1'), 'prov:txn-9:completed')), undefined, 'the refusal is not the recorded answer of the movementRef');
   const unknown = { ...req, lines: [{ ...req.lines[0]!, kind: 'M99' }] } as unknown as PostMovementRequest;
-  const b = await w.post('b1', unknown);
+  const b = await w.post('b1', unknown, 'payments');
   assert.deepEqual(b.result === 'refused' ? [b.reason, b.detail] : b, ['invalid', 'kind M99 is not a movement kind']);
+  const m5 = m4('m-m5', 'b1', [{ res: 'r-1', amount: 10n }]);
+  m5.lines[0]!.kind = 'M5';
+  const c = await w.post('b1', m5);
+  assert.deepEqual(c.result === 'refused' ? [c.reason, c.detail] : c, ['invalid', 'M5 in a reservation batch']);
   await assertMovesNothing(w, 'b1');
 });
 
@@ -462,7 +468,7 @@ test('P4-S29 no role is granted UPDATE or DELETE on the movement log, and the le
   }
   assert.deepEqual([...(privileges.get('ledger')?.get('ledger_log') ?? [])].sort(), ['INSERT', 'SELECT']);
   const operations = Object.getOwnPropertyNames(LedgerOwner.prototype).filter((n) => n !== 'constructor' && !n.startsWith('on'));
-  assert.deepEqual(operations.sort(), ['alert', 'append', 'enter', 'leave', 'partitionOf', 'post', 'row', 'writes'], 'post is the only command; the others are private steps of it');
+  assert.deepEqual(operations.sort(), ['alert', 'append', 'enter', 'leave', 'lineState', 'partitionOf', 'post', 'row', 'writes'], 'post is the only command; lineState is a read; the others are private steps of post');
   const w = await moneyWorld();
   await w.post('b1', m4('m-imm', 'b1', [{ res: 'r-1', amount: 1_500n }]));
   const before = structuredClone(w.rt.log(pk('b1')));

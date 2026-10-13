@@ -9,7 +9,9 @@ import {
   HOLD_RETRY_MS, REROUTE_WAIT_MS, TOPIC,
   type ChargeLineBatch, type LedgerAnswer, type LedgerPort, type MovementPosted, type PostCall,
 } from '../src/index.ts';
-import { MINUTE_0, ctrReservationBatches, moneyWorld, reservationBatch, reservationLine, type MoneyWorld } from '../testing/index.ts';
+import {
+  MINUTE_0, chargeLine, ctrReservationBatches, moneyWorld, reservationBatch, reservationLine, usageBatch, usageRef, type MoneyWorld,
+} from '../testing/index.ts';
 
 const golden = (w: MoneyWorld): Record<string, string> =>
   Object.fromEntries([...w.balances()].filter(([, v]) => v !== 0n).sort(([a], [b]) => (a < b ? -1 : 1)).map(([k, v]) => [k, v.toString()]));
@@ -212,17 +214,27 @@ test('should exclude invalid a zero-amount original, an amendment, a cost line, 
   assert.equal(w.balances().get('B:b1'), -10n, 'only the first r-7 posts');
 });
 
-test('should leave a usage batch, and a reservation batch with an abandon line, unanswered with an alert, below the low-water mark, while reservation batches go on (MONEY-I3)', async () => {
-  const w = await moneyWorld();
-  const usage: ChargeLineBatch = { ...one('rating-1:0:7:0', 'b1', 'r-1'), batch: { id: 'rating-1:0:7:0', kind: 'usage', account: 'b1', gated: true, lineCount: 1 } };
-  await w.settle(usage, { partition: 0, offset: 0n });
-  const abandon = reservationBatch('rating-1:0:8:0', 'b1', MINUTE_0, [reservationLine('b1', 'r-2', MINUTE_0, 10n, { payer: 'share', abandon: { actionId: 'a-1' } })]);
-  await w.settle(abandon, { partition: 0, offset: 1n });
-  await w.settle(one('rating-1:0:9:0', 'b1', 'r-3'), { partition: 0, offset: 2n });
-  assert.deepEqual(w.settlement.alerts.map((a) => a.code), ['USAGE_BATCH_NOT_IN_MONEY_I2', 'ABANDON_NOT_IN_MONEY_I2']);
-  assert.deepEqual([w.acksFor('rating-1:0:7:0'), w.acksFor('rating-1:0:8:0')], [[], []]);
-  assert.equal(w.balances().get('B:b1'), -10n);
-  assert.deepEqual(w.commits, []);
+test('should keep one usage batch of an account in flight and start the next when it is answered, while reservation batches go on', async () => {
+  let gate: GatePort | undefined;
+  const w = await moneyWorld({ port: (l) => (gate = new GatePort(l)) });
+  const u = (id: string, minute: string) => usageBatch(id, 'b1', [chargeLine('b1', usageRef('b1', 'R1', minute), 'usage', 0n, 100n)]);
+  w.settlement.receive({ partition: 0, offset: 0n }, u('rating-1:0:7:0', MINUTE_0));
+  w.settlement.receive({ partition: 0, offset: 1n }, u('rating-1:0:8:0', '2026-10-12T09:01:00Z'));
+  w.settlement.receive({ partition: 0, offset: 2n }, one('rating-1:0:9:0', 'b1', 'r-3'));
+  for (let i = 0; i < 5; i++) await new Promise<void>((r) => setImmediate(r));
+  assert.deepEqual(gate!.open.map((o) => o.call.request.movementRef), ['rating-1:0:7:0'], 'the second usage batch and the batches behind it wait');
+  gate!.open[0]!.release();
+  for (let i = 0; i < 5 && gate!.open.length < 3; i++) await new Promise<void>((r) => setImmediate(r));
+  assert.deepEqual(gate!.open.map((o) => o.call.request.movementRef).sort(), ['rating-1:0:7:0', 'rating-1:0:8:0', 'rating-1:0:9:0']);
+  gate!.openAll();
+  await w.settlement.idle();
+  assert.deepEqual(w.events<MovementPosted>(TOPIC.movements).map((e) => [e.event.movementRef, e.event.batch]).sort(), [
+    ['rating-1:0:7:0', { id: 'rating-1:0:7:0', kind: 'usage', whole: true }],
+    ['rating-1:0:8:0', { id: 'rating-1:0:8:0', kind: 'usage', whole: true }],
+    ['rating-1:0:9:0', { id: 'rating-1:0:9:0', kind: 'reservation' }],
+  ]);
+  assert.equal(w.balances().get('B:b1'), -210n);
+  assert.deepEqual(w.settlement.committed.get(0), 3n);
 });
 
 test('should commit past a record that is not a batch (a resolved marker) when nothing before it is unanswered', async () => {

@@ -60,6 +60,14 @@ export function catalogueSplitWeights(): SplitWeights[] {
   return fixture<{ events: Array<{ body: SplitWeights }> }>('catalogue-split-weights.json').events.map((e) => e.body);
 }
 
+/**
+ * C06 CT-R fixture of usage batches (CT-R6, CT-R9, CT-R10, CT-R12, CT-R13) of account u1, with the golden ledger
+ * after the five batches are posted (CT-C1). The golden ledger comes from an independent oracle.
+ */
+export function ctrUsageBatches(): { batches: ChargeLineBatch[]; golden: Record<string, string> } {
+  return fixture('ct-r-usage-batches.json');
+}
+
 /** C06 CT-R fixture: four reservation batches and the golden ledger after they are posted (CT-C1). */
 export function ctrReservationBatches(): { batches: ChargeLineBatch[]; golden: Record<string, string> } {
   return fixture('ct-r-reservation-batches.json');
@@ -93,6 +101,54 @@ export function reservationBatch(id: string, account: string, minute: string, li
     batch: { id, kind: 'reservation', account, minute, gated: false, lineCount },
     lines, emittedAt: '1760259603000000000.0000000000',
   };
+}
+
+/** One charge line of any kind as rating emits it (C06 §5): `amount = newTotal − priorTotal`. */
+export function chargeLine(account: string, sourceRef: ChargeLine['sourceRef'], lineKind: ChargeLine['lineKind'], priorTotal: bigint,
+  newTotal: bigint, over: Partial<ChargeLine> = {}): ChargeLine {
+  const fee = lineKind === 'fee' || lineKind === 'share_borne_fee';
+  const minute = 'minute' in sourceRef ? sourceRef.minute : undefined;
+  return {
+    sourceRef, lineKind, account,
+    ...(fee ? {} : { route: 'R1', weightsVersion: 'w1' }), ...(minute !== undefined ? { minute } : {}),
+    payer: lineKind === 'share_borne_fee' || lineKind === 'carried_excess' || lineKind === 'dearer_path' ? 'share' : 'account',
+    amount: (newTotal - priorTotal).toString(), newTotal: newTotal.toString(), priorTotal: priorTotal.toString(),
+    reason: ('seq' in sourceRef ? sourceRef.seq : 0) === 0 ? 'original' : 'late_traffic',
+    priceCatalogue: { resolvedTs: '1760000000000000000.0000000002' },
+    ...over,
+  };
+}
+
+/** The SourceRef of a usage line (C06 §5). */
+export function usageRef(account: string, route: string, minute: string, seq = 0, product = 'best-effort'): Extract<ChargeLine['sourceRef'], { kind: 'usage' }> {
+  return { kind: 'usage', account, product, route, minute, seq };
+}
+
+/** One usage batch of `lines` (C06 §5), with a fixed batch id. */
+export function usageBatch(id: string, account: string, lines: ChargeLine[], lineCount = lines.length): ChargeLineBatch {
+  return {
+    type: 'ChargeLineBatch', schemaVersion: 1,
+    eventId: { partition: 'rating-1', stream: 'charges', streamSeq: id.split(':')[2] ?? '1', generation: 0, epoch: 1 },
+    batch: { id, kind: 'usage', account, gated: lines.some((l) => l.lineKind === 'usage'), lineCount },
+    lines, emittedAt: '1760259603000000000.0000000000',
+  };
+}
+
+/**
+ * A catalogue double for operator price corrections (C06 "Idempotency": a `price_correction` command is keyed by
+ * its `sourceRef` for 7 years; a repeat returns the first result; the same key with other content or from another
+ * principal is refused, AI4-1, P4-S99). The test emits rating's amendment line only for an accepted correction.
+ */
+export class CatalogueCorrectionsDouble {
+  private readonly accepted = new Map<string, { principal: string; digest: string }>();
+  /** Submit a correction by its operator source reference, its principal and its content. */
+  submit(sourceRef: string, principal: string, content: unknown): { accepted: true } | { refused: 'source_ref_reused' } {
+    const digest = JSON.stringify(content);
+    const cur = this.accepted.get(sourceRef);
+    if (cur) return cur.principal === principal && cur.digest === digest ? { accepted: true } : { refused: 'source_ref_reused' };
+    this.accepted.set(sourceRef, { principal, digest });
+    return { accepted: true };
+  }
 }
 
 export interface MoneyWorld {
@@ -138,7 +194,7 @@ export async function moneyWorld(o: MoneyWorldOptions = {}): Promise<MoneyWorld>
   const commits: Array<{ partition: number; next: bigint }> = [];
   let offset = 0n;
   const make = (port: LedgerPort): Settlement => new Settlement({
-    ledger: port, weights, scheduler, partitionCount,
+    ledger: port, weights, scheduler, partitionCount, lineStates: ledger,
     publishAcks: async (a) => { directAcks.push(structuredClone(a)); },
     commitOffset: async (partition, next) => { commits.push({ partition, next }); },
     ...o.settlement,
@@ -167,7 +223,7 @@ export async function moneyWorld(o: MoneyWorldOptions = {}): Promise<MoneyWorld>
       return w.acksFor(batch.batch.id);
     },
     post: (account, request, principal = 'settlement') =>
-      ledger.post({ partition: ledgerPartitionOfBuyer(account, partitionCount), principal, request }),
+      ledger.post({ partition: ledgerPartitionOfBuyer(account, partitionCount), principal, request, account }),
     restartSettlement: (p) => {
       w.settlement.stop();
       w.settlement = make(p ?? port);

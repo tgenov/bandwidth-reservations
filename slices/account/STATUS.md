@@ -9,7 +9,7 @@ Plan: [S-ACCT-S-MONEY.md](../../docs/04-delivery/plan/S-ACCT-S-MONEY.md). Delive
 |---|---|---|---|
 | `@share/account-owner` | `owner/` | AM-I1 | Account owner kind: booking module and funds-and-standing module |
 | `@share/booking-api` | `booking-api/` | AM-I1 | Booking API on the edge |
-| `@share/money` | `money/` | MONEY-I2 | Ledger owner kind `ledger`, settlement of reservation batches, Webster split. Details: [money/STATUS-MONEY-I2.md](money/STATUS-MONEY-I2.md) |
+| `@share/money` | `money/` | MONEY-I2, MONEY-I3 | Ledger owner kind `ledger`, settlement of reservation and usage batches, posting templates M4 … M13, M23 and abandon postings, Webster split, deviation report. Details: [money/STATUS-MONEY-I2.md](money/STATUS-MONEY-I2.md) and the MONEY-I3 section below |
 
 Run: `npm run -s typecheck:account`, `npm run -s test:account`, `npm run -s test:contracts`. The globs
 `slices/account/*/test/*.test.ts` and the `money/**/*.ts` include of `tsconfig.json` take every package.
@@ -21,6 +21,7 @@ Integration and measurement (by hand only, dev cell): `npm run test:account:inte
 |---|---|---|
 | AM-I1 | Done | In `done.txt` |
 | MONEY-I2 | Built, not committed. Waits for review and merge | Exit criteria (1) … (5) met in `test:account` and `test:contracts`. Exit criterion (6), the X2-S13 measurement at the SP4 rate, is not met on the shared dev cell (see below) |
+| MONEY-I3 | Built, not committed. Waits for review and merge | Exit criteria (1) … (5) met in `test:account` and `test:contracts`. Exit criterion (6), the X2-S13 usage measurement, is a manual proof owed (see the MONEY-I3 section) |
 
 ## MONEY-I2 exit criteria
 
@@ -65,3 +66,79 @@ MONEY-I2 is delivered with exit criteria 1 to 5 met by unit, property and contra
 Exit criterion 6 (X2-S13: a 300-line movement commits within 2 s at the SP4 rate) is a
 **manual proof owed**. Local testing is contract and double based only, so no agent runs it.
 A person runs the integration measurement on a quiet dev cell and records the result here.
+
+## MONEY-I3: usage batches, amendments, corrections, fees and cost lines
+
+Plan: [S-ACCT-S-MONEY.md MONEY-I3](../../docs/04-delivery/plan/S-ACCT-S-MONEY.md). Contracts: C06 v1 §7, §8, §9
+complete (provided), §5 and §2 (consumed). RFC-004 Part B §B2 (M4 … M13, M23), §B3.1, §B3.3, §B3.5.
+
+The work is not committed.
+
+### Components
+
+| File | Contents |
+|---|---|
+| `money/src/ledger/templates.ts` | The C06 settlement mapping table (`ruleOf`) and the RFC-004 §B2 templates (`postingOf`): M4, M5, M6 (normal mode), M7 (own mode), M8, M9, M10, M11, M12, M13, M23 (nil line when nothing moves), abandon postings. Settlement builds the entries with them; the ledger checks the entries against them (C06 §8 check 2) |
+| `money/src/ledger/decide.ts`, `owner.ts`, `accounts.ts` | Every `lineKind`; amendment sequence per line key; `priorTotal` check; `content_conflict` with `ledgerPostedTotal`, `ledgerLastSeq`, `ledgerPosition`; derived references (AI4-1); `lateCut` stored as given (CI4-3); line mode and shares per line; a usage batch committed whole or refused whole (`refused_batch`, the recorded answer); `lineState` read for settlement |
+| `money/src/settlement/settlement.ts` | Usage batches (one in flight per account), `prepareUsageBatch`, `batch_refused` and `batch_over_limit` for usage batches, direct acknowledgements of exclusions, abandon lines in reservation batches |
+| `money/src/settlement/deviation.ts` | The deviation report of RFC-004 §B3.5 for each party and payout period |
+| `money/testing/` | CT-R usage fixture (CT-R6, CT-R9, CT-R10, CT-R12, CT-R13) with the golden ledger; line and batch builders; catalogue double for operator price corrections (P4-S99); split weights of the path route RP (R1, R2, R3 unchanged) |
+
+### Exit criteria
+
+| # | Criterion | State | Proof |
+|---|---|---|---|
+| 1 | C06 CT-L1 (all rows), CT-L2, CT-L3 (usage batch), CT-L4, CT-L6, CT-L10 | Met | `money/test/usage.test.ts` (`C06 CT-L1` ×4, `CT-L2`, `CT-L3`, `CT-L4 (1)` … `(4)`, `CT-L5` ×2, `CT-L6`, `CT-L7` ×2, `CT-L10`); `money/test/contract.c06.test.ts` (`runC06ProviderSuite` on the real ledger: CT-L1 ×2, CT-L4 ×3, CT-L5 ×2, CT-L6) |
+| 2 | C06 CT-C1 on every CT-R fixture | Met | `usage.test.ts` `C06 CT-C1 … usage fixtures …` (each batch also three times); `settlement.test.ts` `C06 CT-C1 …` (reservation fixtures) |
+| 3 | B13 "Order independence", "Per-line dedup", "Cost-line amendments", "Batch kinds" and "Usage batches whole" | Met | `money/test/usage.property.test.ts`: `P4-S38 B13: Order independence …`, `P4-S57 B13: Per-line dedup …`, `P4-S116 B13: Cost-line amendments …`, `P3-S61 B13: Batch kinds and Usage batches whole …` |
+| 4 | §B2 worked examples for M6 … M13 and M23 (P4-S41, P4-S42, P4-S56, P4-S75, P4-S85, P4-S89, P4-S110, P4-S115, P4-S116) | Met | `usage.test.ts` (one test for each scenario, exact micro-USD amounts) |
+| 5 | P4-S99 against the catalogue double: the second "C1" moves no money | Met | `usage.test.ts` `P4-S99 …` |
+| 6 | Measurement: usage lines posted within `max_lateness` + 120 s of their minute's end at p99 (X2-S13); a refused usage batch costs one gated cycle (est. 2.5 s, R4-B11) | **Manual proof owed** | `money/test/integration/usage-measure.test.ts` (`MONEY_MEASURE=1 npm run measure`, by hand on a quiet dev cell). Written, not run: local testing is contract and double based only. A person runs it and records the result here |
+
+Scenarios with a passing test in `test:account`: P4-S30, P4-S37, P4-S38, P4-S39, P4-S41, P4-S42, P4-S56, P4-S74,
+P4-S75, P4-S77, P4-S84, P4-S85, P4-S89, P4-S99, P4-S110, P4-S115, P4-S116 (all 17 of the plan). Also P4-S57 and
+P3-S61 (B13 property tests).
+
+### Money invariants and their property tests (MONEY-I3)
+
+The oracles share no code with the provider (`test/support-usage.ts` `refSplit` is a one-unit-at-a-time Webster
+reference). Each property test is seeded; a failure names its seed.
+
+| Invariant | Property test |
+|---|---|
+| Late traffic in any order, partly repeated, gives the balances of delivery in order; a late-traffic amendment never debits a party (P4-S38, P4-S39); every movement and the ledger sum to zero (P4-S28) | `usage.property.test.ts` `P4-S38 B13: Order independence …` |
+| Each line key is posted once, at its first accepted content, after crashes and re-composed batches; a changed line moves nothing | `P4-S57 B13: Per-line dedup …` |
+| A supplier's holding of a cost line falls only by its own fault; Share never pays a party twice for one total; Share's costs equal what the suppliers hold | `P4-S116 B13: Cost-line amendments …` |
+| A usage batch with a conflict, a sequence gap, an invalid line or more than 5,000 lines posts nothing; a reservation batch posts every good line; a duplicate never refuses a batch | `P3-S61 B13: Batch kinds and Usage batches whole …` |
+| The reported deviation of each party equals Σ (split(T)_i − T·w_i / W) over the final line totals | `deviation.test.ts` `P4-S37 … for random originals and late traffic` |
+
+Each was shown once to fail when the code is broken on purpose (2026-10-13): (a) M23 lets a supplier's holding
+fall without its own fault: `P4-S116 B13` and two example tests fail; (b) M6 uses `split(Δ)` in normal mode:
+`P4-S38 B13` and `P4-S37` fail; (c) the ledger posts a usage batch partly: `P4-S57 B13`, `P3-S61 B13` and six
+CT-L4, CT-L5, CT-L6 tests fail. The code was restored after each run.
+
+### Changes outside the slice (MONEY-I3)
+
+1. `contracts/suites/test/contract.c06.test.ts`: the C06 PENDING real-provider entry (MONEY-I3) is removed. The
+   real ledger runs `runC06ProviderSuite` and `runC06ReservationSuite` in `money/test/contract.c06.test.ts`.
+2. `contracts/suites/ISSUES.md`: CS-9 (new), CS-7 (MONEY-I3 state), the C06 row removed from "Known provider
+   gaps", and a C06 row in "Known double gaps" (the rate slice's settlement double does not run
+   `runC06ReservationSuite`; S-RATE adds its PENDING entry).
+3. No change in `platform/`.
+
+### Design issues (MONEY-I3)
+
+| # | Where | Conflict | What MONEY-I3 does | Proposed resolution |
+|---|---|---|---|---|
+| D-13 | C06 §8; RFC-000 §2 (home of a movement) | A usage batch of cost lines only (M12, M13, M23) touches no buyer account. The request alone does not name the home partition of the movement | Settlement names the buyer account it routed by (`PostCall.account`); the movement is in the by-buyer view of the causing buyer, whose balance it does not touch | C06 minor version: name the home account on the posting port |
+| D-14 | C06 §8, V63-2; CS-7 | It is not stated if a refused usage batch takes a sequence of the partition log | `refused_batch` is the recorded answer of the `movementRef` (a projection row) and writes no log entry, so it takes no sequence | C06 erratum together with D-6 and CS-7 |
+| D-15 | C06 §2; `runC06ProviderSuite` (CS-9) | The suite credits the whole charge to one supplier, but C06 §2 needs a positive commission weight | The subject route has weights 10⁹ : 1, so the commission gets 0 of every suite amount | Contract owner: state the weights of the suite subject, or let the suite build its entries from a split |
+
+D-1 … D-12 (MONEY-I2) are still open.
+
+### Remaining work after MONEY-I3
+
+1. Exit criterion 6: run `usage-measure.test.ts` by hand on a quiet dev cell (with SP4) and record the result.
+2. The MONEY-I2 remaining work (watermarks, SP4, transport, cut records MONEY-I26, the catalogue feed
+   subscription) is not changed by MONEY-I3. The deviation report is computed; its publication waits for the
+   transport.

@@ -1,0 +1,489 @@
+{
+ "_doc": "C06 CT-R fixture: the batches of account u1 as rating emits them on rating.charge-lines.v1 (C06 §5). CT-R6: r-6 1,500 on R1, then the late POL-07 cut to 900 (M6). CT-R9: P4-S110 dearer path '4' on the path route RP, P4-S115 the buyer amendment '-1' cause share (M8), P4-S116 the carried excess 10,000 then its superseding record to 5,000 by supplier A's exporter (M12, M23). CT-R10: a late-traffic amendment and a price correction of one usage line in two consecutive batches. CT-R12: abandon of a usage line (M12), of a fee (M11) and of a reservation original in its own reservation batch (M12). CT-R13: a late original from a quarantine attribution, reason original, triggerRef qa-1 (M5). 'golden' is the ledger after the five batches, computed by an independent oracle (one unit at a time Webster, RFC-004 §B2 by hand, Python)",
+ "batches": [
+  {
+   "type": "ChargeLineBatch",
+   "schemaVersion": 1,
+   "eventId": {
+    "partition": "rating-9",
+    "stream": "charges",
+    "streamSeq": "1",
+    "generation": 0,
+    "epoch": 1
+   },
+   "batch": {
+    "id": "rating-9:0:1:0",
+    "kind": "reservation",
+    "account": "u1",
+    "gated": false,
+    "lineCount": 2,
+    "minute": "2026-10-12T09:00:00Z"
+   },
+   "lines": [
+    {
+     "sourceRef": {
+      "kind": "reservation",
+      "reservation": "r-6",
+      "minute": "2026-10-12T09:00:00Z",
+      "seq": 0
+     },
+     "lineKind": "reservation",
+     "account": "u1",
+     "reservation": "r-6",
+     "product": "guaranteed",
+     "route": "R1",
+     "weightsVersion": "w1",
+     "minute": "2026-10-12T09:00:00Z",
+     "payer": "account",
+     "amount": "1500",
+     "newTotal": "1500",
+     "priorTotal": "0",
+     "reason": "original",
+     "priceCatalogue": {
+      "resolvedTs": "1760000000000000000.0000000003"
+     }
+    },
+    {
+     "sourceRef": {
+      "kind": "reservation",
+      "reservation": "r-110",
+      "minute": "2026-10-12T09:00:00Z",
+      "seq": 0
+     },
+     "lineKind": "reservation",
+     "account": "u1",
+     "reservation": "r-110",
+     "product": "guaranteed",
+     "route": "RP",
+     "weightsVersion": "wp",
+     "minute": "2026-10-12T09:00:00Z",
+     "payer": "account",
+     "amount": "4",
+     "newTotal": "4",
+     "priorTotal": "0",
+     "reason": "original",
+     "priceCatalogue": {
+      "resolvedTs": "1760000000000000000.0000000003"
+     }
+    }
+   ],
+   "emittedAt": "1760259601000000000.0000000000"
+  },
+  {
+   "type": "ChargeLineBatch",
+   "schemaVersion": 1,
+   "eventId": {
+    "partition": "rating-9",
+    "stream": "charges",
+    "streamSeq": "2",
+    "generation": 0,
+    "epoch": 1
+   },
+   "batch": {
+    "id": "rating-9:0:2:0",
+    "kind": "usage",
+    "account": "u1",
+    "gated": true,
+    "lineCount": 5
+   },
+   "lines": [
+    {
+     "sourceRef": {
+      "kind": "reservation",
+      "reservation": "r-6",
+      "minute": "2026-10-12T09:00:00Z",
+      "seq": 1
+     },
+     "lineKind": "reservation",
+     "account": "u1",
+     "reservation": "r-6",
+     "product": "guaranteed",
+     "route": "R1",
+     "weightsVersion": "w1",
+     "minute": "2026-10-12T09:00:00Z",
+     "payer": "account",
+     "amount": "-600",
+     "newTotal": "900",
+     "priorTotal": "1500",
+     "reason": "late_pol07_cut",
+     "triggerRef": "cut-1",
+     "lateCut": {
+      "link": "L2",
+      "reduction": "red-1",
+      "extensionChunk": 2
+     },
+     "priceCatalogue": {
+      "resolvedTs": "1760000000000000000.0000000003"
+     }
+    },
+    {
+     "sourceRef": {
+      "kind": "dearer_path",
+      "reservation": "r-110",
+      "minute": "2026-10-12T09:00:00Z",
+      "seq": 0
+     },
+     "lineKind": "dearer_path",
+     "account": "u1",
+     "reservation": "r-110",
+     "route": "RP",
+     "weightsVersion": "wp",
+     "minute": "2026-10-12T09:00:00Z",
+     "payer": "share",
+     "amount": "4",
+     "newTotal": "4",
+     "priorTotal": "0",
+     "reason": "original",
+     "priceCatalogue": {
+      "resolvedTs": "1760000000000000000.0000000003"
+     }
+    },
+    {
+     "sourceRef": {
+      "kind": "usage",
+      "account": "u1",
+      "product": "best-effort",
+      "route": "R1",
+      "minute": "2026-10-12T09:00:00Z",
+      "seq": 0
+     },
+     "lineKind": "usage",
+     "account": "u1",
+     "product": "best-effort",
+     "route": "R1",
+     "weightsVersion": "w1",
+     "minute": "2026-10-12T09:00:00Z",
+     "payer": "account",
+     "amount": "10000",
+     "newTotal": "10000",
+     "priorTotal": "0",
+     "reason": "original",
+     "triggerRef": "qa-1",
+     "reasonDetails": {
+      "attribution": "qa-1"
+     },
+     "priceCatalogue": {
+      "resolvedTs": "1760000000000000000.0000000003"
+     }
+    },
+    {
+     "sourceRef": {
+      "kind": "carried_excess",
+      "account": "u1",
+      "product": "best-effort",
+      "route": "R1",
+      "minute": "2026-10-12T09:00:00Z",
+      "seq": 0
+     },
+     "lineKind": "carried_excess",
+     "account": "u1",
+     "product": "best-effort",
+     "route": "R1",
+     "weightsVersion": "w1",
+     "minute": "2026-10-12T09:00:00Z",
+     "payer": "share",
+     "amount": "10000",
+     "newTotal": "10000",
+     "priorTotal": "0",
+     "reason": "original",
+     "priceCatalogue": {
+      "resolvedTs": "1760000000000000000.0000000003"
+     }
+    },
+    {
+     "sourceRef": {
+      "kind": "fee",
+      "reservation": "r-6",
+      "feeId": "f-1"
+     },
+     "lineKind": "fee",
+     "account": "u1",
+     "reservation": "r-6",
+     "payee": {
+      "supplier": "P",
+      "partnerLink": "LP"
+     },
+     "payer": "account",
+     "amount": "500000",
+     "newTotal": "500000",
+     "priorTotal": "0",
+     "reason": "original",
+     "feeId": "f-1",
+     "priceCatalogue": {
+      "resolvedTs": "1760000000000000000.0000000003"
+     }
+    }
+   ],
+   "emittedAt": "1760259602000000000.0000000000"
+  },
+  {
+   "type": "ChargeLineBatch",
+   "schemaVersion": 1,
+   "eventId": {
+    "partition": "rating-9",
+    "stream": "charges",
+    "streamSeq": "3",
+    "generation": 0,
+    "epoch": 1
+   },
+   "batch": {
+    "id": "rating-9:0:3:0",
+    "kind": "usage",
+    "account": "u1",
+    "gated": true,
+    "lineCount": 3
+   },
+   "lines": [
+    {
+     "sourceRef": {
+      "kind": "reservation",
+      "reservation": "r-110",
+      "minute": "2026-10-12T09:00:00Z",
+      "seq": 1
+     },
+     "lineKind": "reservation",
+     "account": "u1",
+     "reservation": "r-110",
+     "product": "guaranteed",
+     "route": "RP",
+     "weightsVersion": "wp",
+     "minute": "2026-10-12T09:00:00Z",
+     "payer": "account",
+     "amount": "-1",
+     "newTotal": "3",
+     "priorTotal": "4",
+     "reason": "price_correction",
+     "cause": {
+      "kind": "share"
+     },
+     "triggerRef": "C1",
+     "priceCatalogue": {
+      "resolvedTs": "1760000000000000000.0000000003"
+     }
+    },
+    {
+     "sourceRef": {
+      "kind": "carried_excess",
+      "account": "u1",
+      "product": "best-effort",
+      "route": "R1",
+      "minute": "2026-10-12T09:00:00Z",
+      "seq": 1
+     },
+     "lineKind": "carried_excess",
+     "account": "u1",
+     "product": "best-effort",
+     "route": "R1",
+     "weightsVersion": "w1",
+     "minute": "2026-10-12T09:00:00Z",
+     "payer": "share",
+     "amount": "-5000",
+     "newTotal": "5000",
+     "priorTotal": "10000",
+     "reason": "superseding_record",
+     "cause": {
+      "kind": "supplier",
+      "supplier": "A"
+     },
+     "triggerRef": "rec-A-2",
+     "priceCatalogue": {
+      "resolvedTs": "1760000000000000000.0000000003"
+     }
+    },
+    {
+     "sourceRef": {
+      "kind": "usage",
+      "account": "u1",
+      "product": "best-effort",
+      "route": "R1",
+      "minute": "2026-10-12T09:00:00Z",
+      "seq": 1
+     },
+     "lineKind": "usage",
+     "account": "u1",
+     "product": "best-effort",
+     "route": "R1",
+     "weightsVersion": "w1",
+     "minute": "2026-10-12T09:00:00Z",
+     "payer": "account",
+     "amount": "500",
+     "newTotal": "10500",
+     "priorTotal": "10000",
+     "reason": "late_traffic",
+     "triggerRef": "rec-77",
+     "priceCatalogue": {
+      "resolvedTs": "1760000000000000000.0000000003"
+     }
+    }
+   ],
+   "emittedAt": "1760259603000000000.0000000000"
+  },
+  {
+   "type": "ChargeLineBatch",
+   "schemaVersion": 1,
+   "eventId": {
+    "partition": "rating-9",
+    "stream": "charges",
+    "streamSeq": "4",
+    "generation": 0,
+    "epoch": 1
+   },
+   "batch": {
+    "id": "rating-9:0:4:0",
+    "kind": "usage",
+    "account": "u1",
+    "gated": true,
+    "lineCount": 3
+   },
+   "lines": [
+    {
+     "sourceRef": {
+      "kind": "usage",
+      "account": "u1",
+      "product": "best-effort",
+      "route": "R1",
+      "minute": "2026-10-12T09:00:00Z",
+      "seq": 2
+     },
+     "lineKind": "usage",
+     "account": "u1",
+     "product": "best-effort",
+     "route": "R1",
+     "weightsVersion": "w1",
+     "minute": "2026-10-12T09:00:00Z",
+     "payer": "account",
+     "amount": "-1500",
+     "newTotal": "9000",
+     "priorTotal": "10500",
+     "reason": "price_correction",
+     "cause": {
+      "kind": "share"
+     },
+     "triggerRef": "C2",
+     "priceCatalogue": {
+      "resolvedTs": "1760000000000000000.0000000003"
+     }
+    },
+    {
+     "sourceRef": {
+      "kind": "usage",
+      "account": "u1",
+      "product": "best-effort",
+      "route": "R2",
+      "minute": "2026-10-12T09:01:00Z",
+      "seq": 0
+     },
+     "lineKind": "usage",
+     "account": "u1",
+     "product": "best-effort",
+     "route": "R2",
+     "weightsVersion": "w2",
+     "minute": "2026-10-12T09:01:00Z",
+     "payer": "share",
+     "amount": "7",
+     "newTotal": "7",
+     "priorTotal": "0",
+     "reason": "original",
+     "abandon": {
+      "actionId": "act-1"
+     },
+     "triggerRef": "act-1",
+     "priceCatalogue": {
+      "resolvedTs": "1760000000000000000.0000000003"
+     }
+    },
+    {
+     "sourceRef": {
+      "kind": "fee",
+      "reservation": "r-7",
+      "feeId": "f-2"
+     },
+     "lineKind": "fee",
+     "account": "u1",
+     "reservation": "r-7",
+     "payee": {
+      "supplier": "P",
+      "partnerLink": "LP"
+     },
+     "payer": "share",
+     "amount": "300000",
+     "newTotal": "300000",
+     "priorTotal": "0",
+     "reason": "original",
+     "feeId": "f-2",
+     "abandon": {
+      "actionId": "act-3"
+     },
+     "triggerRef": "act-3",
+     "priceCatalogue": {
+      "resolvedTs": "1760000000000000000.0000000003"
+     }
+    }
+   ],
+   "emittedAt": "1760259604000000000.0000000000"
+  },
+  {
+   "type": "ChargeLineBatch",
+   "schemaVersion": 1,
+   "eventId": {
+    "partition": "rating-9",
+    "stream": "charges",
+    "streamSeq": "5",
+    "generation": 0,
+    "epoch": 1
+   },
+   "batch": {
+    "id": "rating-9:0:5:0",
+    "kind": "reservation",
+    "account": "u1",
+    "gated": false,
+    "lineCount": 1,
+    "minute": "2026-10-12T09:01:00Z"
+   },
+   "lines": [
+    {
+     "sourceRef": {
+      "kind": "reservation",
+      "reservation": "r-8",
+      "minute": "2026-10-12T09:01:00Z",
+      "seq": 0
+     },
+     "lineKind": "reservation",
+     "account": "u1",
+     "reservation": "r-8",
+     "product": "guaranteed",
+     "route": "R1",
+     "weightsVersion": "w1",
+     "minute": "2026-10-12T09:01:00Z",
+     "payer": "share",
+     "amount": "1500",
+     "newTotal": "1500",
+     "priorTotal": "0",
+     "reason": "original",
+     "abandon": {
+      "actionId": "act-2"
+     },
+     "triggerRef": "act-2",
+     "priceCatalogue": {
+      "resolvedTs": "1760000000000000000.0000000003"
+     }
+    }
+   ],
+   "emittedAt": "1760259605000000000.0000000000"
+  }
+ ],
+ "golden": {
+  "B:u1": "-509903",
+  "S:A:debt": "-1500",
+  "S:A:earn": "6873",
+  "S:B:earn": "7633",
+  "S:C:earn": "4962",
+  "S:D:earn": "2",
+  "S:E:earn": "4",
+  "S:F:earn": "2",
+  "S:P:earn": "800000",
+  "SH:commission": "1711",
+  "SH:corrections": "-1501",
+  "SH:costs": "-308283"
+ }
+}
