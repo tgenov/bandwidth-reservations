@@ -117,7 +117,7 @@ machine is necessary (`mutate` now also has the I2 parts of `owner.ts`; the comm
 | # | Criterion | State | Proving tests |
 |---|---|---|---|
 | 1 | T-07 (no yield parts) | Met (double and in-memory runtime core). Dev cell: written, not run (manual proof owed) | `P1-S07 …`, `P1-S11 …`, `P1-S34 …`; `T-07 released capacity goes to the oldest waiter …`, `T-07 waiters with the same request_age …`, `T-07 a younger waiter that fits …`, `T-07 wait = false is refused IN_FLIGHT …`, `T-07 a waiter is refused NO_FIT … when the request ahead converts` (also the recall from `link_request`), `T-07 a waiter at or after its D_c is skipped …`, `T-07 a waiter one millisecond before its D_c is granted`, `T-07 scan budget: Tick continuations complete the scan before the next command …`, `T-07 the scan counts only the waiters that overlap …`, `T-07 a release of a waiter …`, `T-07 a repeat of a waiting hold …`, `T-07 a waiter whose latest blocker changes …`, `T-07 … open-ended …`; `should replay waiters, grants and Tick continuations … after a takeover`; dev cell: `test/integration/link-i3-crdb.test.ts` |
-| 2 | T-08b | Met at the C02 boundary (consumer stub with the C02 rules). The Kafka relay on the dev cell: manual proof owed (the integration test checks the outbox rows and the push, not Kafka) | `T-08b a GRANTED lost on the push and relayed after a newer WAITING_NOTICE …`, `T-08b query restores a lost notice …` |
+| 2 | T-08b | Met at the C02 boundary (consumer stub with the C02 rules). The Kafka relay on the dev cell: manual proof owed (the integration test checks the outbox rows and the push, not Kafka) | `C02 provider test 13 / T-08b a GRANTED lost on the push and relayed after a newer WAITING_NOTICE …`, `T-08b query restores a lost notice …` |
 | 3 | C02 provider tests 1 (`WAITING`), 4 (a grant keeps the attempt), 13 (first two items) | Met | Suite `runC02ProviderSuite(…, { i2: true, i3: true })`: `C02 1 … WAITING(1, aheadDeadline …)`, `C02 4 … a grant keeps the attempt …`, `C02 13 … GRANTED is relayed …`; at the owner: `C02 provider test 13 the identity and the content are the same on the relay and on the push`, `C02 provider test 1: wait = true … WAITING(1) …` |
 | 4 | I1 property test with `wait = true` and waiters, against the oracle extended with POL-05 waiting | Met | `T-07 the P1-N1 properties and the POL-05 waiting oracle hold when 50 clients send 6 seeds × 1,500 commands …`, `T-07 the waiting oracle holds when the scan budget binds (scan_steps 1) …`, `should keep the P1-N1 properties and the waiting oracle on the real C01 runtime core …` |
 | 5 | Measurement: scan of 1,024 waiters ≤ 1 ms; flash crowd of 7,500 waiters in ≤ 8 continuations (≈ 8 ms) | Step count: met (the release entry and 7 Ticks, one batch). Wall-clock: written, not run (manual proof owed) | `should complete the scan of a flash crowd of 7,500 waiters in the release entry and 7 Tick continuations, in one batch`; `measurement: a scan of 1,024 waiters and a flash crowd of 7,500 waiters in 8 scan parts` (`npm run measure`) |
@@ -140,6 +140,25 @@ I1 placeholder (S-LINK plan §1 rule 1). I3 replaces that behaviour, so the test
 `npm run test:contracts` 81 tests, 78 pass, 0 fail, 3 todo (PENDING entries). Not run by the agent: the
 integration tests (`link-i3-crdb.test.ts`: written, not run), `npm run measure`, `npm run check`, Stryker.
 A person runs them before the merge.
+
+### Review 70 (test review) findings
+
+Each listed mutant was checked by hand (edit, `npm run -s test:link`, restore; `git diff slices/link/src` is empty).
+
+| Finding | State | Proving tests or note |
+|---|---|---|
+| TR-1 (Major) decide restart with notices and `Tick` entries | Fixed | `should send each notice once when decide restarts in a batch that grants waiters and writes Tick entries` (`scanSteps: 1`, two waiters, `scriptRestarts(2)`; exact relayed notices, push = relay, `[Release, Tick]`, no scan pending). Kills M2 (`owner.ts:401` without `notifications = []`) |
+| TR-2 (Major) replay notice comparison | Fixed | `should stop the link (OUTCOME_MISMATCH_ON_REPLAY) when a recorded notice changed on rebuild` (one alert, the next hold gets `STOPPED`). Kills M3 (`owner.ts:583` notice comparison → `false`) |
+| TR-3 (Major) request-sequence tie of the priority order | Fixed | `T-07 waiters with the same request_age and the same account are granted in the order of their request sequence`. The I3 property run (`waitShare` > 0) now gives 30 % of the holds the `request_age` of the client's last hold, so equal ages occur (the I1 run is unchanged). M6 (`state.ts:747` reversed) is killed by the unit test and by two property tests |
+| TR-4 (Major) Stryker configuration | Fixed | `tools/mutation/link.stryker.json`: `mutate` has the I3 ranges of `state.ts` (records, waiters, scan, `tick`, `comparePriority`, `isLive`, `overlaps`) and `owner.ts` (ports and recall, `recallFor`, the `decide` closure with `effects` and the `Tick` loop, `push`, `notification`, rebuild and replay, `requestRow`). The command also runs `waiting.test.ts` and `property.waiting.test.ts`. Stryker not run (a person runs it; report killed-only) |
+| TR-5 (Minor) C02 provider test 13 item 1 has no C02 test ID | Fixed | The slice test is now `C02 provider test 13 / T-08b a GRANTED lost on the push …`. The shared suite still has item 2 only |
+| TR-6 (Minor) repeat of a waiting hold after D + 24 h | Fixed | `should answer a repeat of a waiting hold with the recorded WAITING after D + 24 h, and keep one waiter`. Kills `state.ts:643` `!isLive(rec)` → `rec.state !== 'HELD'` |
+| TR-7 (Minor) duplicate checks slice / suite | Open | Same decision as review 67 TR-12: a decision for the reviewer |
+| TR-8 (Minor) no new `WAITING_NOTICE` when the latest blocker does not change | Fixed | `T-07 a waiter whose latest blocker does not change gets no new WAITING_NOTICE` (no relay, no push, no logged notice). Kills `state.ts:527` without the guard (also the three property tests) |
+
+Gates after the fixes: `npm run -s typecheck:link`, `typecheck:contracts` and `npx eslint slices/link contracts` clean;
+`npm run -s test:link` 144 tests, 141 pass, 0 fail, 3 skipped (measurements); `npm run -s test:contracts` 81 tests,
+78 pass, 0 fail, 3 todo.
 
 ### Design issues found
 

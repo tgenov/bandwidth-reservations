@@ -14,7 +14,7 @@ import { hlcToWallMs, utf8, type HlcTs, type NotificationOut } from '@share/owne
 import {
   DEFAULT_POLICY, ENTRY, LINK_KIND, LinkOwner, requestKey, type HoldCmd, type QueryCmd, type RequestId, type WaitingNotification,
 } from '../src/index.ts';
-import { doubleLogReader, harness, M, resultOf, type Harness } from './support.ts';
+import { AccountStub, doubleLogReader, harness, M, resultOf, type Harness } from './support.ts';
 
 const H = (hh: number, mm = 0) => M(hh, mm);
 const W = { start: H(10), end: H(11) };
@@ -135,6 +135,22 @@ test('T-07 waiters with the same request_age are granted in the order of their r
   await h.stub.release(h.stub.releaseCmd(blocker.request, blocker.deadline));
   assert.deepEqual(relayed(h).filter((n) => n.kind === 'GRANTED').map((n) => requestKey(n.request)), [requestKey(a9.request)]);
   assert.equal((await query(h, b2.request))['state'], 'WAITING');
+});
+
+test('T-07 waiters with the same request_age and the same account are granted in the order of their request sequence', async () => {
+  const h = await harness();
+  const t0 = nowMs(h);
+  const blocker = h.stub.holdCmd({ rate: 10, window: W, account: 'blk' });
+  await h.stub.hold(blocker);
+  const lowSeq = aged(h.stub.holdCmd({ rate: 6, window: W, wait: true, account: 'same' }), t0);
+  const highSeq = aged(h.stub.holdCmd({ rate: 6, window: W, wait: true, account: 'same' }), t0);
+  assert.ok(lowSeq.request.seq < highSeq.request.seq);
+  assert.equal(resultOf(await h.stub.hold(highSeq)), 'WAITING');
+  assert.equal(resultOf(await h.stub.hold(lowSeq)), 'WAITING');
+  await h.stub.release(h.stub.releaseCmd(blocker.request, blocker.deadline));
+  assert.deepEqual(relayed(h).filter((n) => n.kind === 'GRANTED').map((n) => requestKey(n.request)), [requestKey(lowSeq.request)]);
+  assert.equal((await query(h, highSeq.request))['state'], 'WAITING');
+  assert.deepEqual(h.owner.stateOf(h.link)?.waitersInOrder().map((x) => requestKey(x.cmd.request)), [requestKey(highSeq.request)]);
 });
 
 test('T-07 a younger waiter that fits where an older one does not is granted; the older is told its latest blocker as it is examined', async () => {
@@ -317,6 +333,78 @@ test('T-07 a waiter whose latest blocker changes gets a new WAITING_NOTICE each 
   assert.ok(h.rt.notificationsSent.every((n) => n.to.kind === 'account' && Buffer.from(n.to.partition).equals(Buffer.from(w.account))));
 });
 
+test('T-07 a waiter whose latest blocker does not change gets no new WAITING_NOTICE', async () => {
+  const h = await harness();
+  const b1 = h.stub.holdCmd({ rate: 4, window: W, account: 'b1x', deadlineInMs: 10_000 });
+  const b2 = h.stub.holdCmd({ rate: 4, window: W, account: 'b2x', deadlineInMs: 40_000 });
+  for (const b of [b1, b2]) await h.stub.hold(b);
+  const w = h.stub.holdCmd({ rate: 7, window: W, wait: true, deadlineInMs: 50_000 });
+  assert.deepEqual(body(await h.stub.hold(w)), { result: 'WAITING', attempt: 1, aheadDeadline: b2.deadline });
+  const r1 = await h.stub.release(h.stub.releaseCmd(b1.request, b1.deadline));
+  assert.equal(resultOf(r1), 'RELEASED');
+  assert.deepEqual(h.rt.notificationsSent, []);
+  assert.deepEqual(h.pushed, []);
+  assert.equal((h.rt.log(utf8(h.link)).at(-1)?.entry.payload as { notices?: unknown }).notices, undefined, 'the release entry logs no notice');
+  assert.deepEqual(await query(h, w.request), { state: 'WAITING', attempt: 1, aheadDeadline: b2.deadline });
+});
+
+test('should answer a repeat of a waiting hold with the recorded WAITING after D + 24 h, and keep one waiter', async () => {
+  const h = await harness();
+  const blocker = h.stub.holdCmd({ rate: 6, window: W, account: 'blk', deadlineInMs: 100_000_000 });
+  await h.stub.hold(blocker);
+  const w = h.stub.holdCmd({ rate: 5, window: W, wait: true });
+  const first = await h.stub.hold(w);
+  assert.equal(resultOf(first), 'WAITING');
+  h.rt.advance(w.deadline + 86_400_000 - nowMs(h));
+  await h.stub.hold(h.stub.holdCmd({ rate: 1, window: { start: H(40), end: H(41) }, account: 'other' }));
+  const again = await h.stub.hold(w);
+  assert.deepEqual([body(again), seqOf(again)], [body(first), seqOf(first)]);
+  assert.deepEqual(h.owner.stateOf(h.link)?.waitersInOrder().map((x) => requestKey(x.cmd.request)), [requestKey(w.request)]);
+});
+
+test('should send each notice once when decide restarts in a batch that grants waiters and writes Tick entries', async () => {
+  const h = await harness({ policy: { ...DEFAULT_POLICY, scanSteps: 1 } });
+  const t0 = nowMs(h);
+  const blocker = h.stub.holdCmd({ rate: 10, window: W, account: 'blk' });
+  await h.stub.hold(blocker);
+  const ws = [0, 1].map((i) => aged(h.stub.holdCmd({ rate: 4, window: W, wait: true, account: `w${i}` }), t0 - 10 + i));
+  for (const w of ws) assert.equal(resultOf(await h.stub.hold(w)), 'WAITING');
+  const before = h.rt.log(utf8(h.link)).length;
+  h.rt.scriptRestarts(2);
+  const rel = await h.stub.release(h.stub.releaseCmd(blocker.request, blocker.deadline));
+  const s = seqOf(rel);
+  const want = ws.map((w, i) => ({ linkSeq: s + BigInt(i), link: h.link, request: requestKey(w.request), attempt: 1, kind: 'GRANTED' }));
+  assert.deepEqual(relayed(h).map(notice), want);
+  assert.equal(h.pushed.length, 2);
+  assert.deepEqual(h.pushed, h.rt.notificationsSent);
+  assert.deepEqual(kinds(h).slice(before), [ENTRY.Release, ENTRY.Tick]);
+  const st = h.owner.stateOf(h.link);
+  assert.equal(st?.scanPending, false);
+  assert.deepEqual(st?.waitersInOrder(), []);
+  assert.deepEqual(st?.holdsInOrder().map((x) => requestKey(x.request)), ws.map((w) => requestKey(w.request)));
+  assert.equal(st?.occAll.peak(W.start, W.end), 8);
+});
+
+test('should stop the link (OUTCOME_MISMATCH_ON_REPLAY) when a recorded notice changed on rebuild', async () => {
+  const h = await harness();
+  const blocker = h.stub.holdCmd({ rate: 6, window: W, account: 'blk' });
+  await h.stub.hold(blocker);
+  const w = h.stub.holdCmd({ rate: 5, window: W, wait: true });
+  await h.stub.hold(w);
+  await h.stub.release(h.stub.releaseCmd(blocker.request, blocker.deadline));
+  const entry = h.rt.log(utf8(h.link)).at(-1);
+  const notices = (entry?.entry.payload as { notices: Array<{ kind: string }> }).notices;
+  assert.deepEqual(notices.map((n) => n.kind), ['GRANTED']);
+  (notices[0] as { kind: string }).kind = 'WAITING_NOTICE';
+  const slot = h.rt.route(LINK_KIND, utf8(h.link)).slot;
+  const owner2 = new LinkOwner(h.rt, { readLog: doubleLogReader(h.rt), links: [h.link] });
+  h.rt.attach(owner2);
+  await h.rt.takeover(slot);
+  assert.deepEqual(owner2.alerts.filter((x) => x.kind === 'OUTCOME_MISMATCH_ON_REPLAY').length, 1);
+  const stub2 = new AccountStub(h.rt, owner2, h.link);
+  assert.equal(resultOf(await stub2.hold(stub2.holdCmd({ rate: 1, window: W }))), 'STOPPED');
+});
+
 test('T-07 a waiter with an open-ended window is granted when an open-ended hold is released', async () => {
   const h = await harness();
   const blocker = h.stub.holdCmd({ rate: 8, window: { start: H(10), end: null }, account: 'blk' });
@@ -393,7 +481,7 @@ async function twoWindows(): Promise<{ h: Harness; x: HoldCmd; y: HoldCmd; y1: H
   return { h, x, y, y1 };
 }
 
-test('T-08b a GRANTED lost on the push and relayed after a newer WAITING_NOTICE of another request is applied; duplicates have no effect', async () => {
+test('C02 provider test 13 / T-08b a GRANTED lost on the push and relayed after a newer WAITING_NOTICE of another request is applied; duplicates have no effect', async () => {
   const { h, x, y, y1 } = await twoWindows();
   assert.deepEqual(relayed(h).map((n) => n.kind), ['GRANTED', 'WAITING_NOTICE']);
   const [granted, newer] = h.rt.notificationsSent as [NotificationOut, NotificationOut];

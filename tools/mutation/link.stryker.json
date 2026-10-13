@@ -2,7 +2,7 @@
   "$schema": "../../node_modules/@stryker-mutator/core/schema/stryker-schema.json",
   "testRunner": "command",
   "commandRunner": {
-    "command": "node --test --test-concurrency=1 slices/link/test/occupancy.test.ts slices/link/test/port.test.ts slices/link/test/property.test.ts slices/link/test/scenarios.test.ts slices/link/test/counteroffer.test.ts slices/link/test/property.counteroffer.test.ts slices/link/test/counteroffer.unit.test.ts slices/link/test/contract.c02.test.ts"
+    "command": "node --test --test-concurrency=1 slices/link/test/occupancy.test.ts slices/link/test/port.test.ts slices/link/test/property.test.ts slices/link/test/scenarios.test.ts slices/link/test/counteroffer.test.ts slices/link/test/property.counteroffer.test.ts slices/link/test/counteroffer.unit.test.ts slices/link/test/contract.c02.test.ts slices/link/test/waiting.test.ts slices/link/test/property.waiting.test.ts"
   },
   "coverageAnalysis": "off",
   "inPlace": true,
@@ -10,12 +10,15 @@
   "mutate": [
     "slices/link/src/occupancy.ts",
     "slices/link/src/counteroffer.ts",
-    "slices/link/src/state.ts:186-489",
-    "slices/link/src/state.ts:514-518",
-    "slices/link/src/owner.ts:133-215",
-    "slices/link/src/owner.ts:353-360",
-    "slices/link/src/owner.ts:489-527",
-    "slices/link/src/owner.ts:556-570"
+    "slices/link/src/state.ts:223-691",
+    "slices/link/src/state.ts:721-725",
+    "slices/link/src/state.ts:733-754",
+    "slices/link/src/owner.ts:150-233",
+    "slices/link/src/owner.ts:373-380",
+    "slices/link/src/owner.ts:395-443",
+    "slices/link/src/owner.ts:522-539",
+    "slices/link/src/owner.ts:547-588",
+    "slices/link/src/owner.ts:620-634"
   ],
   "concurrency": 6,
   "timeoutMS": 15000,

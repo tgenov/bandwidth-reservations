@@ -11,6 +11,7 @@
  * With `waitShare` > 0 (S-LINK I3 exit criterion 4), that share of the holds has `wait = true`. The oracle then
  * also gives the waiting-port notices (grants, waiter refusals, waiting notices), and the run checks that the
  * notices in the log are the oracle's, in order, and that each grant keeps occ_all ≤ C_ref.
+ * Some holds then reuse the request_age of the client's last hold, so equal ages tie by request sequence.
  */
 import assert from 'node:assert/strict';
 import { encodeJson, hex } from '@share/owner-runtime';
@@ -53,7 +54,10 @@ export async function propertyRun(t: PropertyTarget, seed: number, commands: num
         const start = t.base + int(r, 0, DOMAIN - 200);
         const end = r() < 0.08 ? null : start + int(r, 1, 180);
         const wait = (t.waitShare ?? 0) > 0 && r() < (t.waitShare ?? 0);
-        const cmd = t.stub.holdCmd({ rate: int(r, 1, 6), window: { start, end }, account, deadlineInMs: int(r, 300, 30_000), wait });
+        let cmd = t.stub.holdCmd({ rate: int(r, 1, 6), window: { start, end }, account, deadlineInMs: int(r, 300, 30_000), wait });
+        // I3: some holds take the request_age of the client's last hold, so the request-sequence tie of the order occurs.
+        const last = mine.at(-1);
+        if ((t.waitShare ?? 0) > 0 && last && r() < 0.3) cmd = { ...cmd, requestAge: last.requestAge };
         mine.push(cmd);
         reply = await t.stub.hold(cmd);
       } else if (p < 0.58) {
