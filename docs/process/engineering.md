@@ -1,6 +1,6 @@
 # Engineering standard: code and tests
 
-This standard applies to all code in `platform/` and `slices/`. It adapts the practices of
+This standard applies to all code in `platform/`, `slices/` and `contracts/`. It adapts the practices of
 a mature product repository to this repository's stack: TypeScript on Node.js (ESM,
 `node --test`), CockroachDB, Kafka and frozen contracts. The design documents are the
 authority. Code conforms to them (see [pipeline.md](pipeline.md)).
@@ -37,6 +37,12 @@ Rules:
 - **Every frozen contract that a package provides or uses has its listed contract tests.**
   Run a provider's tests against the real provider. Run a consumer's tests against a
   double that follows the contract, never against another slice's code.
+- **A double must pass the same suite as the provider.** `contracts/suites`
+  (`@share/contract-suites`) has one behavioural suite for each frozen contract
+  (`runC01ProviderSuite`, …). The provider package and each package that owns a double of it
+  call the suite from `test/contract.<cxx>.test.ts`. A provider that does not exist yet has a
+  registered `PENDING real provider (<increment>)` entry. Run them with `npm run test:contracts`.
+  A point that a contract does not state clearly goes in `contracts/suites/ISSUES.md`.
 - **End-to-end tests are few.** Use them only for the critical journeys.
 
 ## 3. What to replace with a double, and what not to
@@ -53,7 +59,8 @@ Rules:
   patch modules, do not spy on imports, and do not mock the transport.
 - A method of a double that the test does not set up must throw, with a clear message.
 - A slice never imports another slice's `src/`. A slice imports only the platform
-  packages and its own packages.
+  packages, the contract suites (`contracts/`) and its own packages. The contract suites
+  import only platform packages (`tools/check_boundaries.py` checks both rules).
 
 ## 4. Assertions
 

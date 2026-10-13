@@ -7,6 +7,9 @@ Rules:
 - A file under slices/<a>/ must not import from slices/<b>/ (b != a), by relative
   path or by a package name that belongs to slice b.
 - A file under platform/ must not import from slices/.
+- contracts/ (the contract suites) is neutral. Every slice and the platform may
+  import it. A file under contracts/ may import only platform packages and
+  contracts/ itself: never a slice.
 Package names are read from each workspace's package.json.
 Exit code 1 if a rule is broken.
 """
@@ -18,23 +21,31 @@ import sys
 IMPORT = re.compile(r"""(?:^|\s)(?:import|export)\b[^'"]*?from\s*['"]([^'"]+)['"]|import\(\s*['"]([^'"]+)['"]\s*\)""", re.M)
 
 
+def area_of(rel):
+    """The area of a repository path: ("platform", None), ("contracts", None) or ("slice", <name>)."""
+    if rel[0] in ("platform", "contracts"):
+        return (rel[0], None)
+    return ("slice", rel[1])
+
+
 def main():
     repo = pathlib.Path(sys.argv[sys.argv.index("--repo") + 1] if "--repo" in sys.argv else ".").resolve()
     owner_of_pkg = {}
     for pj in list(repo.glob("slices/*/package.json")) + list(repo.glob("slices/*/*/package.json")) \
-            + list(repo.glob("platform/*/package.json")) + list(repo.glob("platform/*/*/package.json")):
+            + list(repo.glob("platform/*/package.json")) + list(repo.glob("platform/*/*/package.json")) \
+            + list(repo.glob("contracts/*/package.json")):
         if "node_modules" in pj.parts:
             continue
         name = json.loads(pj.read_text()).get("name")
         rel = pj.parent.relative_to(repo).parts
         if name:
-            owner_of_pkg[name] = ("platform", None) if rel[0] == "platform" else ("slice", rel[1])
+            owner_of_pkg[name] = area_of(rel)
     problems = []
-    for f in list(repo.glob("slices/**/*.ts")) + list(repo.glob("platform/**/*.ts")):
+    for f in list(repo.glob("slices/**/*.ts")) + list(repo.glob("platform/**/*.ts")) + list(repo.glob("contracts/**/*.ts")):
         if "node_modules" in f.parts or f.name.endswith(".d.ts"):
             continue
         rel = f.relative_to(repo).parts
-        mine = ("platform", None) if rel[0] == "platform" else ("slice", rel[1])
+        mine = area_of(rel)
         for m in IMPORT.finditer(f.read_text()):
             spec = m.group(1) or m.group(2)
             target = None
@@ -46,8 +57,8 @@ def main():
                     continue
                 if tr and tr[0] == "slices" and len(tr) > 1:
                     target = ("slice", tr[1])
-                elif tr and tr[0] == "platform":
-                    target = ("platform", None)
+                elif tr and tr[0] in ("platform", "contracts"):
+                    target = (tr[0], None)
             else:
                 base = "/".join(spec.split("/")[:2]) if spec.startswith("@") else spec.split("/")[0]
                 target = owner_of_pkg.get(base)
@@ -57,6 +68,8 @@ def main():
                 problems.append(f"{f.relative_to(repo)}: platform imports slice '{target[1]}' ({spec})")
             elif mine[0] == "slice" and target[0] == "slice" and target[1] != mine[1]:
                 problems.append(f"{f.relative_to(repo)}: slice '{mine[1]}' imports slice '{target[1]}' ({spec})")
+            elif mine[0] == "contracts" and target[0] == "slice":
+                problems.append(f"{f.relative_to(repo)}: contracts imports slice '{target[1]}' ({spec})")
     for p in problems:
         print(p)
     print(f"boundaries: {len(problems)} problem(s)")

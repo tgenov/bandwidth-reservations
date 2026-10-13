@@ -8,7 +8,7 @@
 import type {
   AcquisitionKind, AppendCall, AppendOptions, AppendResult, BatchContext, CommandEnvelope, DecideResult,
   Epoch, EntryInput, FeedCheckpoint, FeedEvent, FeedHeaders, Generation, HeadRow, HlcTs, InboundNotification,
-  MonotonicNs, NotificationOut, OwnerDeclaration, OwnerHooks, OwnerKind, OwnerRuntime, PartitionKey,
+  MonotonicNs, NotificationOut, OpenedLogRow, OwnerDeclaration, OwnerHooks, OwnerKind, OwnerRuntime, PartitionKey,
   ProjectionWrite, ReadTx, ReportMarker, RouteInfo, RoutingRefusal, RowRef, Seq, SlotNo, SlotOfAnswer,
   StreamSeq, TimingSnapshot, WriterFence,
 } from '../src/api.ts';
@@ -320,7 +320,8 @@ export class RuntimeDouble implements OwnerRuntime {
   recordFence(sender: { kind: OwnerKind; partition: PartitionKey }, fence: WriterFence): void {
     const k = `${sender.kind}|${hex(sender.partition)}`;
     const cur = this.fences.get(k);
-    if (!cur || fenceLess(cur, fence)) this.fences.set(k, fence);
+    // Keep the fence only, as the real runtime does: a STALE_SENDER refusal carries { generation, epoch } (C01 §2.4).
+    if (!cur || fenceLess(cur, fence)) this.fences.set(k, { generation: fence.generation, epoch: fence.epoch });
   }
 
   setRoute(kind: OwnerKind, partition: PartitionKey, info: RouteInfo): void {
@@ -348,6 +349,20 @@ export class RuntimeDouble implements OwnerRuntime {
 
   log(partition: PartitionKey): DoubleLogEntry[] {
     return this.partitions.get(hex(partition))?.log ?? [];
+  }
+
+  /**
+   * The log rows of a partition from `fromSeq`, as CockroachOwnerRuntime.readLog gives them for a rebuild
+   * (C01 §3.1): the payload as the owner gave it, and the sender fence of the entry. The audit is the plain value.
+   */
+  async readLog(partition: PartitionKey, fromSeq: Seq = 1n): Promise<OpenedLogRow[]> {
+    return this.log(partition).filter((e) => e.seq >= fromSeq).map((e) => ({
+      slot: this.partitions.get(hex(partition))?.slot ?? slotOfPartition(partition, this.slotCount), partition, seq: e.seq,
+      generation: e.generation, epoch: e.epoch, kind: e.entry.kind, schemaV: e.entry.schemaV, ts: e.ts, identity: e.entry.identity,
+      emits: e.streamSeqs.map((x) => [x.stream, x.streamSeq] as [string, StreamSeq]), retention: 0,
+      payload: structuredClone(e.entry.payload), audit: structuredClone(e.entry.audit), chain: e.chain,
+      ...(e.entry.senderFence ? { senderFence: structuredClone(e.entry.senderFence) } : {}),
+    }));
   }
 
   headOf(partition: PartitionKey): HeadRow {
@@ -540,7 +555,8 @@ export class RuntimeDouble implements OwnerRuntime {
     const epoch = this.held.get(slot)?.epoch ?? 1n;
     const seqFrom = st.seq + 1n;
     const streamSeqs: Record<string, [StreamSeq, StreamSeq]> = {};
-    for (const entry of d.entries) {
+    // A committed entry is a copy: a later change to the caller's object does not change the log (as a sealed row).
+    for (const entry of d.entries.map((e) => structuredClone(e))) {
       st.seq += 1n;
       const assigned: Array<{ stream: string; streamSeq: StreamSeq }> = [];
       for (const em of entry.emits ?? []) {

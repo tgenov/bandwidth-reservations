@@ -1,0 +1,16 @@
+{
+  "name": "@share/contract-suites",
+  "version": "0.1.0",
+  "description": "Behavioural suites of the frozen contracts. Each suite runs against the real provider and against every double that stands in for it",
+  "private": true,
+  "type": "module",
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "scripts": {
+    "test": "node --test --test-concurrency=1 'test/*.test.ts'"
+  },
+  "dependencies": {
+    "@share/owner-runtime": "1.0.0-alpha.1"
+  }
+}
