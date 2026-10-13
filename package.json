@@ -34,7 +34,12 @@
     "typecheck:account": "tsc --noEmit -p slices/account",
     "test:account": "node --test --test-concurrency=1 'slices/account/*/test/*.test.ts'",
     "typecheck:rate": "tsc --noEmit -p slices/rate",
-    "test:rate": "node --test --test-concurrency=1 'slices/rate/*/test/*.test.ts'"
+    "test:rate": "node --test --test-concurrency=1 'slices/rate/*/test/*.test.ts'",
+    "check:boundaries": "python3 tools/check_boundaries.py",
+    "typecheck": "npm run -s typecheck:platform && npm run -s typecheck:link && npm run -s typecheck:sec && npm run -s typecheck:account && npm run -s typecheck:rate",
+    "test:unit": "npm run -s test:platform && npm run -s test:link && npm run -s test:sec && npm run -s test:account && npm run -s test:rate",
+    "check": "npm run -s check:boundaries && npm run -s typecheck && npm run -s test:unit",
+    "test:integration": "npm run -s test:platform:integration && npm run -s test:link:integration"
   },
   "dependencies": {
     "pg": "^8.13.1"

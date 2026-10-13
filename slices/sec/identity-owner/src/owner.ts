@@ -176,6 +176,9 @@ export class IdentityOwner implements OwnerHooks {
     onCommitted: (r: Extract<AppendResult, { r: 'Committed' }>) => number,
   ): Promise<KeyCommandAnswer> {
     for (let attempt = 0; attempt < this.maxAttempts; attempt++) {
+      // C08 §C / V56-3: a record verifies only if its signing cert is valid at `committed_at`. Certify the slot's
+      // key for the current epoch BEFORE the append, so `not_before` never postdates the commit it signs.
+      this.signerFor(this.slotOf(partition));
       const r = await this.rt.append(call);
       switch (r.r) {
         case 'Committed':

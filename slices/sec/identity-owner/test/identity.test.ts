@@ -6,22 +6,43 @@ import { fileURLToPath } from 'node:url';
 import { hex, validateDeclaration, type AppendResult } from '@share/owner-runtime';
 import { RESULTS, RuntimeDouble } from '@share/owner-runtime/testing';
 import { kindMigration } from '@share/owner-migrate';
-import { CertStore, DOMAINS, mintKey, tenantPartition, without, type IdentityStatusEvent } from '@share/iam-lib';
-import { DevKeyService } from '@share/key-service';
+import { CertStore, DOMAINS, hlcToMicros, mintKey, tenantPartition, without, type IdentityStatusEvent } from '@share/iam-lib';
+import { DevKeyService, type CertifyRequest, type KeyCertifier } from '@share/key-service';
 import { IdentityOwner, STATUS_TOPIC, declaration, identitySlotOf } from '../src/index.ts';
 import { FIXTURE_WORKLOAD, KeyFixture } from '../src/testing.ts';
 
 const tenant = { kind: 'account' as const, account: 'b1' };
 const actor = { kind: 'onboarding' as const };
 
-function setup() {
-  const rt = new RuntimeDouble({ declaration, startMs: Date.now() });
-  const now = (): bigint => BigInt(Date.now()) * 1000n;
+const START_MS = 1_700_000_000_000;
+
+/**
+ * One injected clock for every party: the runtime double's virtual clock. The key service, the commit timestamps
+ * and the verifier's `now` all read it, so no assertion depends on the real wall clock.
+ * `certifyDelayMs` models time passing while the key service certifies a key (key generation, the RPC).
+ */
+function setup(opts: { certifyDelayMs?: number } = {}) {
+  const rt = new RuntimeDouble({ declaration, startMs: START_MS });
+  const now = (): bigint => hlcToMicros(rt.now().ts);
   const ks = new DevKeyService(now);
+  const delay = opts.certifyDelayMs ?? 0;
+  const certifier: KeyCertifier = { certify: (req: CertifyRequest) => { rt.advance(delay); return ks.certify(req); } };
   const alerts: string[] = [];
-  const owner = new IdentityOwner({ runtime: rt, certifier: ks, sleep: async () => {}, alert: (m) => alerts.push(m) });
+  const owner = new IdentityOwner({ runtime: rt, certifier, sleep: async () => {}, alert: (m) => alerts.push(m) });
   rt.attach(owner);
-  return { rt, ks, owner, alerts };
+  return { rt, ks, owner, alerts, now };
+}
+
+/** mulberry32: a seeded generator, so a failing case is replayed from its printed seed. */
+function rng(seed: number): () => number {
+  let a = seed >>> 0;
+  return () => {
+    a = (a + 0x6d2b79f5) >>> 0;
+    let t = a;
+    t = Math.imul(t ^ (t >>> 15), t | 1);
+    t ^= t + Math.imul(t ^ (t >>> 7), t | 61);
+    return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+  };
 }
 
 test('C01 CC-8: the identity declaration validates, generates its tables and matches RFC-005 §3.1 / C08 §B', () => {
@@ -100,7 +121,7 @@ test('C08 P-02 (I1 part): every key commit yields exactly one IdentityStatusEven
 });
 
 test('C08 §C: edge stream records and heartbeats are identity-signed; no heartbeat without a valid lease', async () => {
-  const { rt, ks, owner } = setup();
+  const { rt, ks, owner, now: clock } = setup();
   const certs = new CertStore(ks.rootPublicKey);
   const k = mintKey();
   await owner.issueKey({ tenant, key_id: k.key_id, verifier: k.verifier, actor, caller: 'test' });
@@ -110,7 +131,7 @@ test('C08 §C: edge stream records and heartbeats are identity-signed; no heartb
   assert.equal(msgs.length, 2);
   const [rec, hb] = msgs;
   assert.ok(rec && 'record' in rec && hb && 'heartbeat' in hb);
-  const now = BigInt(Date.now()) * 1000n;
+  const now = clock();
   const req = { purpose: 'identity_record' as const, owner_kind: 'identity', slot, epoch: rec.record.epoch };
   assert.ok(certs.verify(DOMAINS.edgeRecord, without(rec.record, 'signature'), rec.record.signature, { ...req, validAt: { committed_at: rec.record.committed_at } }, now).ok);
   assert.ok(rec.key_record && certs.verify(DOMAINS.keyRecord, without(rec.key_record, 'signature'), rec.key_record.signature, { ...req, validAt: { committed_at: rec.key_record.committed_at } }, now).ok);
@@ -121,6 +142,31 @@ test('C08 §C: edge stream records and heartbeats are identity-signed; no heartb
   rt.setLease(slot, true);
   const policy = owner.getPolicy();
   assert.ok(!('kind' in policy) && policy.policy_version === 1);
+});
+
+test('C08 §C / V56-3 regression: a record verifies under its cert at committed_at even when certification takes time', async () => {
+  // Defect: the record-signing key was certified lazily AFTER the commit, so cert.not_before > committed_at and
+  // every receiver refused the record as outside_validity. Each seed draws how long certification takes.
+  for (let seed = 1; seed <= 200; seed++) {
+    const r = rng(seed);
+    const certifyDelayMs = Math.floor(r() * 50) + 1;
+    const { ks, owner, now } = setup({ certifyDelayMs });
+    const k = mintKey();
+    assert.equal((await owner.issueKey({ tenant, key_id: k.key_id, verifier: k.verifier, actor, caller: 'test' })).ok, true);
+    const certs = new CertStore(ks.rootPublicKey);
+    for (const m of ks.read('0')) certs.apply(m);
+    const slot = identitySlotOf(tenant);
+    const [rec] = owner.edgeStream(slot, '0');
+    assert.ok(rec && 'record' in rec && rec.key_record);
+    const req = { purpose: 'identity_record' as const, owner_kind: 'identity', slot, epoch: rec.record.epoch };
+    const v = certs.verify(DOMAINS.edgeRecord, without(rec.record, 'signature'), rec.record.signature,
+      { ...req, validAt: { committed_at: rec.record.committed_at } }, now());
+    const kv = certs.verify(DOMAINS.keyRecord, without(rec.key_record, 'signature'), rec.key_record.signature,
+      { ...req, validAt: { committed_at: rec.key_record.committed_at } }, now());
+    const why = () => `seed=${seed} certifyDelayMs=${certifyDelayMs} committed_at=${rec.record.committed_at} edge=${JSON.stringify(v.ok ? 'ok' : v)} key=${JSON.stringify(kv.ok ? 'ok' : kv)}`;
+    assert.ok(v.ok && kv.ok, why());
+    assert.ok(v.cert.not_before <= rec.record.committed_at, why());
+  }
 });
 
 test('fixture: accepted only from the test workload identity', async () => {
