@@ -1,0 +1,23 @@
+{
+  "name": "@share/owner-runtime",
+  "version": "1.0.0-alpha.1",
+  "description": "C01 v1 owner runtime (S-PLAT I1a): types, runtime double, CockroachDB batch runtime, direct publish",
+  "private": true,
+  "type": "module",
+  "exports": {
+    ".": "./src/index.ts",
+    "./testing": "./testing/index.ts"
+  },
+  "scripts": {
+    "test": "node --test --test-concurrency=1 'test/*.test.ts'",
+    "test:integration": "node --test --test-concurrency=1 'test/integration/*.test.ts'"
+  },
+  "dependencies": {
+    "kafkajs": "^2.2.4",
+    "pg": "^8.13.1"
+  },
+  "devDependencies": {
+    "@types/pg": "^8.11.10",
+    "@share/owner-migrate": "1.0.0-alpha.1"
+  }
+}

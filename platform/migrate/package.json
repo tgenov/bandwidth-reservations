@@ -1,0 +1,20 @@
+{
+  "name": "@share/owner-migrate",
+  "version": "1.0.0-alpha.1",
+  "description": "C01 §2.3 table generator and migration tool for CockroachDB",
+  "private": true,
+  "type": "module",
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "bin": {
+    "owner-migrate": "./src/cli.ts"
+  },
+  "scripts": {
+    "test": "node --test --test-concurrency=1 'test/*.test.ts'"
+  },
+  "dependencies": {
+    "@share/owner-runtime": "1.0.0-alpha.1",
+    "pg": "^8.13.1"
+  }
+}

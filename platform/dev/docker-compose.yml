@@ -1,0 +1,86 @@
+# S-PLAT dev cell (plan §3): CockroachDB, 3 nodes in one region (localities r1a/r1b/r1c), insecure for dev,
+# and Kafka in KRaft mode. Start: `npm run dev:up`; stop and wipe: `npm run dev:down`.
+#
+# SQL:   postgresql://root@localhost:26257/defaultdb?sslmode=disable   (UI http://localhost:8080)
+# Kafka: localhost:9092
+#
+# Kafka runs as ONE combined broker+controller to start. For the plan's 3 brokers (and ACLs, I1b):
+#   - add kafka2/kafka3 like kafka1 with KAFKA_NODE_ID 2/3, their own listeners/ports;
+#   - set KAFKA_CONTROLLER_QUORUM_VOTERS to "1@kafka1:9093,2@kafka2:9093,3@kafka3:9093" on all three;
+#   - set KAFKA_DEFAULT_REPLICATION_FACTOR=3, KAFKA_MIN_INSYNC_REPLICAS=2 and the offsets/transaction
+#     state log replication factors to 3 (the producer uses acks=all, C01 §3.5);
+#   - TODO(I1b, C01 §2.5): SASL principals per producer and the per-topic producer ACLs.
+
+x-crdb: &crdb
+  image: cockroachdb/cockroach:v24.3.5
+  networks: [cell]
+
+services:
+  crdb1:
+    <<: *crdb
+    hostname: crdb1
+    # Starts the node and initialises the cluster once (init fails harmlessly when already done).
+    entrypoint: ["/bin/bash", "-c"]
+    command:
+      - >-
+        /cockroach/cockroach start --insecure --listen-addr=crdb1:26257 --http-addr=0.0.0.0:8080
+        --advertise-addr=crdb1:26257 --join=crdb1:26257,crdb2:26257,crdb3:26257
+        --locality=region=r1,zone=r1a --max-offset=100ms --store=/cockroach/cockroach-data &
+        sleep 5; /cockroach/cockroach init --insecure --host=crdb1:26257 || true;
+        /cockroach/cockroach sql --insecure --host=crdb1:26257 -e "SET CLUSTER SETTING kv.rangefeed.enabled = true" || true;
+        wait
+    ports: ["26257:26257", "8080:8080"]
+    volumes: [crdb1:/cockroach/cockroach-data]
+    healthcheck:
+      test: ["CMD", "/cockroach/cockroach", "sql", "--insecure", "--host=crdb1:26257", "-e", "SELECT 1"]
+      interval: 3s
+      timeout: 3s
+      retries: 40
+  crdb2:
+    <<: *crdb
+    hostname: crdb2
+    command: >-
+      start --insecure --listen-addr=crdb2:26257 --http-addr=0.0.0.0:8080 --advertise-addr=crdb2:26257
+      --join=crdb1:26257,crdb2:26257,crdb3:26257 --locality=region=r1,zone=r1b --max-offset=100ms
+    ports: ["26258:26257"]
+    volumes: [crdb2:/cockroach/cockroach-data]
+  crdb3:
+    <<: *crdb
+    hostname: crdb3
+    command: >-
+      start --insecure --listen-addr=crdb3:26257 --http-addr=0.0.0.0:8080 --advertise-addr=crdb3:26257
+      --join=crdb1:26257,crdb2:26257,crdb3:26257 --locality=region=r1,zone=r1c --max-offset=100ms
+    ports: ["26259:26257"]
+    volumes: [crdb3:/cockroach/cockroach-data]
+
+  kafka1:
+    image: apache/kafka:3.9.0
+    hostname: kafka1
+    networks: [cell]
+    ports: ["9092:9092"]
+    environment:
+      KAFKA_NODE_ID: 1
+      KAFKA_PROCESS_ROLES: broker,controller
+      KAFKA_LISTENERS: INTERNAL://kafka1:19092,EXTERNAL://0.0.0.0:9092,CONTROLLER://kafka1:9093
+      KAFKA_ADVERTISED_LISTENERS: INTERNAL://kafka1:19092,EXTERNAL://localhost:9092
+      KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: INTERNAL:PLAINTEXT,EXTERNAL:PLAINTEXT,CONTROLLER:PLAINTEXT
+      KAFKA_INTER_BROKER_LISTENER_NAME: INTERNAL
+      KAFKA_CONTROLLER_LISTENER_NAMES: CONTROLLER
+      KAFKA_CONTROLLER_QUORUM_VOTERS: 1@kafka1:9093
+      KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 1
+      KAFKA_TRANSACTION_STATE_LOG_REPLICATION_FACTOR: 1
+      KAFKA_TRANSACTION_STATE_LOG_MIN_ISR: 1
+      KAFKA_AUTO_CREATE_TOPICS_ENABLE: "true"   # dev only; production topics are created with their partition counts (C01 §2.5)
+    healthcheck:
+      test: ["CMD-SHELL", "/opt/kafka/bin/kafka-broker-api-versions.sh --bootstrap-server kafka1:19092 > /dev/null 2>&1"]
+      interval: 5s
+      timeout: 10s
+      retries: 30
+
+networks:
+  cell: {}
+
+volumes:
+  crdb1: {}
+  crdb2: {}
+  crdb3: {}

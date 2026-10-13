@@ -2,14 +2,25 @@
   "name": "bandwidth-reservations",
   "private": true,
   "type": "module",
+  "workspaces": [
+    "platform/runtime",
+    "platform/migrate",
+    "platform/examples/canary"
+  ],
   "scripts": {
-    "test": "node --test --test-concurrency=1 test/*.test.ts"
+    "test": "node --test --test-concurrency=1 test/*.test.ts",
+    "typecheck:platform": "tsc --noEmit -p platform",
+    "test:platform": "node --test --test-concurrency=1 'platform/*/test/*.test.ts' 'platform/examples/*/test/*.test.ts'",
+    "test:platform:integration": "node --test --test-concurrency=1 'platform/*/test/integration/*.test.ts' 'platform/examples/*/test/integration/*.test.ts'",
+    "dev:up": "docker compose -f platform/dev/docker-compose.yml up -d --wait",
+    "dev:down": "docker compose -f platform/dev/docker-compose.yml down -v"
   },
   "dependencies": {
     "pg": "^8.13.1"
   },
   "devDependencies": {
     "@types/node": "^22.10.0",
-    "@types/pg": "^8.11.10"
+    "@types/pg": "^8.11.10",
+    "typescript": "~5.9.3"
   }
 }
