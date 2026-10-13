@@ -9,6 +9,7 @@ Read these before you change anything:
 - `docs/04-delivery/contracts/`: the frozen contracts C01 … C13. Slices meet only through them.
 - `docs/04-delivery/plan/`: the delivery plan for each slice and the build order.
 - `docs/bugtraq/`: defects in third-party code, with their workarounds and removal conditions.
+- `docs/04-delivery/evaluations/`: technology evaluations and decisions (E-001: Kafka client).
 
 Rules that are easy to miss:
 

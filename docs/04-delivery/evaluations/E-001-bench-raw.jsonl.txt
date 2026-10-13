@@ -1,0 +1,32 @@
+## round 1
+kafkajs {"client":"kafkajs","mode":"throughput","produceRecPerS":48718,"consumeRecPerS":5398,"firstRecordMs":3118,"afterFirstRecPerS":34052,"batchP50Ms":1.33,"batchP99Ms":25.63,"produceCpuMs":221,"consumeCpuMs":273,"rssMiB":86,"processCpuMs":736}
+platformatic {"client":"platformatic","mode":"throughput","records":20000,"produceRecPerS":11943,"consumeRecPerS":5656,"consumeSteadyRecPerS":58196,"groupJoinMs":3193,"batchP50Ms":2.41,"batchP99Ms":25.44,"wrongPartition":0,"committedTotal":"20000","rssMB":157,"cpuMs":1308}
+confluent {"client":"confluent","mode":"throughput","produceRecPerS":17957,"consumeRecPerS":5342,"firstRecordMs":3332,"afterFirstRecPerS":48500,"batchP50Ms":4.09,"batchP99Ms":29.22,"produceCpuMs":528,"consumeCpuMs":342,"rssMiB":138,"processCpuMs":1063}
+## round 2
+kafkajs {"client":"kafkajs","mode":"throughput","produceRecPerS":16872,"consumeRecPerS":5696,"firstRecordMs":3090,"afterFirstRecPerS":47482,"batchP50Ms":3.39,"batchP99Ms":23.12,"produceCpuMs":605,"consumeCpuMs":264,"rssMiB":79,"processCpuMs":1112}
+platformatic {"client":"platformatic","mode":"throughput","records":20000,"produceRecPerS":9809,"consumeRecPerS":4230,"consumeSteadyRecPerS":12840,"groupJoinMs":3170,"batchP50Ms":3.41,"batchP99Ms":25.59,"wrongPartition":0,"committedTotal":"20000","rssMB":161,"cpuMs":1496}
+confluent {"client":"confluent","mode":"throughput","produceRecPerS":4804,"consumeRecPerS":5238,"firstRecordMs":3435,"afterFirstRecPerS":52191,"batchP50Ms":15.77,"batchP99Ms":154.88,"produceCpuMs":745,"consumeCpuMs":310,"rssMiB":103,"processCpuMs":1245}
+## round 3
+kafkajs {"client":"kafkajs","mode":"throughput","produceRecPerS":23142,"consumeRecPerS":5653,"firstRecordMs":3067,"afterFirstRecPerS":42441,"batchP50Ms":1.92,"batchP99Ms":32.11,"produceCpuMs":368,"consumeCpuMs":282,"rssMiB":80,"processCpuMs":884}
+platformatic {"client":"platformatic","mode":"throughput","records":20000,"produceRecPerS":14239,"consumeRecPerS":6050,"consumeSteadyRecPerS":98592,"groupJoinMs":3103,"batchP50Ms":0.76,"batchP99Ms":61.75,"wrongPartition":0,"committedTotal":"20000","rssMB":162,"cpuMs":976}
+confluent {"client":"confluent","mode":"throughput","produceRecPerS":35186,"consumeRecPerS":5442,"firstRecordMs":3302,"afterFirstRecPerS":53667,"batchP50Ms":1.56,"batchP99Ms":14.46,"produceCpuMs":193,"consumeCpuMs":306,"rssMiB":123,"processCpuMs":679}
+## round 4
+kafkajs {"client":"kafkajs","mode":"throughput","produceRecPerS":21553,"consumeRecPerS":5491,"firstRecordMs":3102,"afterFirstRecPerS":37042,"batchP50Ms":2.44,"batchP99Ms":22.15,"produceCpuMs":514,"consumeCpuMs":351,"rssMiB":82,"processCpuMs":1101}
+platformatic {"client":"platformatic","mode":"throughput","records":20000,"produceRecPerS":14565,"consumeRecPerS":5885,"consumeSteadyRecPerS":65711,"groupJoinMs":3094,"batchP50Ms":1.26,"batchP99Ms":17.99,"wrongPartition":0,"committedTotal":"20000","rssMB":159,"cpuMs":1041}
+confluent {"client":"confluent","mode":"throughput","produceRecPerS":35153,"consumeRecPerS":5365,"firstRecordMs":3305,"afterFirstRecPerS":47275,"batchP50Ms":1.33,"batchP99Ms":20.35,"produceCpuMs":209,"consumeCpuMs":346,"rssMiB":107,"processCpuMs":751}
+## round 5
+kafkajs {"client":"kafkajs","mode":"throughput","produceRecPerS":26554,"consumeRecPerS":5739,"firstRecordMs":3083,"afterFirstRecPerS":49721,"batchP50Ms":1.35,"batchP99Ms":86.4,"produceCpuMs":348,"consumeCpuMs":238,"rssMiB":83,"processCpuMs":920}
+platformatic {"client":"platformatic","mode":"throughput","records":20000,"produceRecPerS":13418,"consumeRecPerS":5833,"consumeSteadyRecPerS":66955,"groupJoinMs":3130,"batchP50Ms":1.55,"batchP99Ms":36.01,"wrongPartition":0,"committedTotal":"20000","rssMB":161,"cpuMs":1264}
+confluent {"client":"confluent","mode":"throughput","produceRecPerS":36726,"consumeRecPerS":5389,"firstRecordMs":3312,"afterFirstRecPerS":50018,"batchP50Ms":1.39,"batchP99Ms":12.31,"produceCpuMs":237,"consumeCpuMs":346,"rssMiB":100,"processCpuMs":772}
+## idle 1
+kafkajs {"client":"kafkajs","mode":"idle","idleMs":30000,"idleCpuMs":73,"idleCpuUserMs":57,"idleCpuSysMs":16,"rssMiB":39,"processCpuMs":319}
+platformatic {"client":"platformatic","mode":"idle","idleMs":30000,"idleCpuMs":64,"rssMB":66}
+confluent {"client":"confluent","mode":"idle","idleMs":30000,"idleCpuMs":66,"idleCpuUserMs":33,"idleCpuSysMs":32,"rssMiB":40,"processCpuMs":367}
+## idle 2
+kafkajs {"client":"kafkajs","mode":"idle","idleMs":30000,"idleCpuMs":90,"idleCpuUserMs":74,"idleCpuSysMs":16,"rssMiB":39,"processCpuMs":383}
+platformatic {"client":"platformatic","mode":"idle","idleMs":30000,"idleCpuMs":53,"rssMB":66}
+confluent {"client":"confluent","mode":"idle","idleMs":30000,"idleCpuMs":65,"idleCpuUserMs":28,"idleCpuSysMs":38,"rssMiB":40,"processCpuMs":365}
+## idle 3
+kafkajs {"client":"kafkajs","mode":"idle","idleMs":30000,"idleCpuMs":105,"idleCpuUserMs":86,"idleCpuSysMs":20,"rssMiB":39,"processCpuMs":423}
+platformatic {"client":"platformatic","mode":"idle","idleMs":30000,"idleCpuMs":58,"rssMB":66}
+confluent {"client":"confluent","mode":"idle","idleMs":30000,"idleCpuMs":61,"idleCpuUserMs":30,"idleCpuSysMs":31,"rssMiB":40,"processCpuMs":354}
