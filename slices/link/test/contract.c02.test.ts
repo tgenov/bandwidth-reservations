@@ -1,4 +1,4 @@
-/** C02 provider suite (provider tests 1 to 4, the I1 subset) against the real link owner on the runtime double. */
+/** C02 provider suite (provider tests 1 to 4, the I1 subset and the I2 part) against the real link owner on the runtime double. */
 import { C02_SUITE_CAPACITY, runC02ProviderSuite, type C02Subject } from '@share/contract-suites';
 import { hlcToWallMs, utf8 } from '@share/owner-runtime';
 import { LINK_KIND } from '../src/index.ts';
@@ -20,4 +20,4 @@ runC02ProviderSuite('real link owner', async (): Promise<C02Subject> => {
     nowMs: () => hlcToWallMs(h.rt.now().ts),
     close: async () => { await h.owner.idle(); },
   };
-});
+}, { i2: true });

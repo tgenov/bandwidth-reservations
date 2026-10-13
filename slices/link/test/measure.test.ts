@@ -9,7 +9,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { utf8 } from '@share/owner-runtime';
 import type { HlcTs } from '@share/owner-runtime';
-import { LinkState, type HoldCmd } from '../src/index.ts';
+import { DEFAULT_POLICY, LinkState, type HoldCmd } from '../src/index.ts';
 import { int, M, rng } from './support.ts';
 
 const KEYS = 530_000;
@@ -18,10 +18,64 @@ const BOUND_US = 40;
 
 const enabled = process.env['LINK_MEASURE'] === '1';
 
+/**
+ * Exit criterion 4 of S-LINK I2: one refusal at the 512-step bound ≤ 1 ms, and one batch at the 4,096-step
+ * budget ≤ 5 ms (est.), at 530,000 keys. The schedule is overcommitted at every third minute, so a one-hour
+ * window never fits and each step jumps over one run. The figure includes the whole `hold` apply.
+ */
+test('measurement: a refusal at the 512-step bound and a batch at the 4,096-step budget at 530,000 keys',
+  { skip: enabled ? false : 'set LINK_MEASURE=1 (npm run measure)' }, () => {
+  const st = new LinkState();
+  st.init({ link: 'hot', capacityMbps: 10, policy: DEFAULT_POLICY });
+  const base = M(0);
+  for (let i = 0; st.occAll.size < KEYS; i++) st.occAll.add(base + 3 * i, base + 3 * i + 1, 10);
+  st.commit();
+  const ts = `${BigInt(Date.UTC(2026, 2, 2, 9)) * 1_000_000n}.0000000000` as HlcTs;
+  let seq = 1n;
+  const refusal = (start: number): HoldCmd => {
+    seq += 1n;
+    return {
+      link: 'hot', receiverPartition: 'hot', request: { partition: utf8('acct'), seq }, account: utf8('acct'), leg: 'l',
+      holdKind: { kind: 'booking' }, rateMbps: 1, window: { start, end: start + 60 },
+      deadline: Date.UTC(2026, 2, 2, 10), commitFence: Date.UTC(2026, 2, 2, 10) - 420, requestAge: ts, wait: false,
+      receiptMinute: base, policyVersion: 1n,
+    };
+  };
+  const one: number[] = [];
+  const batch: number[] = [];
+  for (let i = 0; i < 600; i++) {
+    st.beginBatch(ts);
+    const start = base + 3 * (i % 1_000);
+    const t0 = process.hrtime.bigint();
+    const d = st.decide({ op: 'hold', body: refusal(start) }, ts, seq);
+    const t1 = process.hrtime.bigint();
+    assert.deepEqual((d.outcome as { counterOffer?: unknown }).counterOffer, { largestRateMbps: 0, earliest: { notFoundBefore: start + 1 + 3 * 511 } });
+    assert.equal(st.counterofferStepsLeft, 4_096 - 512);
+    st.rollback();
+    if (i >= 100) one.push(Number(t1 - t0) / 1_000);
+  }
+  for (let i = 0; i < 300; i++) {
+    st.beginBatch(ts);
+    const t0 = process.hrtime.bigint();
+    for (let k = 0; k < 8; k++) st.decide({ op: 'hold', body: refusal(base + 3 * (k * 2_000 + i)) }, ts, seq);
+    const t1 = process.hrtime.bigint();
+    assert.equal(st.counterofferStepsLeft, 0);
+    st.rollback();
+    if (i >= 50) batch.push(Number(t1 - t0) / 1_000);
+  }
+  const p99 = (xs: number[]): number => xs.sort((a, b) => a - b)[Math.floor(xs.length * 0.99)] as number;
+  const report = { refusalP99Us: p99(one), batchP99Us: p99(batch) };
+  console.log(`# counter-offer cost at ${st.occAll.size} keys (µs): ${JSON.stringify(report)}`);
+  if (process.env['LINK_MEASURE_STRICT'] !== '0') {
+    assert.ok(report.refusalP99Us <= 1_000, `refusal p99 ${report.refusalP99Us.toFixed(0)} µs > 1 ms`);
+    assert.ok(report.batchP99Us <= 5_000, `batch p99 ${report.batchP99Us.toFixed(0)} µs > 5 ms`);
+  }
+});
+
 test('measurement: hold apply p99 is independent of the window length at 530,000 keys',
   { skip: enabled ? false : 'set LINK_MEASURE=1 (npm run measure)' }, () => {
   const st = new LinkState();
-  st.init({ link: 'hot', capacityMbps: 1_000_000_000, policy: { version: '1', releaseGraceMs: 60_000, requestRecordTtlMs: 86_400_000, rateMinMbps: 1 } });
+  st.init({ link: 'hot', capacityMbps: 1_000_000_000, policy: DEFAULT_POLICY });
   const r = rng(42);
   const base = M(0);
   const span = 365 * 24 * 60;

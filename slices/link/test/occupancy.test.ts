@@ -48,6 +48,17 @@ test('should equal the per-minute array for every query when the tree gets rando
         for (let t = s; t < N + 5; t++) if ((v[t] as number) > theta) { want = t; break; }
         if (want === null && (v[N + 4] as number) > theta) want = N + 4;
         assert.equal(fa, want, `firstAbove(${s}, ${theta})`);
+        const fb = tree.firstAtOrBelow(s, theta);
+        let wantB: number | null = null;
+        for (let t = s; t < N + 5; t++) if ((v[t] as number) <= theta) { wantB = t; break; }
+        assert.equal(fb, wantB, `firstAtOrBelow(${s}, ${theta}) seed ${seed}`);
+        const tail = v[N + 4] as number;
+        let wantLast: number | 'forever' | null = null;
+        if (tail > theta) wantLast = 'forever';
+        else for (let t = N + 4; t >= 0; t--) if ((v[t] as number) > theta) { wantLast = t; break; }
+        assert.equal(tree.lastAbove(theta), wantLast, `lastAbove(${theta}) seed ${seed}`);
+        const keys = tree.entries().map(([k]) => k);
+        assert.equal(tree.nextKey(s), keys.find((k) => k > s) ?? null, `nextKey(${s}) seed ${seed}`);
         const ranges = tree.conflicts(s, e, theta);
         const end = e ?? N + 5;
         for (let t = s; t < end; t++) {
@@ -88,4 +99,32 @@ test('should not overlap touching windows (P1-S04) and count an open-ended entry
   tree.add(1_000, null, 3);
   assert.equal(tree.value(10_000_000), 3);
   assert.equal(tree.peak(2_000, null), 3);
+});
+
+test('should give lastAbove "forever" when the value after the last key is above θ, and null when no minute is above θ', () => {
+  const tree = new OccupancyTree();
+  assert.equal(tree.lastAbove(0), null, 'an empty tree is never above 0');
+  tree.add(100, 200, 5);
+  assert.equal(tree.lastAbove(4), 199);
+  assert.equal(tree.lastAbove(5), null);
+  tree.add(150, null, 2);
+  assert.equal(tree.lastAbove(1), 'forever');
+  assert.equal(tree.lastAbove(2), 199);
+  assert.equal(tree.lastAbove(6), 199);
+  assert.equal(tree.lastAbove(7), null);
+});
+
+test('should count every update in the change counter, and not count a zero pulse, when the tree changes', () => {
+  const tree = new OccupancyTree();
+  const c0 = tree.changeCounter;
+  tree.add(10, 20, 0);
+  assert.equal(tree.changeCounter, c0);
+  tree.add(10, 20, 3);
+  assert.equal(tree.changeCounter, c0 + 2);
+  tree.add(30, null, 1);
+  assert.equal(tree.changeCounter, c0 + 3);
+  tree.commit();
+  tree.add(40, 50, 1);
+  tree.rollback();
+  assert.ok(tree.changeCounter > c0 + 3, 'a rollback is a change too');
 });

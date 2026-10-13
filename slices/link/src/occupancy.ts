@@ -133,21 +133,59 @@ export class OccupancyTree {
   }
 
   /** The least minute x ≥ t with value(x) > θ, or null if there is none. */
-  firstAbove(t: number, theta: number): number | null {
-    const v = this.value(t);
+  firstAbove(t: number, theta: number, valueAtT?: number): number | null {
+    const v = valueAtT ?? this.value(t);
+    this.foundValue = v;
     if (v > theta) return t;
     this.run = v;
     const k = this.findFirst(this.root, t + 1, false, theta, true);
+    this.foundValue = this.run;
     return Number.isNaN(k) ? null : k;
   }
 
   /** The least minute x ≥ t with value(x) ≤ θ, or null if there is none. */
-  firstAtOrBelow(t: number, theta: number): number | null {
-    const v = this.value(t);
+  firstAtOrBelow(t: number, theta: number, valueAtT?: number): number | null {
+    const v = valueAtT ?? this.value(t);
+    this.foundValue = v;
     if (v <= theta) return t;
     this.run = v;
     const k = this.findFirst(this.root, t + 1, false, theta, false);
+    this.foundValue = this.run;
     return Number.isNaN(k) ? null : k;
+  }
+
+  /**
+   * The value at the minute that the last `firstAbove` or `firstAtOrBelow` returned. A caller that jumps from
+   * run to run gives it back as `valueAtT`, which saves one descent for each jump (RFC-001 §4.2).
+   */
+  foundValue = 0;
+
+  /**
+   * The last minute with value > θ (RFC-001 §3.2 `last_above`). It is 'forever' if the value after the
+   * last key (carry + the sum of all impulses) is above θ, and null if no minute has a value above θ.
+   */
+  lastAbove(theta: number): number | 'forever' | null {
+    const total = this.carry + (this.sum[this.root] as number);
+    if (total > theta) return 'forever';
+    const k = this.findLastAbove(this.root, this.carry, theta);
+    if (!Number.isNaN(k)) {
+      // The value is above θ from key k until the next key. The total is not above θ, so a next key exists.
+      return (this.nextKey(k) as number) - 1;
+    }
+    // No prefix through a key is above θ. The minutes before the first key have the value `carry`.
+    if (this.carry > theta && this.root !== NIL) return this.firstKey() - 1;
+    return null;
+  }
+
+  /** The least key > t, or null if there is none. */
+  nextKey(t: number): number | null {
+    let n = this.root;
+    let best: number | null = null;
+    while (n !== NIL) {
+      const k = this.key[n] as number;
+      if (k > t) { best = k; n = this.left[n] as number; } else n = this.right[n] as number;
+    }
+    return best;
   }
 
   /** The maximal minute ranges in [s, e) with value > θ (RFC-001 §3.2). */
@@ -234,6 +272,26 @@ export class OccupancyTree {
     this.run += this.val[n] as number;
     if (above ? this.run > theta : this.run <= theta) return this.key[n] as number;
     return this.findFirst(this.right[n] as number, lo, true, theta, above);
+  }
+
+  /**
+   * The last key k of the subtree whose prefix (base + the impulses up to and with k) is above θ, or NaN.
+   * The search goes to the right child first, and skips a subtree by its `maxpref`.
+   */
+  private findLastAbove(n: number, base: number, theta: number): number {
+    if (n === NIL || base + (this.maxp[n] as number) <= theta) return NaN;
+    const l = this.left[n] as number;
+    const atNode = base + (this.sum[l] as number) + (this.val[n] as number);
+    const r = this.findLastAbove(this.right[n] as number, atNode, theta);
+    if (!Number.isNaN(r)) return r;
+    if (atNode > theta) return this.key[n] as number;
+    return this.findLastAbove(l, base, theta);
+  }
+
+  private firstKey(): number {
+    let n = this.root;
+    while ((this.left[n] as number) !== NIL) n = this.left[n] as number;
+    return this.key[n] as number;
   }
 
   private pull(n: number): void {

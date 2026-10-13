@@ -1,8 +1,9 @@
 /**
- * C02 v1.0.0 (frozen) — the types of the link hold port that S-LINK I1 provides.
+ * C02 v1.0.0 (frozen) — the types of the link hold port and the link availability query that S-LINK provides.
  *
- * The names and the fields are copied from C02 "Schema". I1 provides `hold`, `convert` and `release`.
- * The other operations of C02 come in later increments (S-LINK plan §6).
+ * The names and the fields are copied from C02 "Schema". I1 provides `hold`, `convert` and `release`. I2 adds
+ * the counter-offer, `query` and the availability query (`availability`, `fit_ranges`). The other operations
+ * of C02 come in later increments (S-LINK plan §6).
  */
 import type { CommandEnvelope, Epoch, Generation, HlcTs, PartitionKey, RoutingRefusal, Seq } from '@share/owner-runtime';
 
@@ -95,6 +96,30 @@ export interface ReleaseCmd extends C02Body {
 }
 export type ReleaseOutcome = { result: 'RELEASED'; tombstoneUntil: EpochMs };
 export type ReleaseReply = (LinkStamp & ReleaseOutcome) | Refusal;
+
+export interface QueryCmd extends C02Body { request: RequestId }
+/** The decision part of a query reply. The reply adds the link stamp. I2 has no waiter, displacement or yield claim. */
+export interface QueryState {
+  state: 'UNSEEN' | 'HELD' | 'WAITING' | 'DISPLACED' | 'REFUSED' | 'RELEASED' | 'CONVERTED';
+  attempt?: Attempt; aheadDeadline?: EpochMs;
+  refusal?: { reason: RefusalReason; counterOffer?: CounterOffer; retryAfterMs?: DurationMs };
+  tombstoneUntil?: EpochMs;
+}
+export type QueryReply = (LinkStamp & QueryState) | Refusal;
+
+// ---------- Link availability query ----------
+
+export interface AvailabilityQuery extends C02Body { window: Window; rateMbps: Mbps }
+export type AvailabilityReply = (LinkStamp & { asOfSeq: Seq; offer: CounterOffer }) | Refusal;
+
+export interface FitRangesQuery extends C02Body { rateMbps: Mbps; from: Minute; until: Minute; k: number }
+export interface FitRanges {
+  /** Up to k maximal ranges in [from, until) where occ_all + rate ≤ C_ref. */
+  ranges: Window[];
+  /** null: the search went to `until`. */
+  continueFrom: Minute | null;
+}
+export type FitRangesReply = (LinkStamp & { asOfSeq: Seq } & FitRanges) | Refusal;
 
 // ---------- Commands as the link applies them ----------
 

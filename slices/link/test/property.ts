@@ -1,7 +1,8 @@
 /**
  * The I1 property run (exit criterion 1: T-01 part, T-02, T-03). Clients of the recorded stub send random
  * hold, convert and release commands at the same time. Then the run checks:
- * - every decision, in the order of decision, equals the per-minute oracle applied in that order;
+ * - every decision, in the order of decision, equals the per-minute oracle applied in that order, with the
+ *   counter-offer of each refusal (T-04: the oracle's own budget and cache, a new batch at each new ts);
  * - the log holds exactly the decisions that wrote an entry, in log order;
  * - after each entry, occ_all ≤ C_ref at every minute, computed again from the log rows alone (P1-N1);
  * - one request gets one decision: at most one Hold and one Convert entry for each request, and each
@@ -9,7 +10,7 @@
  */
 import assert from 'node:assert/strict';
 import { encodeJson, hex } from '@share/owner-runtime';
-import type { DecidedRecord, HoldCmd, LinkCommand, LoggedEntry, LoggedPayload, Outcome } from '../src/index.ts';
+import type { DecidedRecord, HoldCmd, LinkCommand, LinkPolicy, LoggedEntry, LoggedPayload, Outcome } from '../src/index.ts';
 import { requestKey } from '../src/index.ts';
 import { AccountStub, int, MinuteOracle, resultOf, rng } from './support.ts';
 
@@ -22,6 +23,8 @@ export interface PropertyTarget {
   readLog: () => Promise<LoggedEntry[]>;
   /** Moves the clock of a double forward. Undefined on a runtime with a real clock. */
   advance?: (ms: number) => void;
+  /** The policy that the link was registered with (the counter-offer budgets). Default: DEFAULT_POLICY. */
+  policy?: LinkPolicy;
 }
 
 export interface PropertyResult { counts: Record<string, number>; entries: number }
@@ -74,7 +77,7 @@ export async function propertyRun(t: PropertyTarget, seed: number, commands: num
   await Promise.all(Array.from({ length: clients }, (_, c) => runClient(c)));
 
   // (1) Every decision equals the per-minute oracle, in the order of decision (T-01, T-03).
-  const oracle = new MinuteOracle(t.base, DOMAIN, t.capacity);
+  const oracle = new MinuteOracle(t.base, DOMAIN, t.capacity, t.policy);
   const cmds = t.decided.filter((d) => 'op' in d.command);
   for (const [i, d] of cmds.entries()) {
     const want = oracle.apply(d.command as LinkCommand, d.ts);

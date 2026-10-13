@@ -1,32 +1,53 @@
 /**
- * The link schedule owner on the C01 runtime (RFC-001 §7.2, §8), part I1.
+ * The link schedule owner on the C01 runtime (RFC-001 §7.2, §8), parts I1 and I2.
  *
- * - The C02 link hold port: `hold`, `convert`, `release`. Each command comes with its C01
+ * - The C02 link hold port: `hold`, `convert`, `release`, `query`. Each command comes with its C01
  *   `CommandEnvelope`. The owner checks the routing, calls `admitCommand`, and queues the command for
- *   its link. The gRPC transport (C02 "Transport") is not in I1: a server maps each call to these methods.
+ *   its link. The gRPC transport (C02 "Transport") is not in I2: a server maps each call to these methods.
+ * - The C02 link availability query: `availability`, `fitRanges`. They read the committed state between
+ *   batches. They are advisory and write nothing.
  * - One batch at a time for each link. A batch decides all its queued commands in `decide(ctx)` at the
  *   batch commit timestamp, and the owner answers only after `Committed` (C02 "Answered once durable").
+ *   An entry that records a final state of a request also writes its `link_request` row (RFC-001 §4.4, §7.1).
+ * - Before a batch, the owner reads the `link_request` row of each command whose request record has gone
+ *   from memory, so the repeat gets the recorded answer (C02 provider test 3).
  * - Hooks: `onAcquire` and `onAdopt` rebuild the link by replay of its log. The replay compares each
  *   recorded outcome (RFC-001 §7.4). The first batch after a new epoch writes `Takeover(epoch)`.
  */
 import type {
   AppendResult, AuditFields, CommandEnvelope, Epoch, EntryInput, Generation, HlcTs, InboundNotification, OwnerHooks,
-  OwnerRuntime, PartitionKey, RoutingRefusal, Seq, SlotNo, WriterFence,
+  OwnerRuntime, PartitionKey, ProjectionWrite, RoutingRefusal, Seq, SlotNo, WriterFence,
 } from '@share/owner-runtime';
-import { encodeJson, hex, slotOfPartition, utf8 } from '@share/owner-runtime';
+import { encodeJson, hex, hlcToWallMs, slotOfPartition, utf8 } from '@share/owner-runtime';
 import type {
-  BodyOf, ConvertCmd, HoldCmd, LinkCommand, LinkId, LinkOp, LinkStamp, ReleaseCmd, ReplyOf,
+  AvailabilityQuery, AvailabilityReply, BodyOf, ConvertCmd, FitRangesQuery, FitRangesReply, HoldCmd, LinkCommand, LinkId,
+  LinkOp, LinkStamp, QueryCmd, QueryReply, ReleaseCmd, ReplyOf, RequestId,
 } from './c02.ts';
 import { requestKey } from './c02.ts';
 import { declaration, ENTRY, LINK_KIND } from './declaration.ts';
 import type { LoggedEntry, LogReader } from './log-source.ts';
-import { DEFAULT_POLICY, fenceBelow, LinkState, type Decision, type InitCmd, type LinkPolicy, type Outcome } from './state.ts';
+import {
+  DEFAULT_POLICY, fenceBelow, LinkState, type Decision, type InitCmd, type LinkPolicy, type Outcome, type RequestRecord,
+} from './state.ts';
 
-/** The payload of every log entry of I1. It holds the command and its recorded outcome (RFC-001 §7.3). */
+/**
+ * The payload of every log entry. It holds the command and its recorded outcome (RFC-001 §7.3). An entry that
+ * records a final state of a request also holds the request record (`record`), which its `link_request` row
+ * names (§4.4).
+ */
 export type LoggedPayload =
   | { v: 1; op: 'init'; init: InitCmd; outcome: Outcome }
   | { v: 1; op: 'takeover'; epoch: Epoch; generation: Generation; outcome: Outcome }
-  | { v: 1; op: LinkOp; body: LinkCommand['body']; outcome: Outcome; sender: SenderRef };
+  | { v: 1; op: LinkOp; body: LinkCommand['body']; outcome: Outcome; sender: SenderRef; record?: RequestRecord };
+
+/** The table of the `request` projection (RFC-001 §7.1 `link_request`). */
+export const LINK_REQUEST_TABLE = 'link_request';
+
+/**
+ * A record that can leave memory within this time from now is read from `link_request` before the batch.
+ * A batch commits well within it, so the record that the batch needs is in memory or read (RFC-001 §4.4).
+ */
+const RECALL_MARGIN_MS = 60_000;
 
 export interface SenderRef { kind: string; partition: PartitionKey; generation: Generation; epoch: Epoch }
 
@@ -53,7 +74,7 @@ export interface LinkOwnerOptions {
 export interface DecidedRecord { link: LinkId; command: LinkCommand | InitCmd; outcome: Outcome; ts: HlcTs; seq?: Seq }
 
 type Pending =
-  | { t: 'cmd'; cmd: LinkCommand; sender: SenderRef; resolve: (r: unknown) => void }
+  | { t: 'cmd'; cmd: LinkCommand; sender: SenderRef; resolve: (r: unknown) => void; recalled?: RequestRecord }
   | { t: 'init'; init: InitCmd; resolve: (r: unknown) => void };
 
 interface LinkMemory {
@@ -80,6 +101,8 @@ const AUDIT: AuditFields = {
 
 export class LinkOwner implements OwnerHooks {
   readonly alerts: LinkAlert[] = [];
+  /** The number of request records read from `link_request` (a repeat after the record left memory). */
+  recalledRecords = 0;
   private readonly rt: OwnerRuntime;
   private readonly o: Required<Pick<LinkOwnerOptions, 'maxBatch' | 'retries'>> & LinkOwnerOptions;
   private readonly links = new Map<string, LinkMemory>();
@@ -101,6 +124,91 @@ export class LinkOwner implements OwnerHooks {
 
   release(env: CommandEnvelope, body: ReleaseCmd): Promise<ReplyOf['release']> {
     return this.command('release', env, body);
+  }
+
+  /**
+   * C02 `query`: the state of the request at the link. A read; it writes no entry. The record comes from
+   * memory, or from `link_request` when it has gone from memory.
+   */
+  query(env: CommandEnvelope, body: QueryCmd): Promise<QueryReply> {
+    return this.read(env, body, async (mem, ts) => {
+      const recalled = mem.state.queryNeedsRecall(body.request) ? await this.recall(mem, body.request) : undefined;
+      return mem.state.query(body.request, ts, recalled);
+    });
+  }
+
+  /**
+   * C02 `availability(window, rate)`: the largest rate and the earliest window beside committed and held
+   * capacity, as of `asOfSeq`. The horizon starts at the owner's present minute. Advisory; it writes nothing.
+   */
+  availability(env: CommandEnvelope, body: AvailabilityQuery): Promise<AvailabilityReply> {
+    if (!validRate(body.rateMbps) || !validWindow(body.window)) return Promise.resolve(this.invalidQuery(body.link));
+    return this.read(env, body, async (mem, ts) => ({
+      asOfSeq: mem.state.appliedSeq,
+      offer: mem.state.availability(body.window, body.rateMbps, Math.floor(hlcToWallMs(ts) / 60_000)),
+    }));
+  }
+
+  /** C02 `fit_ranges(rate, from, until, k)`, as of `asOfSeq`. Advisory; it writes nothing. */
+  fitRanges(env: CommandEnvelope, body: FitRangesQuery): Promise<FitRangesReply> {
+    if (!validRate(body.rateMbps) || !Number.isSafeInteger(body.from) || !Number.isSafeInteger(body.until)
+      || !Number.isSafeInteger(body.k) || body.k < 1) return Promise.resolve(this.invalidQuery(body.link));
+    return this.read(env, body, async (mem) => ({
+      asOfSeq: mem.state.appliedSeq, ...mem.state.fitRanges(body.rateMbps, body.from, body.until, body.k),
+    }));
+  }
+
+  /**
+   * C02 gives the availability query no error for a malformed question. The owner answers `UNAVAILABLE` and
+   * alerts `INVALID_QUERY` (S-LINK I2 design issue DI-3).
+   */
+  private invalidQuery(link: LinkId): { code: 'UNAVAILABLE' } {
+    this.alert({ kind: 'INVALID_QUERY', link });
+    return { code: 'UNAVAILABLE' };
+  }
+
+  /**
+   * Serve a read on the committed state of the link, between batches (RFC-001 §4.2, §7.3). It is routed and
+   * fenced as a command (C02 "Common rules"), and answered after `leaseValid` (C01 CC-7).
+   */
+  private async read<T extends object>(env: CommandEnvelope, body: { link: LinkId; receiverPartition: string; request?: RequestId },
+    fn: (mem: LinkMemory, ts: HlcTs) => Promise<T>): Promise<(LinkStamp & T) | RoutingRefusal | { code: 'UNKNOWN_LINK' }> {
+    const refusal = this.route(env, body);
+    if (refusal) return refusal as RoutingRefusal | { code: 'UNKNOWN_LINK' };
+    const mem = this.memory(body.link);
+    let reply: (LinkStamp & T) | RoutingRefusal | { code: 'UNKNOWN_LINK' } = { code: 'UNAVAILABLE' };
+    await this.serialise(mem, async () => {
+      if (mem.rebuild !== 'none') await this.rebuild(mem);
+      if (mem.stopped) { reply = { code: 'STOPPED' }; return; }
+      if (mem.state.link === undefined) { reply = { code: 'UNKNOWN_LINK' }; return; }
+      const value = await fn(mem, this.rt.now().ts);
+      if (!this.rt.leaseValid(mem.slot).valid) { reply = { code: 'NOT_OWNER' }; return; }
+      this.o.onReply?.(`read:${body.request ? requestKey(body.request) : mem.link}`);
+      const linkFence = { generation: this.rt.generation(mem.partition), epoch: this.rt.epoch(mem.slot) };
+      reply = { linkFence, linkSeq: mem.state.appliedSeq, ...value };
+    }).catch((e: unknown) => {
+      this.alert({ kind: 'READ_FAILED', link: mem.link, detail: String(e) });
+      reply = { code: 'UNAVAILABLE' };
+    });
+    return reply;
+  }
+
+  /** The record of a request from its `link_request` row and the log row that the row names (RFC-001 §4.4). */
+  private async recall(mem: LinkMemory, request: RequestId): Promise<RequestRecord | undefined> {
+    const rows = await this.rt.consistentRead((tx) => tx.query<{ seq: unknown }>(
+      `SELECT seq FROM ${LINK_REQUEST_TABLE} WHERE link_id = $1 AND request_part = $2 AND request_seq = $3`,
+      [mem.link, request.partition, request.seq]), 'present');
+    const row = rows[0];
+    if (!row) return undefined;
+    const seq = BigInt(String(row.seq));
+    const entry = (await this.o.readLog(mem.partition, seq - 1n)).find((e) => e.seq === seq);
+    const record = entry ? (entry.payload as { record?: RequestRecord }).record : undefined;
+    if (!record) {
+      this.alert({ kind: 'REQUEST_ROW_WITHOUT_RECORD', link: mem.link, request: requestKey(request), detail: `seq ${seq}` });
+      return undefined;
+    }
+    this.recalledRecords += 1;
+    return record;
   }
 
   /**
@@ -229,6 +337,8 @@ export class LinkOwner implements OwnerHooks {
     while (mem.queue.length > 0) {
       const batch = mem.queue.splice(0, this.o.maxBatch);
       try {
+        if (mem.rebuild !== 'none') await this.rebuild(mem);
+        await this.recallFor(mem, batch);
         await this.runBatch(mem, batch);
       } catch (e) {
         mem.state.rollback();
@@ -236,6 +346,16 @@ export class LinkOwner implements OwnerHooks {
         this.alert({ kind: 'BATCH_FAILED', link: mem.link, detail: String(e) });
         for (const p of batch) p.resolve({ code: 'UNAVAILABLE' });
       }
+    }
+  }
+
+  /** Read the `link_request` record of each command that can need it (`LinkState.needsRecall`). */
+  private async recallFor(mem: LinkMemory, batch: Pending[]): Promise<void> {
+    const nowMs = hlcToWallMs(this.rt.now().ts);
+    for (const p of batch) {
+      if (p.t !== 'cmd' || p.recalled || !mem.state.needsRecall(p.cmd, nowMs, RECALL_MARGIN_MS)) continue;
+      const rec = await this.recall(mem, p.cmd.body.request);
+      if (rec) p.recalled = rec;
     }
   }
 
@@ -249,13 +369,15 @@ export class LinkOwner implements OwnerHooks {
       let decisions: Decision[] = [];
       let seqs: Array<Seq | undefined> = [];
       let entries: EntryInput[] = [];
+      let projections: ProjectionWrite[] = [];
       let decidedAt: HlcTs | undefined;
       const result: AppendResult = await this.rt.append({
         partition: mem.partition,
         decide: (ctx) => {
           // A restart re-runs decide at a new ts: start again from the committed state.
           mem.state.rollback();
-          decisions = []; seqs = []; entries = []; decidedAt = ctx.ts;
+          mem.state.beginBatch(ctx.ts);
+          decisions = []; seqs = []; entries = []; projections = []; decidedAt = ctx.ts;
           let seq = ctx.head(mem.partition).seq;
           const generation = ctx.head(mem.partition).generation;
           if (takeover) {
@@ -265,7 +387,7 @@ export class LinkOwner implements OwnerHooks {
             mem.state.advance(seq, ctx.ts);
           }
           for (const p of batch) {
-            const d = p.t === 'init' ? mem.state.init(p.init) : mem.state.decide(p.cmd, ctx.ts, seq + 1n);
+            const d = p.t === 'init' ? mem.state.init(p.init) : mem.state.decide(p.cmd, ctx.ts, seq + 1n, p.recalled);
             decisions.push(d);
             if (!d.entry) { seqs.push(undefined); continue; }
             seq += 1n;
@@ -275,11 +397,12 @@ export class LinkOwner implements OwnerHooks {
               entries.push(this.entry(ENTRY.Init, `init:${p.init.link}`, { v: 1, op: 'init', init: p.init, outcome: d.outcome }));
             } else {
               mem.state.recordFence(senderKey(p.sender.kind, p.sender.partition), p.sender);
-              entries.push(this.commandEntry(p.cmd, p.sender, d.outcome));
+              entries.push(this.commandEntry(p.cmd, p.sender, d.outcome, d.final));
+              if (d.final) projections.push(requestRow(mem.link, d.final, seq));
             }
           }
           // No entry: every command is answered from the committed state, and nothing is written.
-          return entries.length === 0 ? null : { entries };
+          return entries.length === 0 ? null : { entries, projections };
         },
       });
 
@@ -287,7 +410,6 @@ export class LinkOwner implements OwnerHooks {
         case 'Committed':
           mem.state.commit();
           if (entries.length > 0) mem.lastEntryEpoch = epoch;
-          mem.state.prune(result.ts);
           this.answer(mem, batch, decisions, seqs, decidedAt as HlcTs);
           return;
         case 'ConditionFailed':
@@ -371,7 +493,10 @@ export class LinkOwner implements OwnerHooks {
       mem.stopped = false;
     }
     const entries = await this.o.readLog(mem.partition, mem.state.appliedSeq);
+    let batchTs = mem.state.appliedTs;
     for (const e of entries) {
+      // All entries of one batch have its ts. A new ts starts a new batch, as when the entry was decided.
+      if (e.ts !== batchTs) { mem.state.beginBatch(e.ts); batchTs = e.ts; }
       if (!this.replay(mem, e)) {
         mem.stopped = true;
         break;
@@ -390,6 +515,7 @@ export class LinkOwner implements OwnerHooks {
     else {
       d = mem.state.decide({ op: p.op, body: p.body } as LinkCommand, e.ts, e.seq);
       mem.state.recordFence(senderKey(p.sender.kind, p.sender.partition), p.sender);
+      if (p.record) mem.state.restoreRecord(p.record);
     }
     mem.state.advance(e.seq, e.ts);
     mem.lastEntryEpoch = e.epoch;
@@ -406,12 +532,12 @@ export class LinkOwner implements OwnerHooks {
     return { kind, schemaV: 1, identity: utf8(identity), audit: AUDIT, payload };
   }
 
-  private commandEntry(cmd: LinkCommand, sender: SenderRef, outcome: Outcome): EntryInput {
+  private commandEntry(cmd: LinkCommand, sender: SenderRef, outcome: Outcome, record?: RequestRecord): EntryInput {
     const key = requestKey(cmd.body.request);
     const kind = cmd.op === 'hold' ? ENTRY.Hold : cmd.op === 'convert' ? ENTRY.Convert : ENTRY.Release;
     // A release can write a second entry only to extend its tombstone, so its identity has D.
     const identity = cmd.op === 'release' ? `release:${key}:${cmd.body.deadline}` : `${cmd.op}:${key}`;
-    const e = this.entry(kind, identity, { v: 1, op: cmd.op, body: cmd.body, outcome, sender });
+    const e = this.entry(kind, identity, { v: 1, op: cmd.op, body: cmd.body, outcome, sender, ...(record ? { record } : {}) });
     e.senderFence = sender;
     e.audit = { ...AUDIT, on_behalf_of: { account: hex(sender.partition), request_ref: key } };
     return e;
@@ -421,6 +547,26 @@ export class LinkOwner implements OwnerHooks {
     this.alerts.push(a);
     this.o.onAlert?.(a);
   }
+}
+
+/**
+ * The `link_request` row of a final request record (RFC-001 §7.1): keyed by (link, request), it names the
+ * entry that recorded the final state. The row-level TTL removes it 24 h after D (`deadline_at`).
+ */
+function requestRow(link: LinkId, r: RequestRecord, seq: Seq): ProjectionWrite {
+  return {
+    table: LINK_REQUEST_TABLE, op: 'upsert',
+    key: { link_id: link, request_part: r.request.partition, request_seq: r.request.seq },
+    row: { seq, deadline_at: new Date(r.deadline).toISOString() },
+  };
+}
+
+function validRate(b: number): boolean {
+  return Number.isSafeInteger(b) && b >= 0;
+}
+
+function validWindow(w: { start: number; end: number | null }): boolean {
+  return Number.isSafeInteger(w.start) && (w.end === null || (Number.isSafeInteger(w.end) && w.end > w.start));
 }
 
 export function senderKey(kind: string, partition: PartitionKey): string {

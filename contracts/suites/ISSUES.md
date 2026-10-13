@@ -23,7 +23,15 @@ does not have yet. The suites do not test them until the increment that provides
 
 | Contract | Behaviour | Provider | Increment |
 |---|---|---|---|
-| C02 `hold` check (5) | `REFUSED(NO_FIT)` carries a `counterOffer` | Real link owner | S-LINK I2 |
 | C02 `hold` check (8) | `WAITING(1, aheadDeadline)` for `wait = true` | Real link owner (answers `UNAVAILABLE`); the account link double throws | S-LINK I3 |
 | C08 §B | `catch_up` with and without `since` | Real identity owner | S-SEC-I2 (registered PENDING entry) |
 | C06 §7, §8 | Posting port and posting acknowledgement for usage batches (`runC06ProviderSuite`). Reservation batches run `runC06ReservationSuite` against the real ledger (MONEY-I2); the rate slice's settlement double does not run it yet | Real ledger | MONEY-I3 (registered PENDING entry) |
+
+## Known double gaps
+
+These are behaviours that the contract states and the real provider has, but that a double does not have
+yet. The suite registers a PENDING entry for the double, so the gap shows in every run.
+
+| Contract | Behaviour | Double | Provider has it since |
+|---|---|---|---|
+| C02 `hold` checks (5), (7); `query`; link availability query | The counter-offer on `NO_FIT` and `IN_FLIGHT`, `query`, `availability` and `fit_ranges` (`runC02ProviderSuite(…, { i2: true })`) | Account link double (`slices/account/owner/testing`) | S-LINK I2 |

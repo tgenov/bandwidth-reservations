@@ -2,15 +2,20 @@
   "$schema": "../../node_modules/@stryker-mutator/core/schema/stryker-schema.json",
   "testRunner": "command",
   "commandRunner": {
-    "command": "node --test --test-concurrency=1 slices/link/test/occupancy.test.ts slices/link/test/port.test.ts slices/link/test/property.test.ts slices/link/test/scenarios.test.ts"
+    "command": "node --test --test-concurrency=1 slices/link/test/occupancy.test.ts slices/link/test/port.test.ts slices/link/test/property.test.ts slices/link/test/scenarios.test.ts slices/link/test/counteroffer.test.ts slices/link/test/property.counteroffer.test.ts slices/link/test/counteroffer.unit.test.ts slices/link/test/contract.c02.test.ts"
   },
   "coverageAnalysis": "off",
   "inPlace": true,
   "disableTypeChecks": false,
   "mutate": [
     "slices/link/src/occupancy.ts",
-    "slices/link/src/state.ts:169-330",
-    "slices/link/src/state.ts:353-356"
+    "slices/link/src/counteroffer.ts",
+    "slices/link/src/state.ts:186-489",
+    "slices/link/src/state.ts:514-518",
+    "slices/link/src/owner.ts:133-215",
+    "slices/link/src/owner.ts:353-360",
+    "slices/link/src/owner.ts:489-527",
+    "slices/link/src/owner.ts:556-570"
   ],
   "concurrency": 6,
   "timeoutMS": 15000,

@@ -9,9 +9,9 @@ import type { CommandEnvelope, HlcTs, OwnerRuntime, PartitionKey } from '@share/
 import { hlcToWallMs, utf8 } from '@share/owner-runtime';
 import { RuntimeDouble } from '@share/owner-runtime/testing';
 import type {
-  ConvertCmd, ConvertReply, HoldCmd, HoldReply, LinkCommand, Outcome, ReleaseCmd, ReleaseReply, RequestId, Window,
+  ConvertCmd, ConvertReply, CounterOffer, HoldCmd, HoldReply, LinkCommand, LinkPolicy, Outcome, ReleaseCmd, ReleaseReply, RequestId, Window,
 } from '../src/index.ts';
-import { declaration, digest, LINK_KIND, LinkOwner, requestKey, wallNs, type DecidedRecord, type LinkOwnerOptions, type LogReader } from '../src/index.ts';
+import { declaration, DEFAULT_POLICY, digest, LINK_KIND, LinkOwner, requestKey, wallNs, type DecidedRecord, type LinkOwnerOptions, type LogReader } from '../src/index.ts';
 
 // ---------------- random ----------------
 
@@ -52,7 +52,7 @@ export function doubleLogReader(rt: RuntimeDouble): LogReader {
     .map((e) => ({ seq: e.seq, ts: e.ts, epoch: e.epoch, kind: e.entry.kind, payload: e.entry.payload }));
 }
 
-export async function harness(opts: { link?: string; capacity?: number; owner?: Partial<LinkOwnerOptions> } = {}): Promise<Harness> {
+export async function harness(opts: { link?: string; capacity?: number; policy?: LinkPolicy; owner?: Partial<LinkOwnerOptions> } = {}): Promise<Harness> {
   const link = opts.link ?? 'L1';
   const rt = new RuntimeDouble({ declaration, startMs: START_MS });
   const decided: DecidedRecord[] = [];
@@ -63,7 +63,7 @@ export async function harness(opts: { link?: string; capacity?: number; owner?: 
     ...opts.owner,
   });
   rt.attach(owner);
-  const r = await owner.register(link, opts.capacity ?? 10);
+  const r = await owner.register(link, opts.capacity ?? 10, opts.policy ?? DEFAULT_POLICY);
   if (!('result' in r) || r.result !== 'INITIALISED') throw new Error(`register failed: ${JSON.stringify(r)}`);
   return { rt, owner, decided, link, stub: new AccountStub(rt, owner, link) };
 }
@@ -174,8 +174,14 @@ interface OracleRequest {
 }
 
 /**
- * One cell per minute over [0, n) minutes from `base`. Open-ended windows end at n. Every window of a
- * test lies in [base, base + n), so the value after n is at most the value at n − 1 (all pulses ≥ 0).
+ * One cell per minute over [0, n) minutes from `base`. Open-ended windows end at n. Every finite window of a
+ * test lies in [base, base + n). After n, `occ_all` has the value `allTail`: the sum of the open-ended holds.
+ *
+ * Counter-offers (T-04). The largest rate is C − the largest cell over the window. The earliest window is
+ * found twice: by brute force (the first start t ≥ s at which every cell of [t, t + L) fits), and by the
+ * jump search of RFC-001 §4.2 over the cells, which also counts the steps. The oracle throws if the two
+ * differ. The step count decides "not found before t" against the per-refusal and per-batch budgets, with
+ * the per-batch cache of the RFC. A new `ts` starts a new batch.
  */
 export class MinuteOracle {
   readonly firm: Int32Array;
@@ -185,10 +191,111 @@ export class MinuteOracle {
   readonly n: number;
   readonly capacity: number;
   readonly releaseGraceMs: number;
-  constructor(base: number, n: number, capacity: number, releaseGraceMs = 60_000) {
-    this.base = base; this.n = n; this.capacity = capacity; this.releaseGraceMs = releaseGraceMs;
+  readonly policy: LinkPolicy;
+  private allTail = 0;
+  /** Changes on each change of `all` (the cache key of a counter-offer). */
+  private allVersion = 0;
+  private batchTs: HlcTs | undefined;
+  private batchLeft = 0;
+  private readonly cache = new Map<string, { version: number; earliest: CounterOffer['earliest'] }>();
+
+  constructor(base: number, n: number, capacity: number, policy: LinkPolicy = DEFAULT_POLICY) {
+    this.base = base; this.n = n; this.capacity = capacity; this.policy = policy; this.releaseGraceMs = policy.releaseGraceMs;
     this.firm = new Int32Array(n);
     this.all = new Int32Array(n);
+  }
+
+  /** The value of `occ_all` at minute m. */
+  allAt(m: number): number {
+    const i = m - this.base;
+    if (i < 0) return 0;
+    return i >= this.n ? this.allTail : this.all[i] as number;
+  }
+
+  /** The counter-offer that the link must give to the refused hold `b` in the batch at `ts`. */
+  counterOffer(b: HoldCmd, ts: HlcTs): CounterOffer {
+    if (ts !== this.batchTs) {
+      this.batchTs = ts;
+      this.batchLeft = this.policy.counterofferBatchSteps;
+      this.cache.clear();
+    }
+    const free = this.capacity - this.peak(this.all, b.window);
+    const largestRateMbps = free < this.policy.rateMinMbps ? 0 : free;
+    const length = b.window.end === null ? null : b.window.end - b.window.start;
+    const h = oracleHorizon(b.receiptMinute, this.policy.sellingHorizonMonths);
+    const key = `${b.window.start}|${length}|${b.rateMbps}|${h}`;
+    const hit = this.cache.get(key);
+    if (hit && hit.version === this.allVersion) return { largestRateMbps, earliest: hit.earliest };
+    const limit = Math.min(this.policy.counterofferSteps, this.batchLeft);
+    const r = this.earliest(b.window.start, length, b.rateMbps, h, limit);
+    this.batchLeft -= r.steps;
+    this.cache.set(key, { version: this.allVersion, earliest: r.value });
+    return { largestRateMbps, earliest: r.value };
+  }
+
+  /** The earliest window by the jump search over the cells, checked against brute force. */
+  earliest(s: number, length: number | null, b: number, h: number, limit: number): { value: CounterOffer['earliest']; steps: number } {
+    const theta = this.capacity - b;
+    const above = (m: number): boolean => this.allAt(m) > theta;
+    const end = this.base + this.n;   // from here on, every minute has the value allTail
+    let r: { value: CounterOffer['earliest']; steps: number };
+    if (limit < 1) return { value: { notFoundBefore: s }, steps: 0 };
+    if (length === null) {
+      let last: number | null = null;
+      if (above(end)) r = { value: { none: true }, steps: 1 };
+      else {
+        for (let m = end - 1; m >= this.base; m--) if (above(m)) { last = m; break; }
+        const t = last === null || last + 1 < s ? s : last + 1;
+        r = { value: t < h ? { window: { start: t, end: null } } : { none: true }, steps: 1 };
+      }
+    } else {
+      const firstWhere = (from: number, want: boolean): number | null => {
+        for (let m = from; m < end; m++) if (above(m) === want) return m;
+        return above(end) === want ? Math.max(from, end) : null;
+      };
+      let t = s;
+      let steps = 0;
+      r = { value: { notFoundBefore: t }, steps: 0 };
+      for (;;) {
+        if (steps >= limit) { r = { value: { notFoundBefore: t }, steps }; break; }
+        steps += 1;
+        if (t + length > h) { r = { value: { none: true }, steps }; break; }
+        const x = firstWhere(t, true);
+        if (x === null || x >= t + length) { r = { value: { window: { start: t, end: t + length } }, steps }; break; }
+        const next = firstWhere(x, false);
+        if (next === null) { r = { value: { none: true }, steps }; break; }
+        t = next;
+      }
+    }
+    if (!('notFoundBefore' in r.value)) {
+      const brute = this.bruteEarliest(s, length, b, h);
+      if (JSON.stringify(brute) !== JSON.stringify(r.value)) {
+        throw new Error(`oracle self-check: jump ${JSON.stringify(r.value)} brute ${JSON.stringify(brute)} (s ${s}, L ${length}, b ${b})`);
+      }
+    }
+    return r;
+  }
+
+  /** The first start t ≥ s whose window of the length fits at every minute, within the horizon h. */
+  bruteEarliest(s: number, length: number | null, b: number, h: number): CounterOffer['earliest'] {
+    const end = this.base + this.n;
+    const fits = (m: number): boolean => this.allAt(m) + b <= this.capacity;
+    if (length === null) {
+      if (!fits(end)) return { none: true };
+      let t = s;
+      for (let m = Math.max(s, this.base); m < end; m++) if (!fits(m)) t = m + 1;
+      return t < h ? { window: { start: t, end: null } } : { none: true };
+    }
+    // badBefore[i]: the number of minutes in [base, base + i) that do not fit.
+    const badBefore = new Int32Array(this.n + 1);
+    for (let i = 0; i < this.n; i++) badBefore[i + 1] = (badBefore[i] as number) + (fits(this.base + i) ? 0 : 1);
+    const clamp = (m: number): number => Math.min(Math.max(m, this.base), end) - this.base;
+    const badIn = (a: number, z: number): number => (badBefore[clamp(z)] as number) - (badBefore[clamp(a)] as number);
+    for (let t = s; t + length <= h; t++) {
+      if (t >= end) return fits(end) ? { window: { start: t, end: t + length } } : { none: true };
+      if (badIn(t, t + length) === 0 && (t + length <= end || fits(end))) return { window: { start: t, end: t + length } };
+    }
+    return { none: true };
   }
 
   private span(w: Window): [number, number] {
@@ -205,6 +312,10 @@ export class MinuteOracle {
   private addTo(arr: Int32Array, w: Window, b: number): void {
     const [s, e] = this.span(w);
     for (let t = s; t < e; t++) arr[t] = (arr[t] as number) + b;
+    if (arr === this.all) {
+      this.allVersion += 1;
+      if (w.end === null) this.allTail += b;
+    }
   }
 
   /** The outcome that the link must give for `cmd` at `ts`. */
@@ -223,7 +334,7 @@ export class MinuteOracle {
       if (tsNs >= BigInt(b.commitFence) * 1_000_000n) return refuse({ result: 'REFUSED', reason: 'DEADLINE_PASSED' });
       if (!Number.isSafeInteger(b.rateMbps) || b.rateMbps < 1) return refuse({ result: 'REFUSED', reason: { invalid: 'V1' } });
       if (b.window.end !== null && b.window.end <= b.window.start) return refuse({ result: 'REFUSED', reason: { invalid: 'V3' } });
-      if (this.peak(this.firm, b.window) + b.rateMbps > this.capacity) return refuse({ result: 'REFUSED', reason: 'NO_FIT' });
+      if (this.peak(this.firm, b.window) + b.rateMbps > this.capacity) return refuse({ result: 'REFUSED', reason: 'NO_FIT', counterOffer: this.counterOffer(b, ts) });
       if (this.peak(this.all, b.window) + b.rateMbps <= this.capacity) {
         this.addTo(this.all, b.window, b.rateMbps);
         const o: Outcome = { result: 'HELD', attempt: 1 };
@@ -231,6 +342,7 @@ export class MinuteOracle {
         return o;
       }
       if (b.wait) return { code: 'UNAVAILABLE' };
+      const counterOffer = this.counterOffer(b, ts);
       // Blockers: holds that overlap a minute where all + b > capacity.
       const [s, e] = this.span(b.window);
       let latest = -1;
@@ -246,7 +358,7 @@ export class MinuteOracle {
         const ns = BigInt(latest) * 1_000_000n - tsNs;
         retryAfterMs = ns <= 0n ? 0 : Number((ns + 999_999n) / 1_000_000n);
       }
-      return refuse({ result: 'REFUSED', reason: 'IN_FLIGHT', retryAfterMs });
+      return refuse({ result: 'REFUSED', reason: 'IN_FLIGHT', counterOffer, retryAfterMs });
     }
     if (cmd.op === 'convert') {
       const b = cmd.body;
@@ -281,4 +393,16 @@ export class MinuteOracle {
     for (const v of this.all) if (v > m) m = v;
     return m;
   }
+}
+
+/**
+ * The selling horizon of a request received at minute m0 (POL-09): the same UTC date and time `months` later,
+ * or the last day of that month if it has no such date. Written apart from the link's code, for the oracle.
+ */
+export function oracleHorizon(m0: number, months: number): number {
+  const d = new Date(m0 * 60_000);
+  const target = new Date(Date.UTC(d.getUTCFullYear(), d.getUTCMonth() + months, 1, d.getUTCHours(), d.getUTCMinutes()));
+  const daysInTarget = new Date(Date.UTC(target.getUTCFullYear(), target.getUTCMonth() + 1, 0)).getUTCDate();
+  target.setUTCDate(Math.min(d.getUTCDate(), daysInTarget));
+  return target.getTime() / 60_000;
 }

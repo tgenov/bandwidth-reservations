@@ -7,7 +7,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { CockroachOwnerRuntime, ManualLoad, MemoryPublisher, utf8 } from '@share/owner-runtime';
 import { MemoryStore } from '@share/owner-runtime/testing';
-import { declaration, LinkOwner, runtimeLogReader, type DecidedRecord } from '../src/index.ts';
+import { declaration, DEFAULT_POLICY, LinkOwner, runtimeLogReader, type DecidedRecord } from '../src/index.ts';
 import { propertyRun } from './property.ts';
 import { AccountStub, harness, M } from './support.ts';
 
@@ -30,6 +30,28 @@ test('should keep the P1-N1 properties when 50 clients send 8 seeds × 2,000 hol
     'REFUSED:"TOMBSTONED"', 'MISMATCH', 'NO_HOLD', 'TOMBSTONED']) {
     assert.ok((total[k] ?? 0) > 0, `outcome ${k} occurs (${JSON.stringify(total)})`);
   }
+});
+
+test('T-04 counter-offers equal the oracle with the step bound and the batch budget when 50 clients send 4 seeds × 1,500 commands', async () => {
+  const policy = { ...DEFAULT_POLICY, counterofferSteps: 2, counterofferBatchSteps: 5 };
+  const total: Record<string, number> = {};
+  let recalled = 0;
+  for (const seed of [31, 32, 33, 34]) {
+    const h = await harness({ link: `tight-${seed}`, capacity: 10, policy });
+    const res = await propertyRun({
+      stub: h.stub, decided: h.decided, capacity: 10, base: M(0), policy,
+      readLog: async () => h.rt.log(utf8(h.link)).map((e) => ({ seq: e.seq, ts: e.ts, epoch: e.epoch, kind: e.entry.kind, payload: e.entry.payload })),
+      advance: (ms) => h.rt.advance(ms),
+    }, seed, 1_500, 50);
+    for (const [k, v] of Object.entries(res.counts)) total[k] = (total[k] ?? 0) + v;
+    for (const d of h.decided) {
+      const offer = (d.outcome as { counterOffer?: { earliest: object } }).counterOffer;
+      if (offer) for (const k of Object.keys(offer.earliest)) total[`earliest:${k}`] = (total[`earliest:${k}`] ?? 0) + 1;
+    }
+    recalled += h.owner.recalledRecords;
+  }
+  for (const k of ['earliest:window', 'earliest:none', 'earliest:notFoundBefore']) assert.ok((total[k] ?? 0) > 0, `${k} occurs (${JSON.stringify(total)})`);
+  assert.ok(recalled > 0, 'some repeats are answered from link_request');
 });
 
 test('should keep the P1-N1 properties when 50 clients send 2 seeds × 1,000 commands on the real C01 runtime core (in-memory store)', async () => {

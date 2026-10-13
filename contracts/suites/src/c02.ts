@@ -3,11 +3,16 @@
  * Tests come from C02 "Conformance tests", provider side 1 to 4. They run against the real link owner and
  * against the account slice's link double.
  *
+ * The S-LINK I2 part (the counter-offer, `query` and the link availability query) runs only for a subject
+ * registered with `{ i2: true }`. For another subject, the suite registers a PENDING entry for that part
+ * (contracts/suites/ISSUES.md, "Known double gaps").
+ *
  * The types are copied from C02 "Schema" (the subset that the tests use). They are structurally the same
  * as the types of each slice, so each slice can give its own port.
  */
 import assert from 'node:assert/strict';
 import type { CommandEnvelope, Epoch, Generation, HlcTs, PartitionKey, RoutingRefusal, Seq } from '@share/owner-runtime';
+import { test } from 'node:test';
 import { bytes, subjectTest, tsAtMs, type Closable, type SubjectFactory } from './support.ts';
 
 // ---------- C02 "Schema" (subset) ----------
@@ -46,11 +51,39 @@ export interface C02ReleaseCmd {
 }
 export type C02ReleaseReply = (C02LinkStamp & { result: 'RELEASED'; tombstoneUntil: number }) | RoutingRefusal | C02Error;
 
+export interface C02CounterOffer {
+  largestRateMbps: number;
+  earliest: { window: C02Window } | { none: true } | { notFoundBefore: number };
+}
+export interface C02QueryCmd { link: string; receiverPartition: string; request: C02RequestId }
+export type C02QueryReply = (C02LinkStamp & {
+  state: 'UNSEEN' | 'HELD' | 'WAITING' | 'DISPLACED' | 'REFUSED' | 'RELEASED' | 'CONVERTED';
+  attempt?: number; aheadDeadline?: number;
+  refusal?: { reason: C02RefusalReason; counterOffer?: C02CounterOffer; retryAfterMs?: number };
+  tombstoneUntil?: number;
+}) | RoutingRefusal | C02Error;
+export interface C02AvailabilityQuery { link: string; receiverPartition: string; window: C02Window; rateMbps: number }
+export type C02AvailabilityReply = (C02LinkStamp & { asOfSeq: Seq; offer: C02CounterOffer }) | RoutingRefusal | C02Error;
+export interface C02FitRangesQuery { link: string; receiverPartition: string; rateMbps: number; from: number; until: number; k: number }
+export type C02FitRangesReply = (C02LinkStamp & { asOfSeq: Seq; ranges: C02Window[]; continueFrom: number | null })
+  | RoutingRefusal | C02Error;
+
 /** The link hold port as a sender calls it. The C01 envelope travels beside the body. */
 export interface C02HoldPort {
   hold(env: CommandEnvelope, cmd: C02HoldCmd): Promise<C02HoldReply>;
   convert(env: CommandEnvelope, cmd: C02ConvertCmd): Promise<C02ConvertReply>;
   release(env: CommandEnvelope, cmd: C02ReleaseCmd): Promise<C02ReleaseReply>;
+  /** C02 `query` (S-LINK I2). */
+  query?(env: CommandEnvelope, cmd: C02QueryCmd): Promise<C02QueryReply>;
+  /** C02 link availability query (S-LINK I2). */
+  availability?(env: CommandEnvelope, q: C02AvailabilityQuery): Promise<C02AvailabilityReply>;
+  fitRanges?(env: CommandEnvelope, q: C02FitRangesQuery): Promise<C02FitRangesReply>;
+}
+
+/** Which parts beyond the I1 subset a subject provides. */
+export interface C02SuiteOptions {
+  /** The counter-offer on NO_FIT and IN_FLIGHT, `query`, `availability` and `fit_ranges` (S-LINK I2). */
+  i2?: boolean;
 }
 
 /** The capacity (Mbps) of the one link that every C02 subject registers. */
@@ -112,7 +145,7 @@ function stamp(r: object): C02LinkStamp {
 }
 
 /** Register the C02 provider suite against the subjects that `make` creates. */
-export function runC02ProviderSuite(name: string, make: SubjectFactory<C02Subject>): void {
+export function runC02ProviderSuite(name: string, make: SubjectFactory<C02Subject>, opts: C02SuiteOptions = {}): void {
   const t = (id: string, behaviour: string, body: (s: C02Subject) => Promise<void>): void =>
     subjectTest('C02', id, name, behaviour, make, body);
   const C = C02_SUITE_CAPACITY;
@@ -237,5 +270,60 @@ export function runC02ProviderSuite(name: string, make: SubjectFactory<C02Subjec
   t('4', 'convert of a request that the link never saw gets NO_HOLD', async (s) => {
     const h = holdCmd(s, { rate: 1 });
     assert.deepEqual(await s.port.convert(env(s, h), convertCmd(s, h)), { code: 'NO_HOLD' });
+  });
+
+  if (!opts.i2) {
+    test(`C02 [${name}] PENDING (S-LINK I2 part): counter-offer, query, availability and fit_ranges`,
+      { todo: 'the subject does not provide the S-LINK I2 part (contracts/suites/ISSUES.md)' }, () => {});
+    return;
+  }
+
+  const query = (s: C02Subject): NonNullable<C02HoldPort['query']> => {
+    assert.ok(s.port.query, 'the subject provides query');
+    return s.port.query.bind(s.port);
+  };
+
+  t('1', 'hold: REFUSED(NO_FIT) and REFUSED(IN_FLIGHT) carry the POL-10 counter-offer beside committed and held capacity', async (s) => {
+    const m = Math.floor(s.nowMs() / 60_000) + 60;
+    const w = { start: m, end: m + 60 };
+    const a = holdCmd(s, { rate: C - 2, window: w });
+    assert.equal(outcome(await s.port.hold(env(s, a), a))['result'], 'HELD');
+    assert.equal(outcome(await s.port.convert(env(s, a), convertCmd(s, a)))['result'], 'CONVERTED');
+    const pending = holdCmd(s, { account: 'b2', rate: 1, window: w });
+    assert.equal(outcome(await s.port.hold(env(s, pending), pending))['result'], 'HELD');
+    const noFit = holdCmd(s, { account: 'b3', rate: 5, window: w });
+    assert.deepEqual(outcome(await s.port.hold(env(s, noFit), noFit)), {
+      result: 'REFUSED', reason: 'NO_FIT', counterOffer: { largestRateMbps: 1, earliest: { window: { start: m + 60, end: m + 120 } } },
+    });
+    const inFlight = holdCmd(s, { account: 'b4', rate: 2, window: w, wait: false });
+    const r = outcome(await s.port.hold(env(s, inFlight), inFlight));
+    assert.deepEqual([r['reason'], r['counterOffer']], ['IN_FLIGHT', { largestRateMbps: 1, earliest: { window: { start: m + 60, end: m + 120 } } }]);
+  });
+
+  t('1', 'query: after each refusal the query shows the recorded refusal and a tombstone; an unseen request is UNSEEN', async (s) => {
+    const a = holdCmd(s, { rate: C });
+    assert.equal(outcome(await s.port.hold(env(s, a), a))['result'], 'HELD');
+    for (const cmd of [holdCmd(s, { account: 'b2', rate: 1 }), holdCmd(s, { account: 'b3', rate: 1, deadlineInMs: TAU_MS - 1 })]) {
+      const { result: _r, ...refusal } = outcome(await s.port.hold(env(s, cmd), cmd));
+      const q = await query(s)(env(s, cmd), { link: s.link, receiverPartition: s.link, request: cmd.request });
+      assert.deepEqual(outcome(q), { state: 'REFUSED', refusal, tombstoneUntil: cmd.deadline + RELEASE_GRACE_MS });
+    }
+    assert.deepEqual(outcome(await query(s)(env(s, a), { link: s.link, receiverPartition: s.link, request: a.request })), { state: 'HELD', attempt: 1 });
+    const unseen = holdCmd(s, { account: 'b5', rate: 1 });
+    assert.deepEqual(outcome(await query(s)(env(s, unseen), { link: s.link, receiverPartition: s.link, request: unseen.request })), { state: 'UNSEEN' });
+  });
+
+  t('availability', 'availability and fit_ranges answer beside held capacity, as of asOfSeq, and change nothing', async (s) => {
+    assert.ok(s.port.availability && s.port.fitRanges, 'the subject provides the availability query');
+    const m = Math.floor(s.nowMs() / 60_000) + 60;
+    const a = holdCmd(s, { rate: C - 3, window: { start: m, end: m + 60 } });
+    const held = await s.port.hold(env(s, a), a);
+    const e = env(s, a);
+    const av = await s.port.availability(e, { link: s.link, receiverPartition: s.link, window: { start: m, end: m + 60 }, rateMbps: 5 });
+    assert.deepEqual(outcome(av), { asOfSeq: stamp(held).linkSeq, offer: { largestRateMbps: 3, earliest: { window: { start: m + 60, end: m + 120 } } } });
+    const fr = await s.port.fitRanges(e, { link: s.link, receiverPartition: s.link, rateMbps: 5, from: m - 60, until: m + 120, k: 4 });
+    assert.deepEqual(outcome(fr), { asOfSeq: stamp(held).linkSeq, ranges: [{ start: m - 60, end: m }, { start: m + 60, end: m + 120 }], continueFrom: null });
+    const b = holdCmd(s, { account: 'b2', rate: 3, window: { start: m, end: m + 60 } });
+    assert.deepEqual(outcome(await s.port.hold(env(s, b), b)), { result: 'HELD', attempt: 1 }, 'the query held nothing');
   });
 }
