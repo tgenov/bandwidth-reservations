@@ -243,7 +243,9 @@ dev dependency (it stays the oracle of the parity test), and add the §7 rule to
 
 The benchmark script is `tools/bench/bus-bench.ts`. `platformatic` is the runtime's `KafkaBus`
 (`platform/runtime/src/feed/kafka-bus.ts`). `kafkajs` is the old adapter, kept as a baseline in
-`tools/bench/kafkajs-bus.ts`. The Confluent adapter is not merged.
+`tools/bench/kafkajs-bus.ts`. The Confluent adapter is not merged. It is on the branch
+`spike/kafka-confluent` (based on `66ab6b6`), with its own bench (`BUS_CLIENT=confluent`). Use it
+as the starting point if the runtime must change to the fallback.
 
 ```
 npm run dev:up
