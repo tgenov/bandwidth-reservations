@@ -166,3 +166,10 @@ in the fix code. Each is closed with tests only (no change in `src/`). Each muta
 - The offset check is opt-in (`offsetCheck`); production wiring must turn it on in every owner, status reader and relay process.
 - A person runs the I2 integration tests on the dev cell (`REQUIRE_DEV_CELL=1 npm run test:platform:integration`)
   before the merge; this run did not run them.
+
+## Watch: possible flaky test (2026-10-13)
+
+`C01 CP-1 with the second lane on: across seeded load, …` (`runtime/test/second-lane.test.ts`) failed once
+during a manual `pg.ts` mutant run, while other test runs shared the machine. The test does not use `PgStore`.
+It did not fail again: 20 full `test:platform` runs after that gave 300 of 300 each. If it fails again, record the
+seed from the failure message and treat it as a bug (engineering.md §8).
