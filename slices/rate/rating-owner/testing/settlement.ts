@@ -35,7 +35,7 @@ interface PostedLine { digest: string; content: string; total: bigint; seq: numb
 export class LedgerDouble {
   readonly movements: MovementRecord[] = [];
   private readonly bySourceRef = new Map<string, PostedLine>();
-  private readonly lineTotals = new Map<string, { total: bigint; lastSeq: number }>();
+  private readonly lineTotals = new Map<string, { total: bigint; lastSeq: number; position: LedgerPosition; movementId: string }>();
   private readonly answers = new Map<string, { digest: string; answer: PostMovementResponse }>();
   private readonly seqs = new Map<string, bigint>();
   private readonly listeners: Array<(m: MovementRecord) => void> = [];
@@ -68,7 +68,8 @@ export class LedgerDouble {
       const sum = l.entries.reduce((n, e) => n + BigInt(e.amount), 0n);
       if (sum !== 0n || l.entries.some((e) => e.amount === '0')) return { result: 'refused', reason: 'invalid', detail: 'entries' };
     }
-    const problems: Array<{ lineRef: SourceRef; problem: 'conflict' | 'prior_total_mismatch' | 'out_of_sequence' | 'invalid'; ledgerPostedTotal?: string; ledgerLastSeq?: number }> = [];
+    const problems: Array<{ lineRef: SourceRef; problem: 'conflict' | 'prior_total_mismatch' | 'out_of_sequence' | 'invalid';
+      of?: string; ledgerPostedTotal?: string; ledgerLastSeq?: number; ledgerPosition?: LedgerPosition }> = [];
     const outcomes: Array<'posted' | 'duplicate'> = [];
     for (const l of req.lines) {
       const ref = l.lineRef as SourceRef;
@@ -78,12 +79,18 @@ export class LedgerDouble {
       if (seen) {
         if (seen.content === content) { outcomes.push('duplicate'); continue; }
         this.integrityAlerts.push(`content conflict on ${d}`);
-        problems.push({ lineRef: ref, problem: 'conflict', ledgerPostedTotal: seen.total.toString(), ledgerLastSeq: seen.seq });
+        // C06 §7: rating re-bases on ledgerPostedTotal and puts the posting at ledgerPosition for P_X.
+        problems.push({ lineRef: ref, problem: 'conflict', of: seen.movementId, ledgerPostedTotal: seen.total.toString(), ledgerLastSeq: seen.seq,
+          ledgerPosition: seen.position });
         continue;
       }
       const lt = this.lineTotals.get(lineKeyOf(ref));
       const seq = 'seq' in ref ? ref.seq : 0;
-      if (BigInt(l.priorTotal ?? '0') !== (lt?.total ?? 0n)) { problems.push({ lineRef: ref, problem: 'prior_total_mismatch', ledgerPostedTotal: (lt?.total ?? 0n).toString(), ledgerLastSeq: lt?.lastSeq ?? -1 }); continue; }
+      if (BigInt(l.priorTotal ?? '0') !== (lt?.total ?? 0n)) {
+        problems.push({ lineRef: ref, problem: 'prior_total_mismatch', ledgerPostedTotal: (lt?.total ?? 0n).toString(), ledgerLastSeq: lt?.lastSeq ?? -1,
+          ...(lt ? { of: lt.movementId, ledgerPosition: lt.position } : {}) });
+        continue;
+      }
       if (seq !== (lt ? lt.lastSeq + 1 : 0)) { problems.push({ lineRef: ref, problem: 'out_of_sequence' }); continue; }
       outcomes.push('posted');
     }
@@ -107,7 +114,7 @@ export class LedgerDouble {
         const d = sourceRefDigest(ref);
         const total = BigInt(l.newTotal ?? '0');
         this.bySourceRef.set(d, { digest: d, content: contentOf(l), total, seq: 'seq' in ref ? ref.seq : 0, position, movementId });
-        this.lineTotals.set(lineKeyOf(ref), { total, lastSeq: 'seq' in ref ? ref.seq : 0 });
+        this.lineTotals.set(lineKeyOf(ref), { total, lastSeq: 'seq' in ref ? ref.seq : 0, position, movementId });
         lines.push({ lineRef: ref, kind: l.kind, amount: l.entries.find((e) => e.ledgerAccount.startsWith('B:'))?.amount ?? '0',
           postedTotal: total.toString(), entries: l.entries });
       }
@@ -225,8 +232,10 @@ export class SettlementDouble {
         if (!p) return { sourceRef: l.sourceRef, outcome: 'excluded', reason: 'batch_refused' };
         const reason = p.problem === 'conflict' ? 'content_conflict' as const : p.problem;
         return { sourceRef: l.sourceRef, outcome: 'excluded', reason,
+          ...(p.of === undefined ? {} : { conflictOf: p.of }),
           ...(p.ledgerPostedTotal === undefined ? {} : { ledgerPostedTotal: p.ledgerPostedTotal }),
-          ...(p.ledgerLastSeq === undefined ? {} : { ledgerLastSeq: p.ledgerLastSeq }) };
+          ...(p.ledgerLastSeq === undefined ? {} : { ledgerLastSeq: p.ledgerLastSeq }),
+          ...(p.ledgerPosition === undefined ? {} : { ledgerPosition: p.ledgerPosition }) };
       }));
     }
   }

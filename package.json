@@ -6,6 +6,7 @@
     "platform/runtime",
     "platform/migrate",
     "platform/examples/canary",
+    "contracts/suites",
     "slices/link",
     "slices/sec/iam-lib",
     "slices/sec/key-service",
@@ -35,10 +36,12 @@
     "test:account": "node --test --test-concurrency=1 'slices/account/*/test/*.test.ts'",
     "typecheck:rate": "tsc --noEmit -p slices/rate",
     "test:rate": "node --test --test-concurrency=1 'slices/rate/*/test/*.test.ts'",
+    "typecheck:contracts": "tsc --noEmit -p contracts/suites",
+    "test:contracts": "node --test --test-concurrency=1 'contracts/*/test/contract.*.test.ts' 'platform/*/test/contract.*.test.ts' 'slices/*/test/contract.*.test.ts' 'slices/*/*/test/contract.*.test.ts'",
     "check:boundaries": "python3 tools/check_boundaries.py",
-    "typecheck": "npm run -s typecheck:platform && npm run -s typecheck:link && npm run -s typecheck:sec && npm run -s typecheck:account && npm run -s typecheck:rate",
+    "typecheck": "npm run -s typecheck:platform && npm run -s typecheck:link && npm run -s typecheck:sec && npm run -s typecheck:account && npm run -s typecheck:rate && npm run -s typecheck:contracts",
     "test:unit": "npm run -s test:platform && npm run -s test:link && npm run -s test:sec && npm run -s test:account && npm run -s test:rate",
-    "check": "npm run -s check:boundaries && npm run -s typecheck && npm run -s test:unit",
+    "check": "npm run -s check:boundaries && npm run -s typecheck && npm run -s test:unit && npm run -s test:contracts",
     "test:integration": "npm run -s test:platform:integration && npm run -s test:link:integration"
   },
   "dependencies": {
