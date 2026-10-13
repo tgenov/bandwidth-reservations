@@ -12,7 +12,10 @@ import type {
   ProjectionWrite, ReadTx, ReportMarker, RouteInfo, RoutingRefusal, RowRef, Seq, SlotNo, SlotOfAnswer,
   StreamSeq, TimingSnapshot, WriterFence,
 } from '../src/api.ts';
-import { encodeJson, hex } from '../src/bytes.ts';
+import { encodeJson, hex, utf8 } from '../src/bytes.ts';
+import { chainGenesis, chainNext } from '../src/chain.ts';
+import { NotClosed, type StatusReaderRuntime } from '../src/api.ts';
+import { memoryQuery } from '../src/store/memory.ts';
 import { compareHlc, hlcFromWallMs, hlcParts, hlc } from '../src/hlc.ts';
 import { slotOfPartition } from '../src/home.ts';
 import { rowId } from '../src/rowref.ts';
@@ -53,6 +56,8 @@ export const REFUSALS = {
 export interface DoubleLogEntry {
   seq: Seq; ts: HlcTs; epoch: Epoch; generation: Generation; entry: EntryInput;
   streamSeqs: Array<{ stream: string; streamSeq: StreamSeq }>;
+  /** C08 §J chain over the double's plaintext row (the real runtime chains the sealed row). */
+  chain: Uint8Array;
 }
 
 export type ScriptedAppend = AppendResult | ((call: AppendCall, opts: AppendOptions | undefined) => AppendResult);
@@ -66,7 +71,23 @@ export type TraceItem =
 
 interface PartitionState {
   partition: PartitionKey; seq: Seq; ts: HlcTs | null; epoch: Epoch; generation: Generation; adopted: boolean;
-  slot: SlotNo; streams: Record<string, StreamSeq>; log: DoubleLogEntry[];
+  slot: SlotNo; streams: Record<string, StreamSeq>; log: DoubleLogEntry[]; chain: Uint8Array;
+}
+
+/** State that the doubles of one process (or test) share: clock, rows, slot counts, displacement markers. */
+export class DoubleWorld {
+  nowMs: number;
+  logical = 0;
+  readonly rows = new Map<string, unknown>();
+  /** table → rows with their key columns (for consistentRead / followerRead queries). */
+  readonly tableRows = new Map<string, Map<string, { key: Record<string, unknown>; row: unknown }>>();
+  readonly slotCounts = new Map<OwnerKind, number>();
+  /** hex(link)|hex(request) → displacement marker row (C02 link_displacement). */
+  readonly displacement = new Map<string, { attempt: number; row: unknown }>();
+  readonly members: RuntimeDouble[] = [];
+  constructor(startMs = 1_700_000_000_000) {
+    this.nowMs = startMs;
+  }
 }
 
 export interface RuntimeDoubleOptions {
@@ -80,6 +101,12 @@ export interface RuntimeDoubleOptions {
   startMs?: number;
   /** Called when a timer fires (C01 §3.7: the owner then appends an entry). */
   onTimer?: (partition: PartitionKey, key: string) => void;
+  /** Slot counts of other kinds, for `route` (default: the target kind's own count if known, else this one's). */
+  slotCounts?: Record<OwnerKind, number>;
+  /** Advance the report position on each commit and call onReportable on start/acquire (default true). */
+  autoReport?: boolean;
+  /** Share clock, rows and markers with other doubles (see RuntimeDouble.group). */
+  world?: DoubleWorld;
 }
 
 export class RuntimeDouble implements OwnerRuntime {
@@ -99,7 +126,7 @@ export class RuntimeDouble implements OwnerRuntime {
   private readonly script: ScriptedAppend[] = [];
   private restartsNext = 0;
   private readonly partitions = new Map<string, PartitionState>();
-  private readonly rows = new Map<string, unknown>();
+  private get rows(): Map<string, unknown> { return this.world.rows; }
   private readonly held = new Map<SlotNo, { epoch: Epoch; lease: boolean }>();
   private readonly lastEpoch = new Map<SlotNo, Epoch>();
   private readonly stops = new Map<string, Uint8Array>();
@@ -116,21 +143,63 @@ export class RuntimeDouble implements OwnerRuntime {
   private readonly routes = new Map<string, RouteInfo>();
   private readonly declaration: OwnerDeclaration | undefined;
   private timingSnapshot: TimingSnapshot;
-  private nowMs: number;
-  private logical = 0;
+  readonly world: DoubleWorld;
+  private readonly autoReport: boolean;
+  private get nowMs(): number { return this.world.nowMs; }
+  private set nowMs(v: number) { this.world.nowMs = v; }
+
+  /** Doubles of several owner kinds that share one world (clock, rows, slot counts, displacement markers). */
+  static group(decls: OwnerDeclaration[], opts: Omit<RuntimeDoubleOptions, 'declaration' | 'world'> = {}): Record<OwnerKind, RuntimeDouble> {
+    const world = new DoubleWorld(opts.startMs);
+    const out: Record<OwnerKind, RuntimeDouble> = {};
+    for (const d of decls) out[d.kind] = new RuntimeDouble({ ...opts, declaration: d, world });
+    return out;
+  }
 
   constructor(opts: RuntimeDoubleOptions = {}) {
     this.declaration = opts.declaration;
     this.kind = opts.declaration?.kind ?? 'test';
     this.slotCount = opts.declaration?.slotCount ?? opts.slotCount ?? 16;
     this.timingSnapshot = opts.timing ?? { version: 1n, epsilonMs: 100, deltaXMs: 320, tauMs: 420 };
-    this.nowMs = opts.startMs ?? 1_700_000_000_000;
+    this.world = opts.world ?? new DoubleWorld(opts.startMs);
+    this.world.members.push(this);
+    this.world.slotCounts.set(this.kind, this.slotCount);
+    for (const [k, n] of Object.entries(opts.slotCounts ?? {})) this.world.slotCounts.set(k, n);
+    this.autoReport = opts.autoReport ?? true;
     this.onTimer = opts.onTimer;
     const slots = opts.slots ?? Array.from({ length: this.slotCount }, (_, i) => i);
     for (const s of slots) this.held.set(s, { epoch: 1n, lease: true });
   }
 
   // ---------------- scripting ----------------
+
+  /**
+   * Start like the real runtime: onAcquire('expiry') for every start slot, then (with autoReport) the report
+   * position and onReportable. `attach` alone calls no hook.
+   */
+  async start(hooks?: OwnerHooks): Promise<this> {
+    if (hooks) this.hooks = hooks;
+    for (const [slot, h] of [...this.held]) {
+      await this.hooks?.onAcquire(slot, h.epoch, 'expiry');
+      this.reportable(slot);
+    }
+    return this;
+  }
+
+  private reportable(slot: SlotNo): void {
+    if (!this.autoReport) return;
+    this.setReportPosition(slot, this.now().ts);
+    this.hooks?.onReportable(slot);
+  }
+
+  /** A displacement marker for (link, request) (C02): displacementRead fails for any attempt. */
+  putDisplacementMarker(link: PartitionKey, request: Uint8Array, attempt: number, row: unknown = { attempt }): void {
+    this.world.displacement.set(`${hex(link)}|${hex(request)}`, { attempt, row });
+  }
+
+  removeDisplacementMarker(link: PartitionKey, request: Uint8Array): void {
+    this.world.displacement.delete(`${hex(link)}|${hex(request)}`);
+  }
 
   /** Attach the owner's hooks (the double calls them from acquire/release/moveOut/adopt/notify). */
   attach(hooks: OwnerHooks, onTimer?: (partition: PartitionKey, key: string) => void): this {
@@ -164,7 +233,7 @@ export class RuntimeDouble implements OwnerRuntime {
 
   advance(ms: number): void {
     this.nowMs += ms;
-    this.fireDueTimers();
+    for (const d of this.world.members) d.fireDueTimers();
   }
 
   /** Open an integrity stop: appends for the partition answer Stopped (CC-4). */
@@ -203,6 +272,7 @@ export class RuntimeDouble implements OwnerRuntime {
     const epoch = prev + 1n;
     this.held.set(slot, { epoch, lease: true });
     await this.hooks?.onAcquire(slot, epoch, kind);
+    this.reportable(slot);
     return epoch;
   }
 
@@ -387,12 +457,12 @@ export class RuntimeDouble implements OwnerRuntime {
   route(kind: OwnerKind, partition: PartitionKey): RouteInfo {
     const r = this.routes.get(`${kind}|${hex(partition)}`);
     if (r) return r;
-    const slot = slotOfPartition(partition, this.slotCount);
+    const slot = slotOfPartition(partition, this.world.slotCounts.get(kind) ?? this.slotCount);
     return { slot, generation: kind === this.kind ? this.generation(partition) : 0, epoch: kind === this.kind ? this.epoch(slot) : 1n, readers: [] };
   }
 
   slotOf(account: PartitionKey): SlotOfAnswer {
-    return { slot: slotOfPartition(account, this.slotCount), mapVersion: 1n, headDecides: false };
+    return { slot: slotOfPartition(account, this.world.slotCounts.get('account') ?? this.slotCount), mapVersion: 1n, headDecides: false };
   }
 
   topology(): { state: string; preferredRegion: 'R1' | 'R2'; disaster: null | { region: string; since: HlcTs } } {
@@ -435,7 +505,12 @@ export class RuntimeDouble implements OwnerRuntime {
         if (c.kind === 'rowAbsent') ok = !this.rows.has(rowId(c.row));
         else if (c.kind === 'rowPresent') ok = this.rows.has(rowId(c.row));
         else if (c.kind === 'tsBefore') ok = compareHlc(ts, c.bound(this.timingSnapshot)) < 0;
-        else ok = true; // displacementRead: no marker in the double unless a row is set under the label
+        else if (c.kind === 'displacementRead') {
+          // C02 / P1-S78: a marker for (link, request) with ANY attempt fails the condition.
+          const m = this.world.displacement.get(`${hex(c.link)}|${hex(c.request)}`);
+          if (m) return { r: 'ConditionFailed', which: c.label, displacement: { attempt: m.attempt, row: m.row } };
+          ok = true;
+        } else ok = true;
         conditionResults[c.label] = ok;
         if (!ok) return { r: 'ConditionFailed', which: c.label };
       }
@@ -478,23 +553,33 @@ export class RuntimeDouble implements OwnerRuntime {
         this.published.push({ topic, partition, stream: em.stream, streamSeq: next, event: em.event });
       }
       if (entry.senderFence) this.recordFence(entry.senderFence, entry.senderFence);
-      st.log.push({ seq: st.seq, ts, epoch, generation: st.generation, entry, streamSeqs: assigned });
+      st.chain = chainNext(st.chain, {
+        kindName: this.kind, partition, seq: st.seq, slot, generation: st.generation, epoch, entryKind: entry.kind, schemaV: entry.schemaV,
+        identity: entry.identity, emits: encodeJson(assigned.map((a) => [a.stream, a.streamSeq.toString()])), retention: 0,
+        keyId: utf8('double'), audit: encodeJson(entry.audit), payload: encodeJson(entry.payload),
+      });
+      st.log.push({ seq: st.seq, ts, epoch, generation: st.generation, entry, streamSeqs: assigned, chain: st.chain });
     }
     for (const w of d.projections ?? []) this.applyProjection(w);
     for (const n of d.notifications ?? []) this.notificationsSent.push(n);
     st.ts = ts; st.epoch = epoch; st.slot = slot;
+    if (this.autoReport && this.reportPositions.has(slot)) this.setReportPosition(slot, ts);
     return { r: 'Committed', seqFrom, seqTo: st.seq, ts, streamSeqs };
   }
 
   private applyProjection(w: ProjectionWrite): void {
     const id = rowId({ table: w.table, key: w.key });
-    if (w.op === 'delete') this.rows.delete(id);
-    else this.rows.set(id, w.row);
+    if (w.op === 'delete') { this.rows.delete(id); this.world.tableRows.get(w.table)?.delete(id); }
+    else this.putRow({ table: w.table, key: w.key }, w.row);
   }
 
-  /** Test helper: set a row directly (e.g. a displacement marker or a pre-existing projection row). */
+  /** Test helper: set a row directly (e.g. a pre-existing projection row). */
   putRow(ref: RowRef, row: unknown): void {
-    this.rows.set(rowId(ref), row);
+    const id = rowId(ref);
+    this.rows.set(id, row);
+    let t = this.world.tableRows.get(ref.table);
+    if (!t) { t = new Map(); this.world.tableRows.set(ref.table, t); }
+    if (ref.key !== null && typeof ref.key === 'object') t.set(id, { key: ref.key as Record<string, unknown>, row });
   }
 
   private state(partition: PartitionKey): PartitionState {
@@ -502,7 +587,7 @@ export class RuntimeDouble implements OwnerRuntime {
     let st = this.partitions.get(k);
     if (!st) {
       st = { partition, seq: 0n, ts: null, epoch: 0n, generation: 0, adopted: true,
-        slot: slotOfPartition(partition, this.slotCount), streams: {}, log: [] };
+        slot: slotOfPartition(partition, this.slotCount), streams: {}, log: [], chain: chainGenesis(this.kind, partition) };
       this.partitions.set(k, st);
     }
     return st;
@@ -515,13 +600,13 @@ export class RuntimeDouble implements OwnerRuntime {
         seq: 0n, ts: null, epoch: 0n, streams: {}, chain: new Uint8Array(32) };
     }
     return { exists: true, partition, slot: st.slot, generation: st.generation, adopted: st.adopted,
-      seq: st.seq, ts: st.ts, epoch: st.epoch, streams: { ...st.streams }, chain: new Uint8Array(32) };
+      seq: st.seq, ts: st.ts, epoch: st.epoch, streams: { ...st.streams }, chain: st.chain };
   }
 
   /** Strictly increasing per partition (C01 §3.2), from the virtual clock. */
   private nextTs(k: string): HlcTs {
-    this.logical += 1;
-    let t = hlc(`${BigInt(this.nowMs) * 1_000_000n}.${String(this.logical).padStart(10, '0')}`);
+    this.world.logical += 1;
+    let t = hlc(`${BigInt(this.nowMs) * 1_000_000n}.${String(this.world.logical).padStart(10, '0')}`);
     const last = this.partitions.get(k)?.ts;
     if (last && compareHlc(t, last) <= 0) {
       const p = hlcParts(last);
@@ -530,7 +615,8 @@ export class RuntimeDouble implements OwnerRuntime {
     return t;
   }
 
-  private fireDueTimers(): void {
+  /** Fire the timers that are due at the world's clock. */
+  fireDueTimers(): void {
     const now = hlcFromWallMs(this.nowMs);
     for (const [k, t] of [...this.timers]) {
       if (compareHlc(t.atTs, now) <= 0) {
@@ -541,8 +627,21 @@ export class RuntimeDouble implements OwnerRuntime {
     }
   }
 
+  /** `SELECT … FROM <table> [WHERE c = $n AND …]` over the world's projection rows and this kind's heads. */
   private readTx(): ReadTx {
-    return { query: async () => [] };
+    return {
+      query: async (sql, params) => memoryQuery(sql, params ?? [], (table) => {
+        if (table === `${this.kind}_head`) {
+          return [...this.partitions.values()].filter((p) => p.ts !== null).map((p) => ({ ...this.headRow(hex(p.partition), p.partition) }));
+        }
+        return [...(this.world.tableRows.get(table)?.values() ?? [])].map((r) => ({ ...r.key, ...(r.row as Record<string, unknown>) }));
+      }) as never,
+    };
+  }
+
+  /** Is the partition moved out of this double (for the status reader double)? */
+  isMovedOut(partition: PartitionKey): boolean {
+    return this.movedOut.has(hex(partition));
   }
 }
 
@@ -590,4 +689,49 @@ export function feedEvent(args: {
 }
 
 /** The in-memory store behind CockroachOwnerRuntime, with fault injection (for runtime-level tests). */
-export { MemoryStore, type MemoryFaults, type CommitFault } from '../src/store/memory.ts';
+export { MemoryStore, memoryFeedSeqReader, type MemoryFaults, type CommitFault } from '../src/store/memory.ts';
+export { MemoryBus } from '../src/feed/memory-bus.ts';
+export { MemoryChangefeed } from '../src/relay/memory-changefeed.ts';
+export { MemoryGapFill } from '../src/consumer/gapfill.ts';
+
+// ---------------- status readers (C01 §2.4 StatusReaderRuntime) ----------------
+
+/**
+ * A StatusReaderRuntime double over a RuntimeDouble: a lease per slot (valid unless set otherwise, P_grant =
+ * the double's report position), leasedRead of the double's rows (NotClosed without a valid lease),
+ * isMovedOut from the double's moves, and a scriptable rule-3 answer.
+ */
+export class StatusReaderDouble implements StatusReaderRuntime {
+  private readonly rt: RuntimeDouble;
+  private readonly invalid = new Set<SlotNo>();
+  holderLive = true;
+  rule3Rows: unknown = undefined;
+  constructor(rt: RuntimeDouble) {
+    this.rt = rt;
+  }
+
+  setLease(slot: SlotNo, valid: boolean): this {
+    if (valid) this.invalid.delete(slot); else this.invalid.add(slot);
+    return this;
+  }
+
+  readLease(slot: SlotNo): { valid: boolean; untilMonotonic: MonotonicNs; appliedThrough: HlcTs; reportPosition: HlcTs; pGrant: HlcTs } {
+    const p = this.rt.reportPosition(slot);
+    const valid = p !== undefined && !this.invalid.has(slot) && this.rt.epoch(slot) > 0n;
+    const zero = hlc('0');
+    return { valid, untilMonotonic: process.hrtime.bigint() + (valid ? 300_000_000n : 0n), appliedThrough: p ?? zero, reportPosition: p ?? zero, pGrant: p ?? zero };
+  }
+
+  async leasedRead(partition: PartitionKey, points: RowRef[]): Promise<Array<unknown | undefined>> {
+    if (!this.readLease(this.rt.route(this.rt.kind, partition).slot).valid) throw new NotClosed('no valid read lease (double)');
+    return points.map((p) => this.rt.row(p));
+  }
+
+  isMovedOut(partition: PartitionKey): boolean {
+    return this.rt.isMovedOut(partition);
+  }
+
+  async replicaRule3Check(_accountSlot: SlotNo, _requestKey: Uint8Array): Promise<{ holderLive: boolean; rows?: unknown }> {
+    return { holderLive: this.holderLive, ...(this.rule3Rows !== undefined ? { rows: this.rule3Rows } : {}) };
+  }
+}

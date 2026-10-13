@@ -1,7 +1,7 @@
 {
   "name": "@share/owner-runtime",
   "version": "1.0.0-alpha.1",
-  "description": "C01 v1 owner runtime (S-PLAT I1a): types, runtime double, CockroachDB batch runtime, direct publish",
+  "description": "C01 v1 owner runtime (S-PLAT I1a + I1b): types, runtime double, CockroachDB batch runtime, feeds, relay, closure, reporting, status readers",
   "private": true,
   "type": "module",
   "exports": {

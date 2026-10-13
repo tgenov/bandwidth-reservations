@@ -47,8 +47,28 @@ export function platformMigration(): Migration {
   state STRING CHECK (state IN ('stopped','resumed')), checkpoint BYTES NULL, at DECIMAL NOT NULL,
   PRIMARY KEY (kind, partition, detection_ref)
 )`,
-      // TODO(I1b, C01 §2.3 Grants and named platform read roles; CP-2c, CP-11): roles, grants, row-level security.
-      // TODO(I1b, C01 §2.3 placement tables): placement_account_slot_map, overrides, moves, probe accounts, split acks.
+      // C08 §C: slot-wide commit position of kinds that declare slotPositions (an addition to C01 §2.3).
+      `CREATE TABLE IF NOT EXISTS owner_slot_position (
+  kind STRING NOT NULL, slot INT4 NOT NULL, position INT8 NOT NULL, PRIMARY KEY (kind, slot)
+)`,
+      // Placement tables (C01 §2.3). Grants and roles: grants.ts (grantMigration).
+      `CREATE TABLE IF NOT EXISTS placement_account_slot_map (
+  version INT8 PRIMARY KEY, slot_count INT4 NOT NULL, split_state BYTES NOT NULL,
+  overrides_digest BYTES NOT NULL, probe_delta BYTES NOT NULL, published_at DECIMAL NOT NULL
+)`,
+      `CREATE TABLE IF NOT EXISTS placement_slot_override (
+  account BYTES, version INT8, slot INT4, reason STRING, operator BYTES, PRIMARY KEY (account, version)
+)`,
+      `CREATE TABLE IF NOT EXISTS placement_partition_moves (
+  kind STRING, partition BYTES, from_slot INT4, to_slot INT4, generation INT4,
+  state STRING CHECK (state IN ('prewarm','moved','adopted','done')), PRIMARY KEY (kind, partition, generation)
+)`,
+      `CREATE TABLE IF NOT EXISTS placement_probe_accounts (
+  slot INT4 PRIMARY KEY, account BYTES NOT NULL UNIQUE, designated_in INT8 NOT NULL, limit_state STRING NOT NULL
+)`,
+      `CREATE TABLE IF NOT EXISTS placement_split_acks (
+  slot INT4, map_version INT8, epoch INT8, acked_at DECIMAL, PRIMARY KEY (slot, map_version)
+)`,
     ],
   };
 }
@@ -106,6 +126,11 @@ export function kindMigration(d: OwnerDeclaration, opts: { presplit?: boolean } 
   SELECT ${kindLit}, s, NULL, 0 FROM generate_series(0, ${d.slotCount - 1}) AS s
   ON CONFLICT (kind, slot) DO NOTHING`,
   ];
+  if (d.streams.some((s) => s.closure !== 'none')) {
+    // C01 §3.6: one platform slot for the closure emitter of a relayed kind with closure streams.
+    statements.push(`INSERT INTO owner_slot (kind, slot, session_id, epoch) VALUES ('closure_${d.kind}', 0, NULL, 0)
+  ON CONFLICT (kind, slot) DO NOTHING`);
+  }
   if (opts.presplit !== false) {
     const splits = splitSlots(d.slotCount);
     if (splits.length > 0) {
@@ -117,7 +142,13 @@ export function kindMigration(d: OwnerDeclaration, opts: { presplit?: boolean } 
       statements.push(`ALTER TABLE owner_slot SPLIT AT VALUES ${[0, ...splits.filter((s) => s % 64 === 0)].map((s) => `(${kindLit}, ${s})`).join(', ')}`);
     }
   }
-  // TODO(I2, C01 §2.3 self-outboxed kinds): <kind>_stream_index; refused by validateDeclaration for now.
-  // TODO(I1b, C01 §2.3 Grants): owner role <kind> grants, DELETE only on deletable projections, RLS by kind.
+  if (d.selfOutboxed) {
+    // C01 §2.3, R47-19: the stream index of a self-outboxed kind, filled in the same batch.
+    // TODO(I2, C01 §2.3): drop the outbox of a self-outboxed kind once the relay reads the log.
+    statements.push(`CREATE TABLE IF NOT EXISTS ${t.streamIndex} (
+  partition BYTES NOT NULL, stream STRING NOT NULL, stream_seq INT8 NOT NULL, seq INT8 NOT NULL,
+  PRIMARY KEY (partition, stream, stream_seq)
+)`);
+  }
   return { id: `kind-${d.kind}-v1`, statements };
 }

@@ -54,25 +54,41 @@ export interface OwnerDeclaration {
   selfOutboxed?: boolean;
   streams: Array<{
     name: string;
+    /** `<kind>.<feed>.v<n>`, or a topic a contract names exactly (e.g. `catalogue.v1`; C01 v1.1 erratum). */
     topic: string;
-    key: 'partition' | 'slot';
+    /** 'partition', 'slot' (request outcome feed), or a declared event field (e.g. `{ field: 'account' }`). */
+    key: 'partition' | 'slot' | { field: string };
     emitFn: { version: number };
     closure: 'none' | 'resolved' | 'closedPerLink';
     reportGated?: boolean;
     consumers: OwnerKind[];
   }>;
   statusReaders?: boolean;
+  /** Declared non-log messages (e.g. a watermark), published by the holder on the stream ACL (`publishMessage`). */
+  messages?: Array<{ name: string; topic: string; consumers: OwnerKind[] }>;
+  /** Keep a slot-wide commit sequence (C08 §C `position`): BatchContext.slotPosition, Committed.slotPositions. */
+  slotPositions?: boolean;
   entityIndexes?: Array<{ name: string; from: string; to: 'partition+seq' | 'segment' }>;
   bitemporalQueries?: Array<{ name: string; validTime: string; knownTime: 'ts' | 'payloadField'; field?: string }>;
 }
 
 // ---------- types C01 names but does not define ----------
 
-/** Not defined by C01; the field set is C08 §J `AuditFields` (RFC-005 §9.2). Pseudonymous only. */
+/** C08 common types: microseconds since the Unix epoch. */
+export type EpochMicros = bigint;
+/** C08 common types. */
+export type Tenant =
+  | { kind: 'account'; account: string }
+  | { kind: 'supplier'; supplier: string }
+  | { kind: 'none' };
+
+/** Not defined by C01; the field set is C08 §J `AuditFields` (RFC-005 §9.2). Pseudonymous only.
+ *  `tenant` is C08's Tenant; `received_at` is C08's EpochMicros. The I1a forms (a tenant string, a number)
+ *  are still accepted. */
 export interface AuditFields {
   schema: 'audit.v1';
   principal: {
-    principal_id: string; kind: string; tenant: string;
+    principal_id: string; kind: string; tenant: Tenant | string;
     key_id?: string; session_id?: string; cert_serial?: string; edge_workload?: string;
   };
   on_behalf_of?: { account: string; request_ref: string };
@@ -82,7 +98,7 @@ export interface AuditFields {
     action_id: string; member?: string; set_version?: number;
   };
   cause?: { rule: string; trigger: { partition: string; seq: string } };
-  received_at?: number; request_id?: string;
+  received_at?: EpochMicros | number; request_id?: string;
   decided_at: 'commit';
   policy_version: number;
   iam_position?: { identity_slot: number; head: string };
@@ -170,6 +186,8 @@ export type Condition =
 /** In-transaction context given to `decide` (§2.4, M2, R47-11). Synchronous; re-created on every restart. */
 export interface BatchContext {
   ts: HlcTs; timing: TimingSnapshot;
+  /** Kinds with `slotPositions`: the slot-wide position the first entry of this call gets (C08 §C). */
+  slotPosition?: bigint;
   head(partition: PartitionKey): HeadRow;
   read(row: RowRef): unknown | undefined;
   conditionResults: Record<string, boolean | 'lockTimeout'>;
@@ -190,8 +208,11 @@ export interface AppendOptions {
 }
 
 export type AppendResult =
-  | { r: 'Committed'; seqFrom: Seq; seqTo: Seq; ts: HlcTs; streamSeqs: Record<string, [StreamSeq, StreamSeq]> }
-  | { r: 'ConditionFailed'; which: string }
+  | { r: 'Committed'; seqFrom: Seq; seqTo: Seq; ts: HlcTs; streamSeqs: Record<string, [StreamSeq, StreamSeq]>;
+      /** Kinds with `slotPositions`: the slot-wide positions of this call's entries (C08 §C). */
+      slotPositions?: [bigint, bigint] }
+  /** `displacement`: for a failed displacementRead, the marker row found (any attempt fails it, C02 / P1-S78). */
+  | { r: 'ConditionFailed'; which: string; displacement?: { attempt: number; row: unknown } }
   | { r: 'Retry' }
   | { r: 'StaleEpoch' }
   | { r: 'Moved'; slot: SlotNo; generation: Generation }
@@ -302,6 +323,14 @@ export interface RelayProgress { cdcPartition: number; resolved: HlcTs; linksRel
 // ---------- §2.7 placement (the part the runtime surfaces) ----------
 
 export type SplitState = 'unsplit' | 'splitting' | 'split';
+export interface SlotMapVersion {
+  version: MapVersion; slotCount: number;
+  previousCount?: number;
+  splitState: Record<SlotNo, SplitState>;
+  overrides: Array<{ account: Uint8Array; slot: SlotNo; reason: 'probe_pin' | 'probe_new' | 'reslot' | 'dedicated' }>;
+  probeAccounts: Array<{ slot: SlotNo; account: Uint8Array }>;
+  publishedAt: HlcTs;
+}
 export interface SlotOfAnswer { slot: SlotNo; mapVersion: MapVersion; headDecides: boolean }
 
 // ---------- §2.10 operational alert ----------
@@ -315,4 +344,14 @@ export interface OperationalAlert {
   reasonCode: string;
   detail?: Record<string, string | number>;
   raisedAt: HlcTs;
+}
+
+// ---------- additions (not C01 types) ----------
+
+/** A log row with payload and audit opened (unsealed), for rebuild by replay (C01 §3.1 "Rebuilding a partition"). */
+export interface OpenedLogRow {
+  slot: SlotNo; partition: PartitionKey; seq: Seq; generation: Generation; epoch: Epoch; kind: number; schemaV: number;
+  ts: HlcTs; identity: Uint8Array; emits: Array<[string, StreamSeq]>; retention: number;
+  payload: unknown; audit: unknown; senderFence?: { kind: OwnerKind; partition: PartitionKey } & WriterFence;
+  chain: Uint8Array;
 }

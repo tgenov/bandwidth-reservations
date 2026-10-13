@@ -3,6 +3,13 @@ import { isPowerOfTwo } from './home.ts';
 
 const IDENT = /^[a-z][a-z0-9_]*$/;
 const TOPIC = /^[a-z][a-z0-9_]*\.[a-z0-9_.-]+\.v[0-9]+$/;
+/** A topic a contract names exactly (C01 v1.1 erratum): `<name>(.<part>)*.v<n>`, e.g. `catalogue.v1`. */
+const CONTRACT_TOPIC = /^[a-z][a-z0-9_-]*(\.[a-z0-9_-]+)*\.v[0-9]+$/;
+
+/** True if a declared topic is valid: `<kind>.<feed>.v<n>`, or a contract topic named exactly. */
+export function validTopic(kind: string, topic: string): boolean {
+  return (TOPIC.test(topic) && topic.startsWith(`${kind}.`)) || CONTRACT_TOPIC.test(topic);
+}
 
 export function isIdentifier(s: string): boolean {
   return IDENT.test(s);
@@ -52,9 +59,15 @@ export function validateDeclaration(d: OwnerDeclaration): string[] {
   for (const s of d.streams) {
     if (names.has(s.name)) errors.push(`stream ${s.name} declared twice`);
     names.add(s.name);
-    if (!TOPIC.test(s.topic) || !s.topic.startsWith(`${d.kind}.`)) errors.push(`stream ${s.name}: topic ${s.topic} is not <kind>.<feed>.v<n>`);
+    if (!validTopic(d.kind, s.topic)) errors.push(`stream ${s.name}: topic ${s.topic} is neither <kind>.<feed>.v<n> nor a contract topic`);
+    if (typeof s.key === 'object' && !isIdentifier(s.key.field)) errors.push(`stream ${s.name}: key field ${String(s.key.field)} is not an identifier`);
   }
-  if (d.selfOutboxed) errors.push('selfOutboxed kinds are I2 (C01 §2.3 stream index); not supported in I1a');
+  for (const m of d.messages ?? []) {
+    if (names.has(m.name)) errors.push(`message ${m.name} has the name of a stream or another message`);
+    names.add(m.name);
+    if (!validTopic(d.kind, m.topic)) errors.push(`message ${m.name}: topic ${m.topic} is neither <kind>.<feed>.v<n> nor a contract topic`);
+  }
+  // selfOutboxed kinds are accepted (C01 §2.3): the migration adds <kind>_stream_index and the batch fills it.
   return errors;
 }
 

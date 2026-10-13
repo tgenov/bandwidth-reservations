@@ -9,7 +9,7 @@ import { homeKey } from '../home.ts';
 import { PARAMS } from '../params.ts';
 import { keyObject, rowId } from '../rowref.ts';
 import type {
-  BatchTxn, BatchWrites, DisplacementCondition, FenceRow, OwnerStore, ResolutionRead, SessionRow, SlotLeaseRow, StoredHead,
+  LogRowWrite, BatchTxn, BatchWrites, DisplacementCondition, FenceRow, OwnerStore, ResolutionRead, SessionRow, SlotLeaseRow, StoredHead,
 } from './types.ts';
 
 /** Maps a displacementRead condition to link_displacement's key columns (C02 §link_displacement). */
@@ -101,6 +101,16 @@ function projectionSql(w: ProjectionWrite, offset: number): { sql: string; param
     sql: `UPSERT INTO ${table} (${cols.join(', ')}) VALUES (${cols.map((_, i) => `$${i + 1 + offset}`).join(', ')})`,
     params: cols.map((c) => toPg(row[c])),
   };
+}
+
+/** `outcome_id` values of outbox `headers` JSON (C01 §3.4 rule 7). */
+export function outcomeIdsOf(headers: Uint8Array[]): Uint8Array[] {
+  const out: Uint8Array[] = [];
+  for (const h of headers) {
+    const id = (decodeJson(h) as Record<string, unknown>)['outcome_id'];
+    if (typeof id === 'string') out.push(new Uint8Array(Buffer.from(id, 'hex')));
+  }
+  return out;
 }
 
 function ambiguous(e: unknown): boolean {
@@ -234,6 +244,32 @@ class PgBatchTxn implements BatchTxn {
       const s = projectionSql(p, 0);
       await this.q(s.sql, s.params);
     }
+    for (const x of w.streamIndex ?? []) {
+      await this.q(`INSERT INTO ${assertIdentifier(t.streamIndex)} (partition, stream, stream_seq, seq) VALUES ($1, $2, $3, $4)`,
+        [toPg(x.partition), x.stream, x.streamSeq.toString(), x.seq.toString()]);
+    }
+    if (w.slotPosition) {
+      await this.q(`UPSERT INTO owner_slot_position (kind, slot, position) VALUES ($1, $2, $3)`,
+        [kind, w.slotPosition.slot, w.slotPosition.position.toString()]);
+    }
+    if (w.slotUpdate) {
+      // Only the holder writes these columns, in a batch or a marker-only transaction (C01 §3.4, V59-6).
+      await this.q(`UPDATE owner_slot SET report_through = $3::DECIMAL, marker_seq = $4 WHERE kind = $1 AND slot = $2`,
+        [kind, w.slotUpdate.slot, w.slotUpdate.reportThrough, w.slotUpdate.markerSeq.toString()]);
+    }
+  }
+
+  async readSlotPosition(kind: string, slot: SlotNo): Promise<bigint> {
+    const rows = await this.q('SELECT position FROM owner_slot_position WHERE kind = $1 AND slot = $2', [kind, slot]);
+    return rows[0] ? big(rows[0]['position']) : 0n;
+  }
+
+  async readOutcomeIds(kind: string, slot: SlotNo, stream: string, after: HlcTs | null, upTo: HlcTs): Promise<Uint8Array[]> {
+    const rows = await this.q(
+      `SELECT headers FROM ${assertIdentifier(tableNames(kind).outbox)}
+        WHERE slot = $1 AND stream = $2 AND partition != ''::BYTES AND ($3::DECIMAL IS NULL OR ts > $3::DECIMAL) AND ts <= $4::DECIMAL
+        ORDER BY ts`, [slot, stream, after, upTo]);
+    return outcomeIdsOf(rows.map((r) => bytes(r['headers'])));
   }
 
   async restart(): Promise<void> {
@@ -278,13 +314,13 @@ export class PgStore implements OwnerStore {
   private readonly displacement: DisplacementBinding;
 
   constructor(o: PgStoreOptions) {
-    this.pool = new pg.Pool({ connectionString: o.connectionString, max: o.poolSize ?? 8 });
-    this.displacement = o.displacement ?? C02_DISPLACEMENT;
-    this.pool.on('connect', (client) => {
-      // C01 §7: statement timeout 2 s (COMMIT excepted per transaction); idle-in-transaction 1 s.
-      void client.query(`SET statement_timeout = '${PARAMS.statementTimeoutMs}ms'`).catch(() => {});
-      void client.query(`SET idle_in_transaction_session_timeout = '${PARAMS.idleInTransactionMs}ms'`).catch(() => {});
+    // C01 §7: statement timeout 2 s (COMMIT excepted per transaction); idle-in-transaction 1 s.
+    // They go in the startup message, so they apply before the first query on each connection.
+    this.pool = new pg.Pool({
+      connectionString: o.connectionString, max: o.poolSize ?? 8,
+      options: `-c statement_timeout=${PARAMS.statementTimeoutMs} -c idle_in_transaction_session_timeout=${PARAMS.idleInTransactionMs}`,
     });
+    this.displacement = o.displacement ?? C02_DISPLACEMENT;
     this.pool.on('error', () => { /* an idle client died; the pool replaces it */ });
   }
 
@@ -411,6 +447,22 @@ export class PgStore implements OwnerStore {
     }, 'BEGIN PRIORITY HIGH');
   }
 
+  async readLogRows(kind: string, partition: Uint8Array, fromSeq: bigint): Promise<Array<LogRowWrite & { ts: HlcTs }>> {
+    const r = await this.pool.query(
+      `SELECT slot, partition, seq, generation, epoch, kind, schema_v, ts::STRING AS ts, identity, emits, audit, retention, key_id, payload, chain
+         FROM ${assertIdentifier(tableNames(kind).log)} WHERE partition = $1 AND seq >= $2 ORDER BY seq`, [toPg(partition), fromSeq.toString()]);
+    return (r.rows as Row[]).map((x) => ({
+      slot: Number(x['slot']), partition: bytes(x['partition']), seq: big(x['seq']), generation: Number(x['generation']), epoch: big(x['epoch']),
+      kind: Number(x['kind']), schemaV: Number(x['schema_v']), ts: hlc(String(x['ts'])), identity: bytes(x['identity']), emits: bytes(x['emits']),
+      audit: bytes(x['audit']), retention: Number(x['retention']), keyId: bytes(x['key_id']), payload: bytes(x['payload']), chain: bytes(x['chain']),
+    }));
+  }
+
+  async listPartitions(kind: string, slot: SlotNo): Promise<Uint8Array[]> {
+    const r = await this.pool.query(`SELECT partition FROM ${assertIdentifier(tableNames(kind).head)} WHERE slot = $1 AND adopted`, [slot]);
+    return (r.rows as Row[]).map((x) => bytes(x['partition']));
+  }
+
   async readTiming(shard: number): Promise<TimingSnapshot> {
     return readTiming(async (sql, p) => (await this.pool.query(sql, p)).rows as Row[], shard);
   }
@@ -431,4 +483,22 @@ export class PgStore implements OwnerStore {
   async close(): Promise<void> {
     await this.pool.end();
   }
+}
+
+/** The `closure_emitter` role's read (C01 §2.3, §3.6): feed sequence per link from `<kind>_head.streams` as of `at`. */
+export function pgFeedSeqReader(pool: Pick<pg.Pool, 'query'>): import('../closure/emitter.ts').FeedSeqReader {
+  return {
+    async feedSeqs(kind, stream, at, changedAfter) {
+      const t = assertIdentifier(tableNames(kind).head);
+      const r = await pool.query(
+        `SELECT partition, streams FROM ${t} AS OF SYSTEM TIME '${hlc(at)}' WHERE ($1::DECIMAL IS NULL OR ts > $1::DECIMAL)`,
+        [changedAfter]);
+      const out: Array<{ link: Uint8Array; feedSeq: bigint }> = [];
+      for (const row of r.rows as Row[]) {
+        const s = decodeStreams(bytes(row['streams']))[stream];
+        if (s !== undefined) out.push({ link: bytes(row['partition']), feedSeq: s });
+      }
+      return out;
+    },
+  };
 }

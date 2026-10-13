@@ -1,6 +1,7 @@
 import pg from 'pg';
 import type { OwnerDeclaration } from '@share/owner-runtime';
 import { kindMigration, platformMigration, type Migration } from './generate.ts';
+import { grantMigration, type GrantOptions } from './grants.ts';
 
 export interface ApplyReport { applied: Array<{ id: string; statements: number }> }
 
@@ -22,6 +23,9 @@ export async function applyMigrations(connectionString: string, migrations: Migr
   }
 }
 
-export async function migrateKinds(connectionString: string, declarations: OwnerDeclaration[], opts: { presplit?: boolean } = {}): Promise<ApplyReport> {
-  return applyMigrations(connectionString, [platformMigration(), ...declarations.map((d) => kindMigration(d, opts))]);
+export async function migrateKinds(connectionString: string, declarations: OwnerDeclaration[],
+  opts: { presplit?: boolean; grants?: boolean | GrantOptions } = {}): Promise<ApplyReport> {
+  const ms = [platformMigration(), ...declarations.map((d) => kindMigration(d, opts))];
+  if (opts.grants) ms.push(grantMigration(declarations, typeof opts.grants === 'object' ? opts.grants : {}));
+  return applyMigrations(connectionString, ms);
 }
