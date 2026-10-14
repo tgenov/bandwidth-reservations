@@ -37,8 +37,7 @@ external validation.
   not proof of product correctness.
 - **The implementation is partial.** The documented
   [conformance matrix](docs/02-specs/conformance.md) identifies uncovered scenarios,
-  and the project does not have hosted CI. Code and tests have been inspected, but
-  the complete suite has not been independently executed.
+  and the project does not have hosted CI. The complete suite was run locally once.
 - **Independent agents are not independent evidence.** Adversarial review reduces
   anchoring, but multiple agents can still share the same misconceptions. External
   domain validation remains necessary.
