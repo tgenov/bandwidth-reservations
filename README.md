@@ -42,6 +42,61 @@ external validation.
   anchoring, but multiple agents can still share the same misconceptions. External
   domain validation remains necessary.
 
+## Working assumptions: topology and commercial constraints
+
+The founding-engineer job description called for a platform at roughly **50× the previous scale**, without specifying the workload to multiply.
+
+To investigate its computational limits, I used my experience with ISP networks and public information about [Share](docs/01-discovery/company-profile.md) to construct a plausible operating model.
+
+**These are working assumptions, not claims about Share's actual infrastructure, commercial contracts, or strategic intentions.**
+
+### Network topology
+
+| Component | Assumed model | Engineering consequence |
+|---|---|---|
+| **PoP / R1 — Nairobi** | Share-operated serving region and data centre | Hosts customer-facing services and state owners |
+| **PoP / R2 — Mombasa** | Second Share-operated serving region | Geographic redundancy, with independent failure exposure |
+| **R3 — Johannesburg** | Non-serving GCP region participating in database quorum | Durability and failover without assuming that cloud infrastructure provides network transit |
+| **Inter-PoP links** | Two physically diverse Nairobi–Mombasa paths; independent paths from each Kenyan region to Johannesburg | Link cuts, shared-risk failures, partitions, and cross-region latency |
+| **Saleable links** | Finite capacity, time-varying availability, maintenance windows, and supplier reductions | Concurrent admission and capacity accounting |
+| **Peers** | External BGP peers, IXPs, transit networks and infrastructure suppliers | Independently operated networks and failure domains |
+| **Partner links** | Capacity controlled by external operators, some with reservation APIs and some without reliable temporary holds | No atomic transactions across providers; ambiguous outcomes and compensation |
+
+The assumed inter-region paths are a **hypothetical go-live condition**, not a verified property of Share's network.
+
+An illustrative route is:
+
+**Nairobi → Mombasa → Djibouti → Marseille**
+
+Each leg may have a different operator, available capacity, price, latency and failure domain. The route is an example used to reason about multi-provider reservations, not a verified commercial offering.
+
+Network peering must also be distinguished from commercial capacity supply: a BGP adjacency does not imply the right to reserve, resell or guarantee bandwidth.
+
+### Commercial constraints
+
+For the experiment, I assume:
+
+1. **Capacity is a finite inventory.** A guaranteed reservation consumes capacity whether or not traffic is flowing. The marketplace must not oversell that inventory.
+2. **Reservations have time semantics.** Buyers request a rate over a duration. Overlapping reservations compete for capacity; reservations on disjoint windows do not.
+3. **A route may span independent commercial authorities.** Share can control its own inventory but cannot assume transactional control over its partners.
+4. **Commercial commitments survive technical failure.** Outages, reduced capacity and failed provisioning create obligations to customers, not merely exceptions in software.
+5. **Money and capacity are coupled.** Admission requires sufficient funds or credit. Metering, rating, ledger movements and supplier settlement must remain reconcilable under delayed, duplicated and reordered events.
+6. **Pricing is provisional.** The model prices guaranteed capacity per Mbps-minute and meters other traffic separately. Actual prices, margins, minimum terms, cancellation liabilities and guarantees are business decisions.
+
+These assumptions are made explicit in the [policy register](docs/02-specs/policy-register.md) so they can be challenged and replaced without silently changing the meaning of the system.
+
+### What the experiment does not establish
+
+The 50× requirement is a multiplier without a specified baseline. It does not tell us whether the constraint is throughput, concurrent reservations, number of providers, geographic distribution, financial transaction volume or operational complexity.
+
+The experiment therefore investigates computational limits under a stated model. It does **not** establish Share's actual scaling limits, validate its commercial strategy, or propose that Share adopt this architecture.
+
+Actual topology, peer relationships, workloads, SLAs and economic trade-offs must be validated with the business.
+
+**Commercial decisions determine which guarantees are worth making. Computational constraints determine what it takes to honor them.**
+
+The purpose of this repository is to investigate the latter while keeping the former explicit and revisable.
+
 ## Artifact counts
 
 ```text
