@@ -1,3 +1,50 @@
+# bandwidth-reservations
+
+## Experiment hypothesis
+
+Can one engineer, using an appropriately constrained agent harness, independently
+specify, architect, implement and validate a complex distributed system without
+becoming the bottleneck for local decisions?
+
+This repository explores that question through a design and a partial build of a
+bandwidth marketplace: customers reserve capacity on links that partners supply,
+and the system meters usage, rates it and settles the money. The company model is
+"Share".
+
+## Evidence so far
+
+- **A traceable design.** The [design documents](docs/README.md) connect discovery,
+  executable requirements, architecture, slice RFCs, frozen contracts and delivery
+  plans. The design is the authority against which the code is assessed.
+- **A constrained decision process.** The [design pipeline](docs/process/pipeline.md)
+  defines authority boundaries, review gates and escalation through recorded issues.
+  Agents can make provisional local decisions within those constraints.
+- **Implementation and validation artifacts.** The repository contains slice
+  implementations, unit and contract tests, integration tests, and
+  [adversarial reviews and fix verifications](docs/reviews/). The
+  [conformance matrix](docs/02-specs/conformance.md) records scenario-level test
+  evidence and gaps; `npm run progress` reports the current delivery state.
+
+These artifacts provide evidence of the process and partial implementation. They
+do not yet establish the full hypothesis, including whether one engineer can
+remain outside the bottleneck for local decisions through complete delivery and
+external validation.
+
+## Limitations and remaining uncertainty
+
+- **The business requirements are hypotheses.** They were derived from a mock
+  interview and public materials, not confirmed by Share. Internal consistency is
+  not proof of product correctness.
+- **The implementation is partial.** The documented
+  [conformance matrix](docs/02-specs/conformance.md) identifies uncovered scenarios,
+  and the project does not have hosted CI. Code and tests have been inspected, but
+  the complete suite has not been independently executed.
+- **Independent agents are not independent evidence.** Adversarial review reduces
+  anchoring, but multiple agents can still share the same misconceptions. External
+  domain validation remains necessary.
+
+## Artifact counts
+
 ```text
 $ scc --exclude-dir .claude,node_modules   # scc 4.1.0, main at c186423, 2026-10-14
 ───────────────────────────────────────────────────────────────────────────────
@@ -47,17 +94,6 @@ logic it holds.
 The first line of the table records the command, the scc version and the commit. It excludes `node_modules` and the agent
 worktrees in `.claude/`. The numbers change as the code changes: run the command again to
 update them.
-
-# bandwidth-reservations
-
-A design and a partial build of a bandwidth marketplace: customers reserve
-capacity on links that partners supply, and the system meters usage, rates it
-and settles the money. The company model is "Share". The requirements come from
-a mock interview and public information. They are assumptions, not facts about
-a real system.
-
-The design is the authority, and the code conforms to it. The design documents
-are in [`docs/`](docs/README.md).
 
 ## Architecture
 
